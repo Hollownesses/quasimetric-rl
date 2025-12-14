@@ -25,9 +25,10 @@ class Config:
 
     # Local constraint strength is controlled by a Lagrange multiplier (more paper-like)
     use_lagrange: bool = True
-    lambda_init: float = 0.1
+    lambda_init: float = 0.01  # 原项目默认值
     lambda_lr: float = 0.01
-    local_epsilon: float = 0.0  # allow small slack: enforce d(s,s') + r + eps <= 0
+    local_epsilon: float = 0.25  # 原项目默认值: 约束 E[relu(d - cost)^2] <= epsilon^2
+    step_cost: float = 1.0  # 每步的成本（原项目默认值）
 
     # Loss weights
     global_weight: float = 1.0
@@ -35,8 +36,8 @@ class Config:
     tri_margin: float = 0.0
 
     # Make global push bounded (avoid pushing d to infinity)
-    global_beta: float = 0.1
-    global_target: float = 200.0
+    global_beta: float = 0.1  # softplus beta 参数
+    global_offset: float = 15.0  # 原项目默认值 (softplus_offset)
 
     lr: float = 1e-3
     hidden_dim: int = 128
@@ -117,24 +118,39 @@ class QuasimetricNet(nn.Module):
 
 # ---------- 损失 ----------
 
-def local_consistency_loss(d_ssp, r):
-    # d(s,s') + r >= 0  ->  ReLU(d + r)^2
-    x = d_ssp + r
-    relu_x = F.relu(x)
-    return (relu_x ** 2).mean()
-
-
-
-def global_push_loss(d_sg, beta: float = 0.1, target: float = 200.0):
-    """Saturating global push: encourage d(s,g) >= target, but do NOT keep pushing above it.
-    loss = E[ softplus(beta*(target - d)) / beta ]
+def local_constraint_loss(d_ssp, step_cost: float = 1.0, epsilon: float = 0.25):
     """
-    z = beta * (target - d_sg)
-    return (F.softplus(z) / beta).mean()
+    原项目 QRL 的 local constraint loss:
+    - 约束: E[relu(d(s,s') - step_cost)^2] <= epsilon^2
+    - 即不能高估观察到的局部距离/成本
+    - 使用 Lagrange multiplier 进行约束优化
+    """
+    # sq_deviation = E[relu(d - step_cost)^2]
+    sq_deviation = (d_ssp - step_cost).relu().square().mean()
+    # violation = sq_deviation - epsilon^2 (如果 > 0 表示违反约束)
+    violation = sq_deviation - (epsilon ** 2)
+    return sq_deviation, violation
+
+
+def global_push_loss(d_sg, beta: float = 0.1, offset: float = 15.0):
+    """
+    原项目 QRL 的 global push loss:
+    - 目标: 最大化 E[d(s,g)]，推远所有状态-目标对
+    - 使用 softplus 变换避免过度惩罚大距离
+    - 原项目公式: F.softplus(offset - dists, beta=beta)
+    - 等价于: F.softplus(beta * (offset - d)) / beta (当 beta 相同时)
+    """
+    # 原项目的实现: F.softplus(offset - d_sg, beta=beta)
+    tsfm_dist = F.softplus(offset - d_sg, beta=beta)
+    return tsfm_dist.mean()
 
 
 def triangle_inequality_loss(d_s1s3, d_s1s2, d_s2s3, margin: float = 0.0):
-    # Enforce: d(s1,s3) <= d(s1,s2) + d(s2,s3) (soft penalty)
+    """
+    三角不等式损失（可选）:
+    - 原项目使用 IQE (Interval Quasimetric Embedding) 自动保证三角不等式
+    - 简化版本可能需要显式约束: d(s1,s3) <= d(s1,s2) + d(s2,s3)
+    """
     v = d_s1s3 - d_s1s2 - d_s2s3 + margin
     return (F.relu(v) ** 2).mean()
 
@@ -208,34 +224,41 @@ def main(cfg: Config):
         d_12 = model(s1_t, s2_t)
         d_23 = model(s2_t, s3_t)
 
-        # Local constraint: enforce d(s,s') + r + eps <= 0
-        # Use a hinge-style violation and square it for stability.
-        violation = F.relu(d_ssp + r_t + cfg.local_epsilon)
-        loss_local = (violation ** 2).mean()
+        # Local constraint: 原项目 QRL 的约束形式
+        # 约束: E[relu(d(s,s') - step_cost)^2] <= epsilon^2
+        sq_deviation, violation = local_constraint_loss(
+            d_ssp, step_cost=cfg.step_cost, epsilon=cfg.local_epsilon
+        )
 
-        # Bounded global push (avoid scale explosion)
-        loss_global = global_push_loss(d_sg, beta=cfg.global_beta, target=cfg.global_target)
+        # Bounded global push (原项目实现)
+        loss_global = global_push_loss(d_sg, beta=cfg.global_beta, offset=cfg.global_offset)
+        
+        # Triangle inequality loss (可选，原项目用 IQE 保证，这里保留作为正则化)
         loss_tri = triangle_inequality_loss(d_13, d_12, d_23, margin=cfg.tri_margin)
 
         if cfg.use_lagrange:
-            # Lagrangian form: minimize (global + tri) + lambda * local
-            loss = cfg.global_weight * loss_global + cfg.tri_weight * loss_tri + lambda_local * loss_local
+            # Lagrangian form: minimize (global + tri) + lambda * violation
+            # 注意：原项目中 lambda 是梯度上升更新的（minimax），这里简化处理
+            loss = cfg.global_weight * loss_global + cfg.tri_weight * loss_tri + lambda_local * violation
         else:
             # Fallback: fixed-weight sum
-            loss = cfg.global_weight * loss_global + cfg.tri_weight * loss_tri + loss_local
+            loss = cfg.global_weight * loss_global + cfg.tri_weight * loss_tri + sq_deviation
 
         optim.zero_grad()
         loss.backward()
         optim.step()
 
         # Gradient-ascent update on lambda to enforce the constraint (keep lambda >= 0)
+        # 原项目使用 optimizer 更新 lambda，这里简化用梯度上升
         if cfg.use_lagrange:
-            lambda_local = max(0.0, lambda_local + cfg.lambda_lr * float(loss_local.detach().cpu().item()))
+            # violation > 0 表示违反约束，需要增大 lambda
+            lambda_local = max(0.0, lambda_local + cfg.lambda_lr * float(violation.detach().cpu().item()))
 
         if step % 100 == 0:
             pbar.set_postfix(
                 lambda_=f"{lambda_local:.3f}",
-                local_loss=f"{loss_local.item():.4f}",
+                sq_dev=f"{sq_deviation.item():.4f}",
+                violation=f"{violation.item():.4f}",
                 global_loss=f"{loss_global.item():.4f}",
                 tri_loss=f"{loss_tri.item():.4f}",
                 total_loss=f"{loss.item():.4f}",
@@ -256,19 +279,48 @@ def main(cfg: Config):
                 g_t = torch.tensor(g, device=device)
                 dvals = model(s_grid_t, g_t).cpu().numpy()
 
+                # 验证 quasimetric 性质
+                # 1. 非负性
+                assert (dvals >= 0).all(), f"Step {step}: 距离必须非负！"
+                
+                # 2. 自反性（d(s,s) = 0，近似检查）
+                s_self = s_grid_t[:10]  # 采样一些状态
+                d_self = model(s_self, s_self).cpu().numpy()
+                max_self_dist = d_self.max()
+                if max_self_dist > 0.1:
+                    print(f"警告 Step {step}: d(s,s) 应该接近 0，但最大值为 {max_self_dist:.4f}")
+
             import matplotlib.pyplot as plt
 
-            plt.figure(figsize=(6, 3))
+            plt.figure(figsize=(8, 4))
+            plt.subplot(1, 2, 1)
             plt.plot(pos, dvals)
             plt.axvline(goal_pos, color="red", linestyle="--", label="goal")
             plt.xlabel("position")
             plt.ylabel("d_theta(s, g)")
-            plt.title(f"Step {step}")
+            plt.title(f"Step {step} - Distance to Goal")
             plt.legend()
             plt.grid(True)
+            
+            # 添加损失信息
+            plt.subplot(1, 2, 2)
+            plt.text(0.5, 0.5, f"Loss Info:\n"
+                    f"sq_dev: {sq_deviation.item():.4f}\n"
+                    f"violation: {violation.item():.4f}\n"
+                    f"lambda: {lambda_local:.4f}\n"
+                    f"global: {loss_global.item():.4f}\n"
+                    f"tri: {loss_tri.item():.4f}",
+                    ha='center', va='center', fontsize=10,
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            plt.axis('off')
+            plt.title("Training Status")
+            
             fname = os.path.join(cfg.fig_dir, f"dpos_step{step}.png")
-            plt.savefig(fname)
+            plt.tight_layout()
+            plt.savefig(fname, dpi=150)
             plt.close()
+            
+            print(f"Step {step}: 已保存可视化到 {fname}")
 
     env.close()
     torch.save(model.state_dict(), os.path.join(cfg.fig_dir, "quasimetric_net.pth"))
