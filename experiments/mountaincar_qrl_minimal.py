@@ -24,6 +24,8 @@ class Config:
     collect_interval: int = 500  # 每隔多少个优化 step 再收一批随机数据
     local_weight: float = 1.0
     global_weight: float = 0.1
+    tri_weight: float = 1.0
+    tri_margin: float = 0.0
     lr: float = 1e-3
     hidden_dim: int = 128
     device: str = "cpu"
@@ -115,6 +117,12 @@ def global_push_loss(d_sg):
     return -d_sg.mean()
 
 
+def triangle_inequality_loss(d_s1s3, d_s1s2, d_s2s3, margin: float = 0.0):
+    # Enforce: d(s1,s3) <= d(s1,s2) + d(s2,s3) (soft penalty)
+    v = d_s1s3 - d_s1s2 - d_s2s3 + margin
+    return (F.relu(v) ** 2).mean()
+
+
 # ---------- 训练主循环 ----------
 
 def main(cfg: Config):
@@ -143,7 +151,7 @@ def main(cfg: Config):
     goal_states = np.stack([goal_positions, np.zeros_like(goal_positions)], axis=1).astype(
         np.float32
     )
-    goal_states_t = torch.tensor(goal_states, device=device)
+    # goal_states_t = torch.tensor(goal_states, device=device)
 
     pbar = trange(cfg.total_steps, desc="training")
     for step in pbar:
@@ -164,12 +172,31 @@ def main(cfg: Config):
         s_b_t = torch.tensor(s_batch, device=device)
         g_b_t = torch.tensor(g_batch, device=device)
 
+        # 3) Triangle inequality batch: sample (s1, s2, s3) from replay
+        idx1 = np.random.choice(len(buffer), cfg.batch_size)
+        idx2 = np.random.choice(len(buffer), cfg.batch_size)
+        idx3 = np.random.choice(len(buffer), cfg.batch_size)
+        s1 = np.array([buffer.buffer[i][0] for i in idx1], dtype=np.float32)
+        s2 = np.array([buffer.buffer[i][0] for i in idx2], dtype=np.float32)
+        s3 = np.array([buffer.buffer[i][0] for i in idx3], dtype=np.float32)
+        s1_t = torch.tensor(s1, device=device)
+        s2_t = torch.tensor(s2, device=device)
+        s3_t = torch.tensor(s3, device=device)
+
         d_ssp = model(s_t, s2_t)
         d_sg = model(s_b_t, g_b_t)
+        d_13 = model(s1_t, s3_t)
+        d_12 = model(s1_t, s2_t)
+        d_23 = model(s2_t, s3_t)
 
         loss_local = local_consistency_loss(d_ssp, r_t)
         loss_global = global_push_loss(d_sg)
-        loss = cfg.local_weight * loss_local + cfg.global_weight * loss_global
+        loss_tri = triangle_inequality_loss(d_13, d_12, d_23, margin=cfg.tri_margin)
+        loss = (
+            cfg.local_weight * loss_local
+            + cfg.global_weight * loss_global
+            + cfg.tri_weight * loss_tri
+        )
 
         optim.zero_grad()
         loss.backward()
@@ -179,6 +206,7 @@ def main(cfg: Config):
             pbar.set_postfix(
                 local_loss=f"{loss_local.item():.4f}",
                 global_loss=f"{loss_global.item():.4f}",
+                tri_loss=f"{loss_tri.item():.4f}",
                 total_loss=f"{loss.item():.4f}",
             )
 
