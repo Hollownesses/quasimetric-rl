@@ -22,10 +22,22 @@ class Config:
     batch_size: int = 256
     total_steps: int = 5000
     collect_interval: int = 500  # 每隔多少个优化 step 再收一批随机数据
-    local_weight: float = 1.0
-    global_weight: float = 0.1
+
+    # Local constraint strength is controlled by a Lagrange multiplier (more paper-like)
+    use_lagrange: bool = True
+    lambda_init: float = 0.1
+    lambda_lr: float = 0.01
+    local_epsilon: float = 0.0  # allow small slack: enforce d(s,s') + r + eps <= 0
+
+    # Loss weights
+    global_weight: float = 1.0
     tri_weight: float = 1.0
     tri_margin: float = 0.0
+
+    # Make global push bounded (avoid pushing d to infinity)
+    global_beta: float = 0.1
+    global_target: float = 200.0
+
     lr: float = 1e-3
     hidden_dim: int = 128
     device: str = "cpu"
@@ -112,9 +124,13 @@ def local_consistency_loss(d_ssp, r):
     return (relu_x ** 2).mean()
 
 
-def global_push_loss(d_sg):
-    # 想让 d(s,g) 尽量大 -> 最小化 -E[d(s,g)]
-    return -d_sg.mean()
+
+def global_push_loss(d_sg, beta: float = 0.1, target: float = 200.0):
+    """Saturating global push: encourage d(s,g) >= target, but do NOT keep pushing above it.
+    loss = E[ softplus(beta*(target - d)) / beta ]
+    """
+    z = beta * (target - d_sg)
+    return (F.softplus(z) / beta).mean()
 
 
 def triangle_inequality_loss(d_s1s3, d_s1s2, d_s2s3, margin: float = 0.0):
@@ -143,6 +159,9 @@ def main(cfg: Config):
     device = torch.device(cfg.device)
     model = QuasimetricNet(state_dim=state_dim, hidden_dim=cfg.hidden_dim).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+
+    # Lagrange multiplier for local constraint (kept as a non-negative scalar)
+    lambda_local = float(cfg.lambda_init)
 
     # 固定一组 goal（车在山顶附近，速度为 0）
     goal_pos = 0.5
@@ -189,21 +208,33 @@ def main(cfg: Config):
         d_12 = model(s1_t, s2_t)
         d_23 = model(s2_t, s3_t)
 
-        loss_local = local_consistency_loss(d_ssp, r_t)
-        loss_global = global_push_loss(d_sg)
+        # Local constraint: enforce d(s,s') + r + eps <= 0
+        # Use a hinge-style violation and square it for stability.
+        violation = F.relu(d_ssp + r_t + cfg.local_epsilon)
+        loss_local = (violation ** 2).mean()
+
+        # Bounded global push (avoid scale explosion)
+        loss_global = global_push_loss(d_sg, beta=cfg.global_beta, target=cfg.global_target)
         loss_tri = triangle_inequality_loss(d_13, d_12, d_23, margin=cfg.tri_margin)
-        loss = (
-            cfg.local_weight * loss_local
-            + cfg.global_weight * loss_global
-            + cfg.tri_weight * loss_tri
-        )
+
+        if cfg.use_lagrange:
+            # Lagrangian form: minimize (global + tri) + lambda * local
+            loss = cfg.global_weight * loss_global + cfg.tri_weight * loss_tri + lambda_local * loss_local
+        else:
+            # Fallback: fixed-weight sum
+            loss = cfg.global_weight * loss_global + cfg.tri_weight * loss_tri + loss_local
 
         optim.zero_grad()
         loss.backward()
         optim.step()
 
+        # Gradient-ascent update on lambda to enforce the constraint (keep lambda >= 0)
+        if cfg.use_lagrange:
+            lambda_local = max(0.0, lambda_local + cfg.lambda_lr * float(loss_local.detach().cpu().item()))
+
         if step % 100 == 0:
             pbar.set_postfix(
+                lambda_=f"{lambda_local:.3f}",
                 local_loss=f"{loss_local.item():.4f}",
                 global_loss=f"{loss_global.item():.4f}",
                 tri_loss=f"{loss_tri.item():.4f}",
