@@ -1,9 +1,9 @@
 # experiments/maze2d_qrl.py
 """
-2D Maze 环境的 QRL 训练和可视化
-- 使用简单的 2D grid maze 环境
-- 通过 2D heatmap 可视化准度量距离
-- 验证准度量的几何特性
+Open-grid (no walls) 2D environment: QRL-style quasimetric training and visualization
+- Uses an obstacle-free 2D grid world for QRL loss sanity check
+- Visualizes learned quasimetric via 2D heatmaps
+- Verifies basic quasimetric properties
 """
 import os
 import random
@@ -18,178 +18,145 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import trange
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from mpl_toolkits.mplot3d import Axes3D
+
+# --------- grad_mul utility for Lagrange multiplier (repo-style) ----------
+class _GradMul(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, scale: float):
+        ctx.scale = scale
+        return x
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output * ctx.scale, None
+
+def grad_mul(x: torch.Tensor, scale: float) -> torch.Tensor:
+    return _GradMul.apply(x, scale)
 
 
-# ---------- 简单的 2D Maze 环境 ----------
 
-class SimpleMaze2D(gym.Env):
+# ---------- Open 2D Grid Environment (no obstacles) ----------
+class OpenGrid2D(gym.Env):
     """
-    简单的 2D grid maze 环境
-    - 状态: (x, y) 坐标
-    - 动作: 0=上, 1=右, 2=下, 3=左
-    - 奖励: 到达目标时 +1，否则 -0.01（每步成本）
+    Open 2D grid world (no obstacles) for QRL sanity-check.
+
+    - State: normalized (x, y) in [0, 1]^2 mapped from discrete grid cells.
+    - Actions: 0=up, 1=right, 2=down, 3=left (4-neighborhood).
+    - Reward is not used by the simplified QRL losses here; we keep a step penalty for completeness.
     """
+
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
 
-    def __init__(self, maze_size: Tuple[int, int] = (10, 10), 
-                 walls: Optional[List[Tuple[int, int]]] = None,
-                 start_pos: Optional[Tuple[int, int]] = None,
-                 goal_pos: Optional[Tuple[int, int]] = None,
-                 render_mode: Optional[str] = None):
+    def __init__(
+        self,
+        grid_size: Tuple[int, int] = (10, 10),
+        start_pos: Optional[Tuple[int, int]] = None,
+        goal_pos: Optional[Tuple[int, int]] = None,
+        render_mode: Optional[str] = None,
+        max_episode_steps: int = 200,
+    ):
         super().__init__()
-        
-        self.maze_size = maze_size
-        self.height, self.width = maze_size
-        
-        # 默认墙壁（创建一个简单的迷宫）
-        if walls is None:
-            walls = self._create_default_walls()
-        self.walls = set(walls)
-        
-        # 起始和目标位置
+        self.grid_size = grid_size
+        self.height, self.width = grid_size
         self.start_pos = start_pos if start_pos else (1, 1)
         self.goal_pos = goal_pos if goal_pos else (self.height - 2, self.width - 2)
-        
-        # 确保起始和目标不在墙上
-        assert self.start_pos not in self.walls, "起始位置不能在墙上"
-        assert self.goal_pos not in self.walls, "目标位置不能在墙上"
-        
-        # 动作空间：0=上, 1=右, 2=下, 3=左
-        self.action_space = spaces.Discrete(4)
-        
-        # 状态空间：连续坐标 (x, y)，归一化到 [0, 1]
-        self.observation_space = spaces.Box(
-            low=0.0, high=1.0, shape=(2,), dtype=np.float32
-        )
-        
         self.render_mode = render_mode
-        self.agent_pos = None
-        
-    def _create_default_walls(self) -> List[Tuple[int, int]]:
-        """创建默认的迷宫墙壁"""
-        walls = []
-        h, w = self.height, self.width
-        
-        # 外圈墙壁
-        for i in range(h):
-            walls.append((i, 0))
-            walls.append((i, w - 1))
-        for j in range(w):
-            walls.append((0, j))
-            walls.append((h - 1, j))
-        
-        # 内部障碍物（创建一个简单的迷宫）
-        # 中间一堵墙，留一个缺口
-        mid = h // 2
-        for j in range(1, w - 1):
-            if j != w // 2:  # 留一个缺口
-                walls.append((mid, j))
-        
-        return walls
-    
-    def _get_obs(self):
-        """获取归一化的观察"""
+        self.max_episode_steps = max_episode_steps
+
+        # 0=up,1=right,2=down,3=left
+        self.action_space = spaces.Discrete(4)
+        self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(2,), dtype=np.float32)
+
+        self.agent_pos: Tuple[int, int] = self.start_pos
+        self._t = 0
+
+    def _get_obs(self) -> np.ndarray:
         x, y = self.agent_pos
-        # 归一化到 [0, 1]
-        obs = np.array([x / (self.height - 1), y / (self.width - 1)], dtype=np.float32)
-        return obs
-    
+        return np.array([x / (self.height - 1), y / (self.width - 1)], dtype=np.float32)
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.agent_pos = self.start_pos
-        obs = self._get_obs()
-        info = {}
-        return obs, info
-    
-    def step(self, action):
+        self._t = 0
+        return self._get_obs(), {}
+
+    def step(self, action: int):
         x, y = self.agent_pos
-        
-        # 动作映射：0=上(-x), 1=右(+y), 2=下(+x), 3=左(-y)
-        dx, dy = [(-1, 0), (0, 1), (1, 0), (0, -1)][action]
-        new_x, new_y = x + dx, y + dy
-        
-        # 检查边界和墙壁
-        if (0 <= new_x < self.height and 0 <= new_y < self.width and 
-            (new_x, new_y) not in self.walls):
-            self.agent_pos = (new_x, new_y)
-        
-        obs = self._get_obs()
-        
-        # 奖励：到达目标 +1，否则 -0.01（每步成本）
+        dx, dy = [(-1, 0), (0, 1), (1, 0), (0, -1)][int(action)]
+        nx = int(np.clip(x + dx, 0, self.height - 1))
+        ny = int(np.clip(y + dy, 0, self.width - 1))
+        self.agent_pos = (nx, ny)
+
+        self._t += 1
         terminated = (self.agent_pos == self.goal_pos)
-        reward = 1.0 if terminated else -0.01
-        
-        truncated = False
-        info = {"is_success": terminated}
-        
-        return obs, reward, terminated, truncated, info
-    
+        truncated = (self._t >= self.max_episode_steps)
+
+        # Not used by our loss; kept for completeness
+        reward = 0.0 if terminated else -1.0
+
+        return self._get_obs(), float(reward), terminated, truncated, {"is_success": terminated}
+
     def render(self):
-        """渲染迷宫（简单文本输出）"""
-        if self.render_mode == "human":
-            grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
-            
-            # 绘制墙壁
-            for x, y in self.walls:
-                grid[x][y] = '#'
-            
-            # 绘制起始和目标
-            sx, sy = self.start_pos
-            gx, gy = self.goal_pos
-            grid[sx][sy] = 'S'
-            grid[gx][gy] = 'G'
-            
-            # 绘制智能体
-            ax, ay = self.agent_pos
-            if grid[ax][ay] not in ['S', 'G']:
-                grid[ax][ay] = 'A'
-            
-            print("\n".join(["".join(row) for row in grid]))
-            print()
+        if self.render_mode != "human":
+            return
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        sx, sy = self.start_pos
+        gx, gy = self.goal_pos
+        grid[sx][sy] = 'S'
+        grid[gx][gy] = 'G'
+        ax, ay = self.agent_pos
+        if grid[ax][ay] not in ['S', 'G']:
+            grid[ax][ay] = 'A'
+        print("\n".join(["".join(row) for row in grid]))
+        print()
 
 
 # ---------- 配置 ----------
 
 @dataclass
 class Config:
-    maze_size: Tuple[int, int] = (10, 10)  # (height, width)
+    grid_size: Tuple[int, int] = (10, 10)  # (height, width)
     seed: int = 0
     buffer_size: int = 20000
     init_transitions: int = 5000
     batch_size: int = 256
     total_steps: int = 10000
     collect_interval: int = 500
-    
+
     # Local constraint
-    use_lagrange: bool = True
+    use_lagrange: bool = False
     lambda_init: float = 0.01
     lambda_lr: float = 0.01
     local_epsilon: float = 0.25
-    step_cost: float = 1.0  # 每步的成本（注意：这是 quasimetric 距离的单位，不是环境奖励）
-    # 注意：step_cost 应该反映实际的步数成本。如果最短路径约 114 步，
-    # 那么从起始到目标的距离应该约为 114 * step_cost
-    
+    step_cost: float = 1.0  # local step cost in the learned quasimetric (open grid => shortest path ~ Manhattan distance)
+
     # Loss weights
     global_weight: float = 1.0
-    tri_weight: float = 1.0
+    tri_weight: float = 0.0
     tri_margin: float = 0.0
-    
+    # Anchor terms to avoid the trivial constant solution in open-grid sanity checks.
+    # (The full repo has additional structure; in this demo we add two minimal anchors.)
+    self_weight: float = 1.0        # encourages d(s,s) ~ 0
+    step_weight: float = 1.0        # encourages d(s,s') ~ step_cost for one-step transitions
+
+    # Optional tiny weight to prevent very large values even if other anchors are weak.
+    scale_weight: float = 1e-3
+
     # Global push
     global_beta: float = 0.1
-    global_offset: float = 2.0  # 调整为适应较小的距离值
-    # 注意：如果距离在 [0, 2] 范围，offset 应该设为 ~2-3
-    # 原项目的 15.0 适用于更大的距离值
-    
+    global_offset: float = 20.0  # should be >= typical distances; tune ~ 2*(H+W) for open grids
+
+    # Lagrange multiplier updates
+    lagrange_update_every: int = 1  # update dual variable every N steps
+
     lr: float = 1e-3
     hidden_dim: int = 128
     device: str = "cpu"
     fig_dir: str = "figs_maze2d_qrl"
-    
-    # 可视化相关
-    viz_interval: int = 1000  # 每隔多少步可视化一次
-    heatmap_resolution: int = 50  # heatmap 分辨率
+
+    # Visualization
+    viz_interval: int = 1000  # Visualization interval
+    heatmap_resolution: int = 10  # heatmap resolution (use grid resolution for open-grid sanity check)
 
 
 # ---------- 经验池 ----------
@@ -243,8 +210,14 @@ def collect_random_transitions(env, buffer, n_transitions, max_steps=200):
 
 # ---------- 模型：Quasimetric 网络 ----------
 
+
 class QuasimetricNet(nn.Module):
-    def __init__(self, state_dim=2, hidden_dim=128):
+    """
+    Simple MLP quasimetric head for (s,g) -> d(s,g).
+    - Enforces non-negativity via softplus.
+    - IMPORTANT: No hard clamp, to avoid the 'constant plateau at max_dist' degenerate solution.
+    """
+    def __init__(self, state_dim: int = 2, hidden_dim: int = 128):
         super().__init__()
         input_dim = state_dim * 2  # s, g
         self.net = nn.Sequential(
@@ -257,27 +230,98 @@ class QuasimetricNet(nn.Module):
             nn.Linear(hidden_dim, 1),
         )
 
-    def forward(self, s, g):
-        # s, g: (B, state_dim)
+    def forward(self, s: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
         x = torch.cat([s, g], dim=-1)
         out = self.net(x)
-        # softplus 保证非负 & 可导
-        return F.softplus(out).squeeze(-1)  # (B,)
+        d = F.softplus(out).squeeze(-1)
+        return d
+
+
+def _snap_to_grid(s: torch.Tensor, h: int, w: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    """normalized state -> discrete grid index (x,y) with rounding."""
+    x = torch.round(s[..., 0] * (h - 1)).long()
+    y = torch.round(s[..., 1] * (w - 1)).long()
+    x = torch.clamp(x, 0, h - 1)
+    y = torch.clamp(y, 0, w - 1)
+    return x, y
+
+
+def four_neighbor_next_states(s: torch.Tensor, h: int, w: int) -> torch.Tensor:
+    """
+    Given normalized s: (B,2), return next states for 4-neighbors: (B,4,2)
+    Action order: 0=up,1=right,2=down,3=left
+    """
+    x, y = _snap_to_grid(s, h, w)  # (B,), (B,)
+    dx = torch.tensor([-1, 0, 1, 0], device=s.device).view(1, 4)
+    dy = torch.tensor([0, 1, 0, -1], device=s.device).view(1, 4)
+
+    xn = torch.clamp(x.view(-1, 1) + dx, 0, h - 1)
+    yn = torch.clamp(y.view(-1, 1) + dy, 0, w - 1)
+
+    sn = torch.stack([
+        xn.float() / (h - 1),
+        yn.float() / (w - 1)
+    ], dim=-1)  # (B,4,2)
+    return sn
 
 
 # ---------- 损失函数 ----------
 
-def local_constraint_loss(d_ssp, step_cost: float = 1.0, epsilon: float = 0.25):
-    """原项目 QRL 的 local constraint loss"""
-    sq_deviation = (d_ssp - step_cost).relu().square().mean()
+
+def local_constraint_stats_bellman_optimal(
+    model: nn.Module,
+    s: torch.Tensor,
+    goal: torch.Tensor,
+    h: int,
+    w: int,
+    step_cost: float = 1.0,
+    epsilon: float = 0.25,
+):
+    """
+    Bellman-optimal backup for 4-neighbor unit-cost grid:
+
+        d(s,g) ≈ step_cost + min_{a in 4-neigh} d(s_a', g)
+
+    We measure squared TD error:
+        td = d(s,g) - (step_cost + min_a d(s_a',g))
+        sq_deviation = mean(td^2)
+        violation = sq_deviation - epsilon^2
+
+    Also enforce terminal condition:
+        if s == goal (on-grid), target = 0
+    """
+    B = s.shape[0]
+    goal_b = goal.expand(B, -1)
+
+    d_sg = model(s, goal_b)  # (B,)
+
+    # 4 neighbor next states
+    sn = four_neighbor_next_states(s, h, w)               # (B,4,2)
+    sn_flat = sn.reshape(-1, 2)                           # (B*4,2)
+    goal_flat = goal_b.unsqueeze(1).expand(B, 4, 2).reshape(-1, 2)
+
+    with torch.no_grad():
+        d_next = model(sn_flat, goal_flat).reshape(B, 4)  # (B,4)
+        min_next, _ = torch.min(d_next, dim=1)            # (B,)
+
+    target = step_cost + min_next  # (B,)
+
+    # terminal: if s is exactly goal cell, target should be 0
+    sx, sy = _snap_to_grid(s, h, w)
+    gx, gy = _snap_to_grid(goal_b, h, w)
+    is_goal = (sx == gx) & (sy == gy)
+    target = torch.where(is_goal, torch.zeros_like(target), target)
+
+    td = d_sg - target
+    sq_deviation = td.square().mean()
     violation = sq_deviation - (epsilon ** 2)
-    return sq_deviation, violation
+    return d_sg, sq_deviation, violation
 
 
-def global_push_loss(d_sg, beta: float = 0.1, offset: float = 15.0):
-    """原项目 QRL 的 global push loss"""
-    tsfm_dist = F.softplus(offset - d_sg, beta=beta)
-    return tsfm_dist.mean()
+def global_push_loss(d_pairs: torch.Tensor, beta: float = 0.1, offset: float = 15.0):
+    """Repo-style global push: mean(softplus(offset - d, beta)). We apply it to d(s,g) to prevent collapse."""
+    tsfm = F.softplus(offset - d_pairs, beta=beta)
+    return tsfm.mean()
 
 
 def triangle_inequality_loss(d_s1s3, d_s1s2, d_s2s3, margin: float = 0.0):
@@ -288,73 +332,107 @@ def triangle_inequality_loss(d_s1s3, d_s1s2, d_s2s3, margin: float = 0.0):
 
 # ---------- 可视化函数 ----------
 
-def visualize_quasimetric_heatmap(model, env: SimpleMaze2D, goal: np.ndarray, 
-                                   step: int, fig_dir: str, resolution: int = 50):
+def visualize_quasimetric_heatmap(model, env: OpenGrid2D, goal: np.ndarray,
+                                   step: int, fig_dir: str, resolution: int = 60):
     """
-    可视化从所有位置到目标的准度量距离（2D heatmap）
+    Visualize the quasimetric distance to the goal as a 2D heatmap (open grid).
     """
     device = next(model.parameters()).device
-    
-    # 创建网格
-    h, w = env.maze_size
-    x_coords = np.linspace(0, 1, resolution)
-    y_coords = np.linspace(0, 1, resolution)
-    X, Y = np.meshgrid(x_coords, y_coords)
-    
-    # 计算每个网格点的距离
+
+    # Create grid (use discrete grid cells so L1/Manhattan structure is visible)
+    h, w = env.grid_size
+    x_coords = np.arange(h, dtype=np.float32) / (h - 1)
+    y_coords = np.arange(w, dtype=np.float32) / (w - 1)
+    Y, X = np.meshgrid(y_coords, x_coords)  # note: X is row (x), Y is col (y)
+
+    # Compute distance for each grid cell center
     states = np.stack([X.flatten(), Y.flatten()], axis=1).astype(np.float32)
     states_t = torch.tensor(states, device=device)
     goal_t = torch.tensor(goal[None].repeat(len(states), 0), device=device)
-    
+
     with torch.no_grad():
         distances = model(states_t, goal_t).cpu().numpy()
-    
-    distances = distances.reshape(resolution, resolution)
-    
-    # 创建图形
+
+    distances = distances.reshape(h, w)
+
+    # Plot
     fig = plt.figure(figsize=(16, 7))
-    
-    # 左图：Heatmap
+    # Left: heatmap
     ax1 = fig.add_subplot(121)
-    im = ax1.imshow(distances, origin='lower', extent=[0, 1, 0, 1], 
-                    cmap='viridis', aspect='auto', interpolation='bilinear')
+    im = ax1.imshow(distances, origin='lower', extent=[0, 1, 0, 1],
+                    cmap='viridis', aspect='auto', interpolation='nearest')
     ax1.set_xlabel('Y position (normalized)')
     ax1.set_ylabel('X position (normalized)')
     ax1.set_title(f'Quasimetric Distance to Goal (Step {step})')
     plt.colorbar(im, ax=ax1, label='Distance')
-    
-    # 叠加迷宫墙壁
-    for wall in env.walls:
-        wx, wy = wall
-        # 转换为归一化坐标
-        nx, ny = wx / (h - 1), wy / (w - 1)
-        rect = patches.Rectangle((ny - 0.5/resolution, nx - 0.5/resolution),
-                               1/resolution, 1/resolution,
-                               linewidth=0, facecolor='black', alpha=0.7)
-        ax1.add_patch(rect)
-    
-    # 标记目标和起始位置
+
+    # Mark goal and start
     gx, gy = env.goal_pos
     sx, sy = env.start_pos
     ax1.plot(gy / (w - 1), gx / (h - 1), 'r*', markersize=20, label='Goal')
     ax1.plot(sy / (w - 1), sx / (h - 1), 'go', markersize=15, label='Start')
     ax1.legend()
-    
-    # 右图：3D 表面图
+
+    # Right: 3D surface
     ax2 = fig.add_subplot(122, projection='3d')
-    surf = ax2.plot_surface(X, Y, distances, cmap='viridis', alpha=0.8)
+    surf = ax2.plot_surface(Y, X, distances, cmap='viridis', alpha=0.8)
     ax2.set_xlabel('Y position')
     ax2.set_ylabel('X position')
     ax2.set_zlabel('Distance')
     ax2.set_title('3D Quasimetric Distance Surface')
     fig.colorbar(surf, ax=ax2, shrink=0.5)
-    
+
     plt.tight_layout()
     fname = os.path.join(fig_dir, f"heatmap_step{step}.png")
     plt.savefig(fname, dpi=150, bbox_inches='tight')
     plt.close()
-    
     print(f"Step {step}: 已保存 heatmap 到 {fname}")
+
+
+def _true_manhattan_to_goal_grid(env: OpenGrid2D) -> np.ndarray:
+    """True unit-cost 4-neighbor distance-to-goal on an obstacle-free grid (Manhattan distance in steps)."""
+    h, w = env.grid_size
+    gx, gy = env.goal_pos
+    xs = np.arange(h)[:, None]
+    ys = np.arange(w)[None, :]
+    return (np.abs(xs - gx) + np.abs(ys - gy)).astype(np.float32)
+
+
+def eval_distance_field_mse(model: nn.Module, env: OpenGrid2D, goal: np.ndarray) -> Tuple[float, float, float]:
+    """Evaluate d(s,goal) against true Manhattan distances on the discrete grid.
+
+    Returns: (mse, mae, corr)
+    """
+    device = next(model.parameters()).device
+    h, w = env.grid_size
+
+    # Discrete grid states
+    x_coords = np.arange(h, dtype=np.float32) / (h - 1)
+    y_coords = np.arange(w, dtype=np.float32) / (w - 1)
+    Y, X = np.meshgrid(y_coords, x_coords)
+    states = np.stack([X.flatten(), Y.flatten()], axis=1).astype(np.float32)
+
+    states_t = torch.tensor(states, device=device)
+    goal_t = torch.tensor(goal[None].repeat(len(states), 0), device=device)
+
+    with torch.no_grad():
+        pred = model(states_t, goal_t).cpu().numpy().reshape(h, w)
+
+    true = _true_manhattan_to_goal_grid(env)
+
+    err = pred - true
+    mse = float(np.mean(err ** 2))
+    mae = float(np.mean(np.abs(err)))
+
+    # Pearson correlation (safe for small grids)
+    p = pred.flatten()
+    t = true.flatten()
+    p = p - p.mean()
+    t = t - t.mean()
+    denom = (np.sqrt(np.sum(p * p)) * np.sqrt(np.sum(t * t)) + 1e-12)
+    corr = float(np.sum(p * t) / denom)
+
+    return mse, mae, corr
 
 
 def verify_quasimetric_properties(model, states: torch.Tensor, device: str):
@@ -409,11 +487,17 @@ def main(cfg: Config):
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
 
-    # 创建环境
-    env = SimpleMaze2D(maze_size=cfg.maze_size)
+    # Build open grid environment
+    env = OpenGrid2D(grid_size=cfg.grid_size)
     state_dim = env.observation_space.shape[0]
-    
-    # 获取目标状态（归一化）
+
+    # Derive a natural scale (in steps) for an obstacle-free grid.
+    # Max Manhattan distance in steps is (H-1)+(W-1).
+    max_steps_dist = float((env.height - 1) + (env.width - 1))
+    # Global-push offset: keep small so it only prevents collapse (do NOT push everything to the diameter)
+    cfg.global_offset = float(max(cfg.step_cost, 1.0))
+
+    # Goal state (normalized)
     goal_pos = env.goal_pos
     goal_state = np.array([
         goal_pos[0] / (env.height - 1),
@@ -427,96 +511,144 @@ def main(cfg: Config):
 
     device = torch.device(cfg.device)
     model = QuasimetricNet(state_dim=state_dim, hidden_dim=cfg.hidden_dim).to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=cfg.lr)
 
-    # Lagrange multiplier
-    lambda_local = float(cfg.lambda_init)
+    # Create a constant goal tensor for state-to-goal batches
+    goal_t_const = torch.tensor(goal_state[None], device=device)
 
-    # 收集一些状态用于验证
-    all_states = []
-    for _ in range(100):
-        obs, _ = env.reset()
-        all_states.append(obs)
-    all_states_t = torch.tensor(np.array(all_states), device=device)
+    # Dual variable (Lagrange multiplier) parameterized via softplus.
+    raw_lagrange = nn.Parameter(
+        torch.tensor(float(np.log(np.exp(cfg.lambda_init) - 1.0)), dtype=torch.float32, device=device)
+    )
+
+    optim_model = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    optim_lagrange = torch.optim.Adam([raw_lagrange], lr=cfg.lambda_lr)
+
+    # Randomly sampled states in [0,1]^2 for property checks
+    all_states = np.random.rand(256, 2).astype(np.float32)
+    all_states_t = torch.tensor(all_states, device=device)
 
     pbar = trange(cfg.total_steps, desc="training")
     for step in pbar:
         if len(buffer) < cfg.batch_size:
             collect_random_transitions(env, buffer, cfg.init_transitions)
 
-        # 1) 从经验池采样 (s, s', r)
+        # 1) Sample (s, s', r) for local constraint
         s, a, s2, r, done = buffer.sample(cfg.batch_size)
         s_t = torch.tensor(s, device=device)
         s2_t = torch.tensor(s2, device=device)
         r_t = torch.tensor(r, device=device)
 
-        # 2) 为 global loss 采样 (s, g)
-        idx = np.random.choice(len(buffer), cfg.batch_size)
-        s_batch = np.array([buffer.buffer[i][0] for i in idx], dtype=np.float32)
-        g_batch = np.tile(goal_state[None], (cfg.batch_size, 1))
-        s_b_t = torch.tensor(s_batch, device=device)
-        g_b_t = torch.tensor(g_batch, device=device)
+        # 2) Global push (repo-style): apply to random state pairs to prevent collapse
+        idxu = np.random.choice(len(buffer), cfg.batch_size)
+        idxv = np.random.choice(len(buffer), cfg.batch_size)
+        s_u = np.array([buffer.buffer[i][0] for i in idxu], dtype=np.float32)
+        s_v = np.array([buffer.buffer[i][0] for i in idxv], dtype=np.float32)
+        s_u_t = torch.tensor(s_u, device=device)
+        s_v_t = torch.tensor(s_v, device=device)
 
         # 3) Triangle inequality batch
         idx1 = np.random.choice(len(buffer), cfg.batch_size)
         idx2 = np.random.choice(len(buffer), cfg.batch_size)
         idx3 = np.random.choice(len(buffer), cfg.batch_size)
         s1 = np.array([buffer.buffer[i][0] for i in idx1], dtype=np.float32)
-        s2 = np.array([buffer.buffer[i][0] for i in idx2], dtype=np.float32)
+        s2b = np.array([buffer.buffer[i][0] for i in idx2], dtype=np.float32)
         s3 = np.array([buffer.buffer[i][0] for i in idx3], dtype=np.float32)
         s1_t = torch.tensor(s1, device=device)
-        s2_t = torch.tensor(s2, device=device)
+        s2b_t = torch.tensor(s2b, device=device)
         s3_t = torch.tensor(s3, device=device)
 
-        d_ssp = model(s_t, s2_t)
-        d_sg = model(s_b_t, g_b_t)
+        # Global push uses random state-pair distances to prevent collapse
+        d_pairs = model(s_u_t, s_v_t)
+
         d_13 = model(s1_t, s3_t)
-        d_12 = model(s1_t, s2_t)
-        d_23 = model(s2_t, s3_t)
+        d_12 = model(s1_t, s2b_t)
+        d_23 = model(s2b_t, s3_t)
 
-        # 计算损失
-        sq_deviation, violation = local_constraint_loss(
-            d_ssp, step_cost=cfg.step_cost, epsilon=cfg.local_epsilon
+        # Local constraint
+        # Bellman-optimal local backup (4-neighbor min)
+        d_sg, sq_deviation, violation = local_constraint_stats_bellman_optimal(
+            model, s_t, goal_t_const, env.height, env.width,
+            step_cost=cfg.step_cost, epsilon=cfg.local_epsilon
         )
-        loss_global = global_push_loss(d_sg, beta=cfg.global_beta, offset=cfg.global_offset)
+
+        # 直接拟合 TD（比“只惩罚正 violation”稳定很多）
+        loss_local = sq_deviation
+
+        # Global push
+        loss_global = global_push_loss(d_pairs, beta=cfg.global_beta, offset=cfg.global_offset)
+        # Triangle inequality
         loss_tri = triangle_inequality_loss(d_13, d_12, d_23, margin=cfg.tri_margin)
+        # Small scale regularizer to avoid unbounded growth without hard clamping
+        loss_scale = d_pairs.square().mean()
 
-        if cfg.use_lagrange:
-            loss = cfg.global_weight * loss_global + cfg.tri_weight * loss_tri + lambda_local * violation
-        else:
-            loss = cfg.global_weight * loss_global + cfg.tri_weight * loss_tri + sq_deviation
+        # --- Anchors for the open-grid sanity check ---
+        # 1) Self-loss: encourages reflexivity d(s,s) -> 0
+        d_self = model(s_t, s_t)
+        loss_self = d_self.mean()
 
-        optim.zero_grad()
-        loss.backward()
-        optim.step()
+        # 2) One-step loss: anchors the scale for true one-step transitions.
+        # NOTE: At the grid boundary, some actions get clipped and produce s' == s (cost 0).
+        d_step = model(s_t, s2_t)
+        sx, sy = _snap_to_grid(s_t, env.height, env.width)
+        s2x, s2y = _snap_to_grid(s2_t, env.height, env.width)
+        moved = ((sx != s2x) | (sy != s2y)).float()
+        step_target = moved * cfg.step_cost
+        loss_step = (d_step - step_target).square().mean()
 
-        # 更新 lambda
-        if cfg.use_lagrange:
-            lambda_local = max(0.0, lambda_local + cfg.lambda_lr * float(violation.detach().cpu().item()))
+        # --- Dual variable (lagrange multiplier) ---
+        lagrange_mult = F.softplus(raw_lagrange)
+
+        # NOTE: `violation` can be negative when the constraint is satisfied; in the primal objective
+        # we only need to penalize *positive* violations for stability in this demo.
+        lambda_const = lagrange_mult.detach()
+        loss_model = (
+            cfg.global_weight * loss_global
+            + 1.0 * loss_local
+            + cfg.self_weight * loss_self
+            + cfg.step_weight * loss_step
+            + cfg.tri_weight * loss_tri
+            + cfg.scale_weight * loss_scale
+        )
+
+        optim_model.zero_grad()
+        loss_model.backward()
+        optim_model.step()
+
+        # Dual ascent on the constraint violation (maximize lambda * violation)
+        if cfg.use_lagrange and (step % cfg.lagrange_update_every == 0):
+            optim_lagrange.zero_grad()
+            loss_dual = -(F.softplus(raw_lagrange) * violation.detach())
+            loss_dual.backward()
+            optim_lagrange.step()
+
+        loss = loss_model.detach()
 
         if step % 100 == 0:
             pbar.set_postfix(
-                lambda_=f"{lambda_local:.3f}",
+                lambda_=f"{float(F.softplus(raw_lagrange).detach().cpu()):.3f}",
                 sq_dev=f"{sq_deviation.item():.4f}",
                 violation=f"{violation.item():.4f}",
                 global_loss=f"{loss_global.item():.4f}",
+                self_loss=f"{loss_self.item():.4f}",
+                step_loss=f"{loss_step.item():.4f}",
                 tri_loss=f"{loss_tri.item():.4f}",
-                total_loss=f"{loss.item():.4f}",
+                scale=f"{loss_scale.item():.4f}",
+                model_loss=f"{loss_model.item():.4f}",
             )
 
-        # 不定期再收一点随机数据
+        # Occasionally collect more random transitions
         if step > 0 and step % cfg.collect_interval == 0:
             collect_random_transitions(env, buffer, cfg.init_transitions // 2)
 
-        # 可视化和验证
+        # Visualization and property checks
         if step % cfg.viz_interval == 0:
-            # 可视化 heatmap
+            # Visualize heatmap
             visualize_quasimetric_heatmap(
-                model, env, goal_state, step, cfg.fig_dir, 
+                model, env, goal_state, step, cfg.fig_dir,
                 resolution=cfg.heatmap_resolution
             )
-            
-            # 验证准度量性质
+
+            # Verify quasimetric properties
             props = verify_quasimetric_properties(model, all_states_t, device)
             print(f"\nStep {step} - 准度量性质验证:")
             print(f"  非负性: min={props['non_negativity']['min']:.4f}, "
