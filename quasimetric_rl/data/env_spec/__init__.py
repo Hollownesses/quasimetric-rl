@@ -64,7 +64,9 @@ class EnvSpec:
     def make_action_input(self) -> input_encoding.InputEncoding:
         if isinstance(self.action_space, gym.spaces.Discrete):
             assert len(self.action_shape) == 0
-            return input_encoding.OneHot(input_shape=torch.Size([]), num_classes=self.action_space.n)
+            # Convert numpy.int64 to Python int for torch.jit.script compatibility
+            num_classes = int(self.action_space.n)
+            return input_encoding.OneHot(input_shape=torch.Size([]), num_classes=num_classes)
         elif isinstance(self.action_space, gym.spaces.Box):
             return input_encoding.Identity(input_shape=self.action_shape)
         else:

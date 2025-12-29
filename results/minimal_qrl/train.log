@@ -1,0 +1,189 @@
+2025-12-29 02:18:18,918 - INFO - 开始训练，输出目录: ./results/minimal_qrl
+2025-12-29 02:18:18,918 - INFO - 参数: Namespace(seed=42, device='cpu', output_dir='./results/minimal_qrl', grid_size=[10, 10], num_episodes=100, max_steps_per_episode=200, batch_size=256, total_steps=10000, num_critics=2, log_interval=100, save_interval=1000)
+2025-12-29 02:18:18,918 - INFO - 使用设备: cpu
+2025-12-29 02:18:18,918 - INFO - 创建数据集...
+2025-12-29 02:18:19,055 - INFO - 数据集大小: 16992 个转移
+2025-12-29 02:18:19,055 - INFO - 创建 QRL Agent 和 Losses...
+2025-12-29 02:19:49,393 - INFO - 开始训练，输出目录: ./results/minimal_qrl
+2025-12-29 02:19:49,394 - INFO - 参数: Namespace(seed=42, device='cpu', output_dir='./results/minimal_qrl', grid_size=[10, 10], num_episodes=100, max_steps_per_episode=200, batch_size=256, total_steps=10000, num_critics=2, log_interval=100, save_interval=1000)
+2025-12-29 02:19:49,394 - INFO - 使用设备: cpu
+2025-12-29 02:19:49,394 - INFO - 创建数据集...
+2025-12-29 02:19:49,525 - INFO - 数据集大小: 16292 个转移
+2025-12-29 02:19:49,525 - INFO - 创建 QRL Agent 和 Losses...
+2025-12-29 02:19:50,269 - INFO - Agent: QRLAgent(
+  (actor): None
+  (critics): ModuleList(
+    (0-1): 2 x QuasimetricCritic(
+      (encoder): Encoder(
+        input_shape=torch.Size([2]), latent_size=128
+        (input_encoding): Identity()
+        (encoder): MLP(
+          zero_init_last_fc=False
+          (module): RecursiveScriptModule(
+            original_name=Sequential
+            (0): RecursiveScriptModule(original_name=Linear)
+            (1): RecursiveScriptModule(original_name=ReLU)
+            (2): RecursiveScriptModule(original_name=Linear)
+            (3): RecursiveScriptModule(original_name=ReLU)
+            (4): RecursiveScriptModule(original_name=Linear)
+          )
+        )
+      )
+      (quasimetric_model): QuasimetricModel(
+        input_size=128
+        (quasimetric_head): IQE(
+          guaranteed_quasimetric=True
+          input_size=2048, num_components=64, discount=None
+          (transforms): Sequential()
+          (reduction): MaxMean(input_num_components=64)
+        )
+        (projector): MLP(
+          zero_init_last_fc=False
+          (module): RecursiveScriptModule(
+            original_name=Sequential
+            (0): RecursiveScriptModule(original_name=Linear)
+            (1): RecursiveScriptModule(original_name=ReLU)
+            (2): RecursiveScriptModule(original_name=Linear)
+          )
+        )
+      )
+      (latent_dynamics): LatentDynamics(
+        zero_init_last_fc=True
+        residual=True
+        (module): RecursiveScriptModule(
+          original_name=Sequential
+          (0): RecursiveScriptModule(original_name=Linear)
+          (1): RecursiveScriptModule(original_name=ReLU)
+          (2): RecursiveScriptModule(original_name=Linear)
+          (3): RecursiveScriptModule(original_name=ReLU)
+          (4): RecursiveScriptModule(original_name=Linear)
+        )
+        (action_input): OneHot()
+      )
+    )
+  )
+)
+2025-12-29 02:19:50,269 - INFO - Losses: QRLLosses(
+  (actor_loss): None
+  (critic_losses): ModuleList(
+    (0-1): 2 x QuasimetricCriticLosses(
+      (global_push): GlobalPushLoss(softplus_beta=0.1, softplus_offset=15)
+      (local_constraint): LocalConstraintLoss(epsilon=0.25, step_cost=1)
+      (latent_dynamics): LatentDynamicsLoss(weight=0.1)
+    )
+  )
+)
+2025-12-29 02:19:50,270 - INFO - 开始训练...
+2025-12-29 02:19:50,335 - INFO - 保存初始检查点: ./results/minimal_qrl/checkpoint_00000.pth
+2025-12-29 02:20:07,125 - INFO - Step 100: loss=15.6264
+2025-12-29 02:20:24,943 - INFO - Step 200: loss=11.9680
+2025-12-29 02:20:42,811 - INFO - Step 300: loss=18.0801
+2025-12-29 02:20:59,926 - INFO - Step 400: loss=19.6308
+2025-12-29 02:21:15,992 - INFO - Step 500: loss=20.2716
+2025-12-29 02:21:31,720 - INFO - Step 600: loss=20.3888
+2025-12-29 02:21:47,469 - INFO - Step 700: loss=21.8080
+2025-12-29 02:22:03,010 - INFO - Step 800: loss=21.2787
+2025-12-29 02:22:18,451 - INFO - Step 900: loss=22.1221
+2025-12-29 02:22:34,796 - INFO - Step 1000: loss=22.3007
+2025-12-29 02:22:34,904 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_01000.pth
+2025-12-29 02:22:50,941 - INFO - Step 1100: loss=22.1124
+2025-12-29 02:23:08,031 - INFO - Step 1200: loss=22.4951
+2025-12-29 02:23:24,538 - INFO - Step 1300: loss=22.3736
+2025-12-29 02:23:41,027 - INFO - Step 1400: loss=21.7893
+2025-12-29 02:23:57,755 - INFO - Step 1500: loss=22.1036
+2025-12-29 02:24:14,445 - INFO - Step 1600: loss=22.5583
+2025-12-29 02:24:29,942 - INFO - Step 1700: loss=22.5528
+2025-12-29 02:24:45,532 - INFO - Step 1800: loss=23.1789
+2025-12-29 02:25:00,711 - INFO - Step 1900: loss=23.5770
+2025-12-29 02:25:15,877 - INFO - Step 2000: loss=22.9475
+2025-12-29 02:25:15,981 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_02000.pth
+2025-12-29 02:25:32,410 - INFO - Step 2100: loss=22.5535
+2025-12-29 02:25:47,609 - INFO - Step 2200: loss=22.8216
+2025-12-29 02:26:02,994 - INFO - Step 2300: loss=23.2149
+2025-12-29 02:26:18,316 - INFO - Step 2400: loss=22.5072
+2025-12-29 02:26:33,644 - INFO - Step 2500: loss=22.5760
+2025-12-29 02:26:48,768 - INFO - Step 2600: loss=23.5889
+2025-12-29 02:27:04,086 - INFO - Step 2700: loss=22.4905
+2025-12-29 02:27:19,527 - INFO - Step 2800: loss=23.0173
+2025-12-29 02:27:34,751 - INFO - Step 2900: loss=22.4709
+2025-12-29 02:27:50,067 - INFO - Step 3000: loss=23.0484
+2025-12-29 02:27:50,171 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_03000.pth
+2025-12-29 02:28:05,654 - INFO - Step 3100: loss=22.9508
+2025-12-29 02:28:20,671 - INFO - Step 3200: loss=23.0467
+2025-12-29 02:28:36,313 - INFO - Step 3300: loss=22.5785
+2025-12-29 02:28:51,385 - INFO - Step 3400: loss=22.9681
+2025-12-29 02:29:06,866 - INFO - Step 3500: loss=22.7029
+2025-12-29 02:29:21,898 - INFO - Step 3600: loss=23.2945
+2025-12-29 02:29:37,078 - INFO - Step 3700: loss=22.6499
+2025-12-29 02:29:53,061 - INFO - Step 3800: loss=23.4019
+2025-12-29 02:30:08,694 - INFO - Step 3900: loss=23.2456
+2025-12-29 02:30:24,195 - INFO - Step 4000: loss=22.7894
+2025-12-29 02:30:24,306 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_04000.pth
+2025-12-29 02:30:40,618 - INFO - Step 4100: loss=22.1399
+2025-12-29 02:30:56,462 - INFO - Step 4200: loss=23.2472
+2025-12-29 02:31:12,039 - INFO - Step 4300: loss=23.3401
+2025-12-29 02:31:27,334 - INFO - Step 4400: loss=23.1630
+2025-12-29 02:31:43,247 - INFO - Step 4500: loss=22.8993
+2025-12-29 02:31:58,671 - INFO - Step 4600: loss=22.8274
+2025-12-29 02:32:14,000 - INFO - Step 4700: loss=22.9320
+2025-12-29 02:32:29,221 - INFO - Step 4800: loss=22.1942
+2025-12-29 02:32:44,888 - INFO - Step 4900: loss=23.1110
+2025-12-29 02:33:00,687 - INFO - Step 5000: loss=23.5467
+2025-12-29 02:33:00,788 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_05000.pth
+2025-12-29 02:33:16,504 - INFO - Step 5100: loss=22.7523
+2025-12-29 02:33:32,600 - INFO - Step 5200: loss=22.6155
+2025-12-29 02:33:47,969 - INFO - Step 5300: loss=22.7904
+2025-12-29 02:34:03,631 - INFO - Step 5400: loss=22.8672
+2025-12-29 02:34:19,515 - INFO - Step 5500: loss=22.2959
+2025-12-29 02:34:36,182 - INFO - Step 5600: loss=22.5902
+2025-12-29 02:34:52,846 - INFO - Step 5700: loss=23.6421
+2025-12-29 02:35:11,414 - INFO - Step 5800: loss=22.2722
+2025-12-29 02:35:29,735 - INFO - Step 5900: loss=23.2270
+2025-12-29 02:35:48,312 - INFO - Step 6000: loss=22.9880
+2025-12-29 02:35:48,426 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_06000.pth
+2025-12-29 02:36:06,257 - INFO - Step 6100: loss=23.4786
+2025-12-29 02:36:22,563 - INFO - Step 6200: loss=23.0500
+2025-12-29 02:36:38,502 - INFO - Step 6300: loss=23.4949
+2025-12-29 02:36:54,423 - INFO - Step 6400: loss=23.0407
+2025-12-29 02:37:09,766 - INFO - Step 6500: loss=22.5239
+2025-12-29 02:37:25,075 - INFO - Step 6600: loss=22.8814
+2025-12-29 02:37:40,952 - INFO - Step 6700: loss=22.6401
+2025-12-29 02:37:56,532 - INFO - Step 6800: loss=23.5953
+2025-12-29 02:38:12,107 - INFO - Step 6900: loss=23.0245
+2025-12-29 02:38:27,314 - INFO - Step 7000: loss=22.2253
+2025-12-29 02:38:27,404 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_07000.pth
+2025-12-29 02:38:43,693 - INFO - Step 7100: loss=22.8344
+2025-12-29 02:38:59,006 - INFO - Step 7200: loss=22.5722
+2025-12-29 02:39:14,572 - INFO - Step 7300: loss=23.1625
+2025-12-29 02:39:30,147 - INFO - Step 7400: loss=23.4433
+2025-12-29 04:41:02,048 - INFO - Step 7500: loss=23.1594
+2025-12-29 04:41:14,276 - INFO - Step 7600: loss=22.7769
+2025-12-29 04:41:26,446 - INFO - Step 7700: loss=22.6808
+2025-12-29 04:42:34,427 - INFO - Step 7800: loss=22.5823
+2025-12-29 04:42:47,534 - INFO - Step 7900: loss=22.7166
+2025-12-29 04:42:59,849 - INFO - Step 8000: loss=22.9237
+2025-12-29 04:42:59,939 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_08000.pth
+2025-12-29 04:43:13,050 - INFO - Step 8100: loss=22.9475
+2025-12-29 04:44:05,929 - INFO - Step 8200: loss=22.9830
+2025-12-29 04:44:18,557 - INFO - Step 8300: loss=22.7215
+2025-12-29 04:44:31,122 - INFO - Step 8400: loss=22.6812
+2025-12-29 04:44:43,432 - INFO - Step 8500: loss=22.6648
+2025-12-29 04:45:40,302 - INFO - Step 8600: loss=22.0133
+2025-12-29 04:45:52,847 - INFO - Step 8700: loss=22.9181
+2025-12-29 04:46:05,699 - INFO - Step 8800: loss=23.2317
+2025-12-29 04:47:07,973 - INFO - Step 8900: loss=22.9407
+2025-12-29 04:47:20,667 - INFO - Step 9000: loss=22.7405
+2025-12-29 04:47:20,744 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_09000.pth
+2025-12-29 04:47:33,681 - INFO - Step 9100: loss=22.7344
+2025-12-29 04:47:46,237 - INFO - Step 9200: loss=22.4689
+2025-12-29 04:48:42,567 - INFO - Step 9300: loss=22.7827
+2025-12-29 04:48:55,236 - INFO - Step 9400: loss=22.6057
+2025-12-29 04:49:07,800 - INFO - Step 9500: loss=22.2138
+2025-12-29 04:50:08,432 - INFO - Step 9600: loss=22.4883
+2025-12-29 04:50:21,590 - INFO - Step 9700: loss=22.8896
+2025-12-29 04:50:34,080 - INFO - Step 9800: loss=23.2050
+2025-12-29 04:50:46,759 - INFO - Step 9900: loss=23.5911
+2025-12-29 04:51:54,062 - INFO - Step 10000: loss=22.4684
+2025-12-29 04:51:54,165 - INFO - 保存检查点: ./results/minimal_qrl/checkpoint_10000.pth
+2025-12-29 04:51:54,241 - INFO - 保存最终模型: ./results/minimal_qrl/checkpoint_final.pth
+2025-12-29 04:51:54,241 - INFO - 训练完成！

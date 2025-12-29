@@ -33,8 +33,10 @@ class LatentDynamics(MLP):
 
     def __init__(self, *, latent_size:int, env_spec: EnvSpec, hidden_sizes: Tuple[int, ...], residual: bool):
         action_input = env_spec.make_action_input()
+        # Ensure output_size is Python int for torch.jit.script compatibility
+        action_output_size = int(action_input.output_size)
         super().__init__(
-            latent_size + action_input.output_size,
+            latent_size + action_output_size,
             latent_size,
             hidden_sizes=hidden_sizes,
             zero_init_last_fc=residual,
