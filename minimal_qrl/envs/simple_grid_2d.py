@@ -93,4 +93,3 @@ class SimpleGrid2D(gym.Env):
         
         print("\n".join(["".join(row) for row in grid]))
         print()
-

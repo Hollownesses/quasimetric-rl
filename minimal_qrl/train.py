@@ -21,8 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quasimetric_rl.modules import QRLConf, QRLAgent, QRLLosses
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
-from minimal_qrl.simple_env import SimpleGrid2D
+from minimal_qrl.envs.simple_grid_2d import SimpleGrid2D
 from minimal_qrl.dataset import create_simple_dataset
+from minimal_qrl.evaluation import evaluate_quasimetric, visualize_distance_field_heatmap
 
 
 def setup_logging(output_dir: str):
@@ -116,6 +117,9 @@ def train(args):
     # 创建 TensorBoard writer
     writer = SummaryWriter(log_dir=os.path.join(output_dir, 'tensorboard'))
     
+    # 创建环境实例用于评估
+    eval_env = SimpleGrid2D(grid_size=args.grid_size)
+    
     # 训练循环
     logger.info("开始训练...")
     optim_steps = 0
@@ -182,6 +186,62 @@ def train(args):
                 pbar.set_postfix_str(loss_str)
                 logger.info(loss_str)
             
+            # 评估和可视化
+            if optim_steps % args.eval_interval == 0:
+                logger.info(f"Step {optim_steps}: 开始评估...")
+                agent.eval()
+                
+                try:
+                    # 评估 quasimetric
+                    eval_metrics = evaluate_quasimetric(
+                        agent=agent,
+                        env=eval_env,
+                        n_pairs=args.eval_n_pairs,
+                        device=args.device,
+                        seed=args.seed + optim_steps,  # 使用不同的种子
+                    )
+                    
+                    # 记录到 TensorBoard
+                    for key, value in eval_metrics.items():
+                        writer.add_scalar(f'eval/{key}', value, optim_steps)
+                    
+                    # 打印评估结果
+                    eval_str = f"评估结果: MSE={eval_metrics['mse']:.4f}, "
+                    eval_str += f"MAE={eval_metrics['mae']:.4f}, "
+                    eval_str += f"Spearman={eval_metrics['spearman_corr']:.4f}, "
+                    eval_str += f"Pearson={eval_metrics['pearson_corr']:.4f}"
+                    logger.info(eval_str)
+                    
+                    # 可视化距离场
+                    try:
+                        heatmap_path = visualize_distance_field_heatmap(
+                            agent=agent,
+                            env=eval_env,
+                            goal=None,  # 使用 env.goal_pos
+                            step=optim_steps,
+                            output_dir=output_dir,
+                            device=args.device,
+                        )
+                        logger.info(f"已保存距离场热力图: {heatmap_path}")
+                        # 将图像添加到 TensorBoard
+                        try:
+                            from PIL import Image
+                            img = Image.open(heatmap_path)
+                            img_array = np.array(img)
+                            writer.add_image('eval/distance_heatmap', img_array, optim_steps, dataformats='HWC')
+                        except ImportError:
+                            # 如果没有 PIL，使用 matplotlib 读取
+                            import matplotlib.image as mpimg
+                            img_array = mpimg.imread(heatmap_path)
+                            writer.add_image('eval/distance_heatmap', img_array, optim_steps, dataformats='HWC')
+                    except Exception as e:
+                        logger.warning(f"可视化失败: {e}")
+                    
+                except Exception as e:
+                    logger.warning(f"评估失败: {e}")
+                finally:
+                    agent.train()
+            
             # 保存检查点
             if optim_steps % args.save_interval == 0:
                 checkpoint_path = os.path.join(output_dir, f'checkpoint_{optim_steps:05d}.pth')
@@ -232,6 +292,10 @@ def main():
     # 日志和保存
     parser.add_argument('--log-interval', type=int, default=100, help='日志记录间隔')
     parser.add_argument('--save-interval', type=int, default=1000, help='模型保存间隔')
+    
+    # 评估参数
+    parser.add_argument('--eval-interval', type=int, default=1000, help='评估间隔')
+    parser.add_argument('--eval-n-pairs', type=int, default=2000, help='评估时采样的状态-目标对数')
     
     args = parser.parse_args()
     train(args)

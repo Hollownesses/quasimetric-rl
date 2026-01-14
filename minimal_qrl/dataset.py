@@ -6,7 +6,7 @@ import random
 from typing import Iterator
 
 from quasimetric_rl.data import EpisodeData
-from minimal_qrl.simple_env import SimpleGrid2D
+from minimal_qrl.envs.simple_grid_2d import SimpleGrid2D
 
 
 def collect_random_episode(env: SimpleGrid2D, max_steps: int = 200) -> EpisodeData:
