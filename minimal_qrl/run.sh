@@ -8,8 +8,8 @@ python minimal_qrl/train.py \
     --grid-size 10 10 \
     --num-episodes 100 \
     --max-steps-per-episode 200 \
-    --batch-size 256 \
-    --total-steps 10000 \
+    --batch-size 128 \
+    --total-steps 5000 \
     --num-critics 2 \
     --log-interval 100 \
     --save-interval 1000

@@ -8,6 +8,8 @@
 - ✅ **简单环境**：使用简单的 2D 网格环境，无需 mujoco/d4rl
 - ✅ **完整训练闭环**：包含数据收集、训练、日志记录、模型保存
 - ✅ **可观测结果**：输出 loss 曲线（TensorBoard）和训练统计
+- ✅ **评估指标**：自动计算真实距离、Spearman/Pearson 相关系数、MSE/MAE 等
+- ✅ **可视化**：距离场热力图，对比预测距离与真实距离
 
 ## 快速开始
 
@@ -62,6 +64,10 @@ python minimal_qrl/train.py \
 - `--log-interval`: 日志记录间隔（默认: 100）
 - `--save-interval`: 模型保存间隔（默认: 1000）
 
+### 评估参数
+- `--eval-interval`: 评估间隔（默认: 1000）
+- `--eval-n-pairs`: 评估时采样的状态-目标对数（默认: 2000）
+
 ## 输出
 
 训练完成后，输出目录包含：
@@ -70,7 +76,18 @@ python minimal_qrl/train.py \
 - `tensorboard/`: TensorBoard 日志（可用 `tensorboard --logdir=results/minimal_qrl/tensorboard` 查看）
 - `checkpoint_*.pth`: 训练检查点
 - `checkpoint_final.pth`: 最终模型
+- `distance_heatmap_step*.png`: 距离场热力图（每个评估间隔生成一次）
 - `COMPLETE`: 完成标记文件
+
+### 评估指标
+
+在 TensorBoard 的 `eval/` 标签下可以查看：
+- `mse`: 均方误差
+- `mae`: 平均绝对误差
+- `spearman_corr`: Spearman 相关系数（衡量排序一致性）
+- `pearson_corr`: Pearson 相关系数（衡量线性相关性）
+- `relative_error`: 相对误差
+- `distance_heatmap`: 距离场热力图可视化
 
 ## 查看训练结果
 
