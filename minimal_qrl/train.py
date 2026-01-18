@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-最小可运行 QRL 核心训练脚本
+最小可运行 QRL 核心训练脚本（环境无关版本）
 使用核心 QRL 模块，不依赖 d4rl/mujoco/gym 等复杂环境
+支持多种环境：SimpleGrid2D, ContinuousObstacle2D 等
 """
 import os
 import sys
@@ -21,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quasimetric_rl.modules import QRLConf, QRLAgent, QRLLosses
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
-from minimal_qrl.envs.simple_grid_2d import SimpleGrid2D
-from minimal_qrl.dataset import create_simple_dataset
+from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D
+from minimal_qrl.dataset import create_dataset
 from minimal_qrl.evaluation import evaluate_quasimetric, visualize_distance_field_heatmap
 
 
@@ -41,6 +42,53 @@ def setup_logging(output_dir: str):
     return logging.getLogger(__name__)
 
 
+def create_env_factory(env_type: str, **env_kwargs):
+    """
+    创建环境工厂函数
+    
+    Args:
+        env_type: 环境类型 ('simple_grid' 或 'obstacle')
+        **env_kwargs: 环境参数
+    
+    Returns:
+        环境工厂函数
+    """
+    if env_type == 'simple_grid':
+        def factory():
+            return SimpleGrid2D(**env_kwargs)
+        return factory
+    elif env_type == 'obstacle':
+        def factory():
+            return ContinuousObstacle2D(**env_kwargs)
+        return factory
+    else:
+        raise ValueError(f"未知的环境类型: {env_type}")
+
+
+def get_env_kwargs(args) -> dict:
+    """
+    根据环境类型和参数获取环境参数字典
+    
+    Args:
+        args: 命令行参数
+    
+    Returns:
+        环境参数字典
+    """
+    if args.env_type == 'simple_grid':
+        return {
+            'grid_size': tuple(args.grid_size),
+            'max_episode_steps': args.max_steps_per_episode,
+        }
+    elif args.env_type == 'obstacle':
+        return {
+            'max_episode_steps': args.max_steps_per_episode,
+            'grid_resolution': getattr(args, 'grid_resolution', 100),
+        }
+    else:
+        raise ValueError(f"未知的环境类型: {args.env_type}")
+
+
 def train(args):
     """训练主函数"""
     # 设置随机种子
@@ -56,36 +104,54 @@ def train(args):
     # 设置日志
     logger = setup_logging(output_dir)
     logger.info(f"开始训练，输出目录: {output_dir}")
+    logger.info(f"环境类型: {args.env_type}")
     logger.info(f"参数: {args}")
     
-    # 设置设备
-    device = torch.device(args.device)
+    # 设置设备（支持 Apple Silicon MPS 加速）
+    if args.device == 'auto':
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+        elif torch.backends.mps.is_available():
+            device = torch.device('mps')
+        else:
+            device = torch.device('cpu')
+    else:
+        device = torch.device(args.device)
     logger.info(f"使用设备: {device}")
+    
+    # 获取环境参数
+    env_kwargs = get_env_kwargs(args)
+    logger.info(f"环境参数: {env_kwargs}")
+    
+    # 创建环境工厂函数
+    create_env_fn = create_env_factory(args.env_type, **env_kwargs)
     
     # 注册环境（如果还没注册）
     from quasimetric_rl.data.base import CREATE_ENV_REGISTRY
-    if ('simple_grid', 'grid2d') not in CREATE_ENV_REGISTRY:
-        def create_env():
-            return SimpleGrid2D(grid_size=args.grid_size)
-        
+    env_key = (args.env_type, args.env_name)
+    if env_key not in CREATE_ENV_REGISTRY:
         def load_episodes():
-            return create_simple_dataset(
-                env=SimpleGrid2D(grid_size=args.grid_size),
+            env = create_env_fn()
+            return create_dataset(
+                env=env,
                 num_episodes=args.num_episodes,
                 max_steps_per_episode=args.max_steps_per_episode,
+                sample_valid_states=True,
+                seed=args.seed,
             )
         
         register_offline_env(
-            'simple_grid', 'grid2d',
-            create_env_fn=create_env,
+            args.env_type, args.env_name,
+            create_env_fn=create_env_fn,
             load_episodes_fn=load_episodes,
         )
+        logger.info(f"已注册环境: {env_key}")
     
     # 创建数据集
     logger.info("创建数据集...")
     dataset_conf = Dataset.Conf(
-        kind='simple_grid',
-        name='grid2d',
+        kind=args.env_type,
+        name=args.env_name,
         future_observation_discount=0.99,
     )
     dataset = dataset_conf.make(dummy=False)
@@ -107,18 +173,21 @@ def train(args):
     logger.info(f"Losses: {losses}")
     
     # 创建数据加载器
+    # MPS 不支持 pin_memory，只在 CUDA 时启用
+    use_pin_memory = (device.type == 'cuda')
     dataloader = dataset.get_dataloader(
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
         num_workers=0,  # 简化版本，不使用多进程
+        pin_memory=use_pin_memory,
     )
     
     # 创建 TensorBoard writer
     writer = SummaryWriter(log_dir=os.path.join(output_dir, 'tensorboard'))
     
     # 创建环境实例用于评估
-    eval_env = SimpleGrid2D(grid_size=args.grid_size)
+    eval_env = create_env_fn()
     
     # 训练循环
     logger.info("开始训练...")
@@ -197,7 +266,7 @@ def train(args):
                         agent=agent,
                         env=eval_env,
                         n_pairs=args.eval_n_pairs,
-                        device=args.device,
+                        device=str(device),  # 使用实际设备而非 args.device（可能是 'auto'）
                         seed=args.seed + optim_steps,  # 使用不同的种子
                     )
                     
@@ -212,30 +281,31 @@ def train(args):
                     eval_str += f"Pearson={eval_metrics['pearson_corr']:.4f}"
                     logger.info(eval_str)
                     
-                    # 可视化距离场
-                    try:
-                        heatmap_path = visualize_distance_field_heatmap(
-                            agent=agent,
-                            env=eval_env,
-                            goal=None,  # 使用 env.goal_pos
-                            step=optim_steps,
-                            output_dir=output_dir,
-                            device=args.device,
-                        )
-                        logger.info(f"已保存距离场热力图: {heatmap_path}")
-                        # 将图像添加到 TensorBoard
+                    # 可视化距离场（按照 visualization_interval 间隔执行）
+                    if args.visualization_interval > 0 and optim_steps % args.visualization_interval == 0:
                         try:
-                            from PIL import Image
-                            img = Image.open(heatmap_path)
-                            img_array = np.array(img)
-                            writer.add_image('eval/distance_heatmap', img_array, optim_steps, dataformats='HWC')
-                        except ImportError:
-                            # 如果没有 PIL，使用 matplotlib 读取
-                            import matplotlib.image as mpimg
-                            img_array = mpimg.imread(heatmap_path)
-                            writer.add_image('eval/distance_heatmap', img_array, optim_steps, dataformats='HWC')
-                    except Exception as e:
-                        logger.warning(f"可视化失败: {e}")
+                            heatmap_path = visualize_distance_field_heatmap(
+                                agent=agent,
+                                env=eval_env,
+                                goal=None,  # 使用 env.goal_pos
+                                step=optim_steps,
+                                output_dir=output_dir,
+                                device=str(device),
+                            )
+                            logger.info(f"已保存距离场热力图: {heatmap_path}")
+                            # 将图像添加到 TensorBoard
+                            try:
+                                from PIL import Image
+                                img = Image.open(heatmap_path)
+                                img_array = np.array(img)
+                                writer.add_image('eval/distance_heatmap', img_array, optim_steps, dataformats='HWC')
+                            except ImportError:
+                                # 如果没有 PIL，使用 matplotlib 读取
+                                import matplotlib.image as mpimg
+                                img_array = mpimg.imread(heatmap_path)
+                                writer.add_image('eval/distance_heatmap', img_array, optim_steps, dataformats='HWC')
+                        except Exception as e:
+                            logger.warning(f"可视化失败: {e}")
                     
                 except Exception as e:
                     logger.warning(f"评估失败: {e}")
@@ -272,21 +342,30 @@ def train(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='最小可运行 QRL 训练脚本')
+    parser = argparse.ArgumentParser(description='最小可运行 QRL 训练脚本（环境无关版本）')
     
     # 训练参数
     parser.add_argument('--seed', type=int, default=42, help='随机种子')
-    parser.add_argument('--device', type=str, default='cpu', help='设备 (cpu/cuda)')
+    parser.add_argument('--device', type=str, default='auto', 
+                        help='设备 (auto/cpu/cuda/mps)，auto 会自动选择最佳设备')
     parser.add_argument('--output-dir', type=str, default='./results/minimal_qrl', help='输出目录')
     
     # 环境参数
-    parser.add_argument('--grid-size', type=int, nargs=2, default=[10, 10], help='网格大小 (height, width)')
+    parser.add_argument('--env-type', type=str, default='simple_grid',
+                        choices=['simple_grid', 'obstacle'],
+                        help='环境类型: simple_grid (简单网格) 或 obstacle (障碍物环境)')
+    parser.add_argument('--env-name', type=str, default='grid2d',
+                        help='环境名称（用于注册，如 grid2d, obstacle2d）')
+    parser.add_argument('--grid-size', type=int, nargs=2, default=[10, 10],
+                        help='网格大小 (height, width)，仅用于 simple_grid 环境')
+    parser.add_argument('--grid-resolution', type=int, default=50,
+                        help='A* 搜索的网格分辨率，仅用于 obstacle 环境（降低可加速评估）')
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')
     
     # 训练参数
-    parser.add_argument('--batch-size', type=int, default=256, help='批次大小')
-    parser.add_argument('--total-steps', type=int, default=10000, help='总训练步数')
+    parser.add_argument('--batch-size', type=int, default=256, help='批次大小（增大可提升GPU利用率）')
+    parser.add_argument('--total-steps', type=int, default=5000, help='总训练步数')
     parser.add_argument('--num-critics', type=int, default=2, help='Critic 数量')
     
     # 日志和保存
@@ -294,8 +373,10 @@ def main():
     parser.add_argument('--save-interval', type=int, default=1000, help='模型保存间隔')
     
     # 评估参数
-    parser.add_argument('--eval-interval', type=int, default=1000, help='评估间隔')
-    parser.add_argument('--eval-n-pairs', type=int, default=2000, help='评估时采样的状态-目标对数')
+    parser.add_argument('--eval-interval', type=int, default=1000, help='评估间隔（步数）')
+    parser.add_argument('--eval-n-pairs', type=int, default=500, help='评估时采样的状态-目标对数（减少可加速评估）')
+    parser.add_argument('--visualization-interval', type=int, default=1000,
+                        help='可视化间隔（步数），设为0禁用可视化')
     
     args = parser.parse_args()
     train(args)

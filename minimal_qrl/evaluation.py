@@ -1,5 +1,6 @@
 """
 QRL 评估模块：计算真实距离、评估指标和可视化
+支持多种环境，使用环境的真实最短路径距离
 """
 import os
 from typing import Tuple, Dict, Optional
@@ -7,109 +8,81 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-
-# 尝试导入 scipy，如果不可用则使用简化实现
-try:
-    from scipy.stats import spearmanr
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
-    def spearmanr(x, y):
-        """简化版 Spearman 相关系数（使用排序）"""
-        # 使用 numpy 实现排序
-        x_rank = np.argsort(np.argsort(x)) + 1.0
-        y_rank = np.argsort(np.argsort(y)) + 1.0
-        
-        # Pearson 相关系数在排序后的数据上
-        x_rank_centered = x_rank - x_rank.mean()
-        y_rank_centered = y_rank - y_rank.mean()
-        num = np.sum(x_rank_centered * y_rank_centered)
-        den = np.sqrt(np.sum(x_rank_centered ** 2) * np.sum(y_rank_centered ** 2)) + 1e-12
-        corr = num / den
-        return corr, 0.0  # p-value 设为 0（无法计算）
-
-from minimal_qrl.envs.simple_grid_2d import SimpleGrid2D
+import gym
+from scipy.stats import spearmanr
+from minimal_qrl.envs.base import BaseNavigationEnv
 
 
-def compute_manhattan_distance(
-    s: np.ndarray, 
-    g: np.ndarray, 
-    grid_size: Tuple[int, int]
+def compute_ground_truth_distance(
+    env: gym.Env,
+    start: np.ndarray,
+    goal: np.ndarray
 ) -> float:
     """
-    计算两个状态之间的 Manhattan 距离（真实最短路）
+    计算两个状态之间的真实最短路径距离
+    
+    如果环境实现了 BaseNavigationEnv 接口，使用其 compute_shortest_path_distance 方法
+    否则使用欧几里得距离作为默认值
     
     Args:
-        s: 起始状态，归一化坐标 [0, 1]^2
-        g: 目标状态，归一化坐标 [0, 1]^2
-        grid_size: (height, width)
+        env: 环境实例
+        start: 起始状态，归一化坐标
+        goal: 目标状态，归一化坐标
     
     Returns:
-        Manhattan 距离（步数）
+        真实最短路径距离
     """
-    h, w = grid_size
-    
-    # 归一化坐标 -> 离散网格坐标
-    sx = int(np.round(s[0] * (h - 1)))
-    sy = int(np.round(s[1] * (w - 1)))
-    gx = int(np.round(g[0] * (h - 1)))
-    gy = int(np.round(g[1] * (w - 1)))
-    
-    # 限制在网格范围内
-    sx = np.clip(sx, 0, h - 1)
-    sy = np.clip(sy, 0, w - 1)
-    gx = np.clip(gx, 0, h - 1)
-    gy = np.clip(gy, 0, w - 1)
-    
-    # Manhattan 距离
-    return float(np.abs(sx - gx) + np.abs(sy - gy))
+    if isinstance(env, BaseNavigationEnv):
+        return env.compute_shortest_path_distance(start=start, goal=goal)
+    else:
+        # 默认使用欧几里得距离
+        return float(np.linalg.norm(start - goal))
 
 
 def sample_state_goal_pairs(
-    env: SimpleGrid2D,
+    env: gym.Env,
     n_pairs: int = 2000,
     seed: Optional[int] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    随机采样状态-目标对
+    随机采样状态-目标对，确保状态合法
     
     Args:
-        env: 环境实例
+        env: 环境实例（应实现 BaseNavigationEnv 接口）
         n_pairs: 采样对数
         seed: 随机种子
     
     Returns:
-        states: (n_pairs, 2) 归一化状态
-        goals: (n_pairs, 2) 归一化目标
+        states: (n_pairs, obs_dim) 合法状态
+        goals: (n_pairs, obs_dim) 合法目标
     """
     if seed is not None:
         np.random.seed(seed)
     
-    h, w = env.grid_size
+    states = []
+    goals = []
     
-    # 随机采样离散网格坐标
-    s_x = np.random.randint(0, h, size=n_pairs)
-    s_y = np.random.randint(0, w, size=n_pairs)
-    g_x = np.random.randint(0, h, size=n_pairs)
-    g_y = np.random.randint(0, w, size=n_pairs)
+    # 如果环境实现了 BaseNavigationEnv 接口，使用其 sample_valid_state 方法
+    if isinstance(env, BaseNavigationEnv):
+        for i in range(n_pairs):
+            state = env.sample_valid_state(seed=seed + i if seed is not None else None)
+            goal = env.sample_valid_state(seed=seed + i + n_pairs if seed is not None else None)
+            states.append(state)
+            goals.append(goal)
+    else:
+        # 否则，从观察空间采样
+        for i in range(n_pairs):
+            state = env.observation_space.sample()
+            goal = env.observation_space.sample()
+            states.append(state)
+            goals.append(goal)
     
-    # 转换为归一化坐标
-    states = np.stack([
-        s_x.astype(np.float32) / (h - 1),
-        s_y.astype(np.float32) / (w - 1)
-    ], axis=1)
-    
-    goals = np.stack([
-        g_x.astype(np.float32) / (h - 1),
-        g_y.astype(np.float32) / (w - 1)
-    ], axis=1)
-    
-    return states, goals
+    return np.array(states, dtype=np.float32), np.array(goals, dtype=np.float32)
 
 
 def evaluate_quasimetric(
     agent: nn.Module,
-    env: SimpleGrid2D,
+    env: gym.Env,
     n_pairs: int = 2000,
     device: str = 'cpu',
     seed: Optional[int] = None
@@ -117,9 +90,11 @@ def evaluate_quasimetric(
     """
     评估 QRL 学习到的 quasimetric
     
+    使用环境的真实最短路径距离作为 ground truth
+    
     Args:
         agent: QRL Agent（包含 critics）
-        env: 环境实例
+        env: 环境实例（应实现 BaseNavigationEnv 接口）
         n_pairs: 采样对数
         device: 设备
         seed: 随机种子
@@ -127,7 +102,7 @@ def evaluate_quasimetric(
     Returns:
         评估指标字典
     """
-    # 采样状态-目标对
+    # 采样状态-目标对（确保状态合法）
     states, goals = sample_state_goal_pairs(env, n_pairs=n_pairs, seed=seed)
     
     # 转换为 tensor
@@ -143,9 +118,9 @@ def evaluate_quasimetric(
         # 计算 quasimetric 距离
         pred_dists = critic.quasimetric_model(zx, zy).cpu().numpy()
     
-    # 计算真实距离
+    # 计算真实距离（使用环境的真实最短路径距离）
     gt_dists = np.array([
-        compute_manhattan_distance(s, g, env.grid_size)
+        compute_ground_truth_distance(env, s, g)
         for s, g in zip(states, goals)
     ])
     
@@ -195,44 +170,77 @@ def evaluate_quasimetric(
 
 def visualize_distance_field_heatmap(
     agent: nn.Module,
-    env: SimpleGrid2D,
+    env: gym.Env,
     goal: Optional[np.ndarray] = None,
     step: int = 0,
     output_dir: str = './results',
-    device: str = 'cpu'
+    device: str = 'cpu',
+    resolution: Optional[Tuple[int, int]] = None
 ):
     """
     可视化距离场热力图
     
+    支持多种环境，使用环境的真实最短路径距离
+    
     Args:
         agent: QRL Agent
-        env: 环境实例
-        goal: 目标状态（归一化坐标），如果为 None 则使用 env.goal_pos
+        env: 环境实例（应实现 BaseNavigationEnv 接口）
+        goal: 目标状态（归一化坐标），如果为 None 则从环境获取
         step: 训练步数
         output_dir: 输出目录
         device: 设备
+        resolution: 可视化分辨率 (height, width)，如果为 None 则根据环境自动确定
     """
     os.makedirs(output_dir, exist_ok=True)
     
     # 确定目标
     if goal is None:
-        gx, gy = env.goal_pos
-        h, w = env.grid_size
-        goal = np.array([
-            gx / (h - 1),
-            gy / (w - 1)
-        ], dtype=np.float32)
+        if isinstance(env, BaseNavigationEnv):
+            if hasattr(env, 'goal_pos'):
+                # SimpleGrid2D
+                gx, gy = env.goal_pos
+                h, w = env.grid_size
+                goal = np.array([
+                    gx / (h - 1),
+                    gy / (w - 1)
+                ], dtype=np.float32)
+            elif hasattr(env, 'goal'):
+                # ContinuousObstacle2D
+                goal = np.array(env.goal, dtype=np.float32)
+            else:
+                # 采样一个合法目标
+                goal = env.sample_valid_state()
+        else:
+            # 从观察空间采样
+            goal = env.observation_space.sample()
     
-    h, w = env.grid_size
+    # 确定分辨率（降低分辨率可显著加速可视化）
+    if resolution is None:
+        if hasattr(env, 'grid_size'):
+            # SimpleGrid2D - 使用网格大小
+            h, w = env.grid_size
+        else:
+            # 障碍物环境 - 使用较低分辨率以加速
+            h, w = 25, 25
+    else:
+        h, w = resolution
+    
     device_obj = torch.device(device)
     
     # 创建网格
-    x_coords = np.arange(h, dtype=np.float32) / (h - 1)
-    y_coords = np.arange(w, dtype=np.float32) / (w - 1)
+    x_coords = np.linspace(0.0, 1.0, h, dtype=np.float32)
+    y_coords = np.linspace(0.0, 1.0, w, dtype=np.float32)
     Y, X = np.meshgrid(y_coords, x_coords)
     
     # 计算所有网格点的距离
     states = np.stack([X.flatten(), Y.flatten()], axis=1).astype(np.float32)
+    
+    # 过滤合法状态（对于障碍物环境）
+    if isinstance(env, BaseNavigationEnv):
+        valid_mask = np.array([env.is_valid_state(s) for s in states])
+    else:
+        valid_mask = np.ones(len(states), dtype=bool)
+    
     states_t = torch.tensor(states, device=device_obj, dtype=torch.float32)
     goal_t = torch.tensor(goal[None].repeat(len(states), 0), device=device_obj, dtype=torch.float32)
     
@@ -247,13 +255,10 @@ def visualize_distance_field_heatmap(
     
     # 计算真实距离（用于对比）
     gt_dists = np.zeros((h, w), dtype=np.float32)
-    gx, gy = int(np.round(goal[0] * (h - 1))), int(np.round(goal[1] * (w - 1)))
-    gx, gy = np.clip(gx, 0, h - 1), np.clip(gy, 0, w - 1)
-    
     for i in range(h):
         for j in range(w):
-            s = np.array([i / (h - 1), j / (w - 1)], dtype=np.float32)
-            gt_dists[i, j] = compute_manhattan_distance(s, goal, (h, w))
+            s = np.array([x_coords[i], y_coords[j]], dtype=np.float32)
+            gt_dists[i, j] = compute_ground_truth_distance(env, s, goal)
     
     # 绘制
     fig = plt.figure(figsize=(16, 6))
@@ -277,7 +282,7 @@ def visualize_distance_field_heatmap(
                      cmap='viridis', aspect='auto', interpolation='nearest')
     ax2.set_xlabel('Y position (normalized)')
     ax2.set_ylabel('X position (normalized)')
-    ax2.set_title('Ground Truth Distance (Manhattan)')
+    ax2.set_title('Ground Truth Distance (Shortest Path)')
     plt.colorbar(im2, ax=ax2, label='Distance')
     ax2.plot(goal[1], goal[0], 'r*', markersize=20, label='Goal')
     ax2.legend()

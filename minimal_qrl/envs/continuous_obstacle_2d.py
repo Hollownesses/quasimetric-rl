@@ -3,9 +3,11 @@
 """
 import numpy as np
 import gym
-import gym.spaces
+from gym import spaces
 from typing import Tuple, Optional, List
 from dataclasses import dataclass
+
+from .base import BaseNavigationEnv
 
 
 @dataclass
@@ -66,7 +68,7 @@ class Obstacle:
         return False
 
 
-class ContinuousObstacle2D(gym.Env):
+class ContinuousObstacle2D(BaseNavigationEnv):
     """
     2D 连续空间导航环境，包含矩形障碍物
     
@@ -104,7 +106,7 @@ class ContinuousObstacle2D(gym.Env):
         self.grid_resolution = grid_resolution
         
         # 动作空间: 连续位移 (dx, dy)，范围 [-max_step_size, max_step_size]
-        self.action_space = gym.spaces.Box(
+        self.action_space = spaces.Box(
             low=-max_step_size,
             high=max_step_size,
             shape=(2,),
@@ -112,7 +114,7 @@ class ContinuousObstacle2D(gym.Env):
         )
         
         # 观察空间: 连续二维坐标 [0, 1]^2
-        self.observation_space = gym.spaces.Box(
+        self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
             shape=(2,),
@@ -142,6 +144,43 @@ class ContinuousObstacle2D(gym.Env):
                 return False
         
         return True
+    
+    def is_valid_state(self, state: np.ndarray) -> bool:
+        """
+        检查状态是否合法（不在障碍物内且在边界内）
+        
+        Args:
+            state: 状态数组，形状为 (2,)，归一化坐标 [0, 1]^2
+        
+        Returns:
+            是否为合法状态
+        """
+        return self._is_valid_position(float(state[0]), float(state[1]))
+    
+    def sample_valid_state(self, seed: Optional[int] = None) -> np.ndarray:
+        """
+        采样一个合法状态（不在障碍物内）
+        
+        Args:
+            seed: 随机种子
+        
+        Returns:
+            合法状态数组，形状为 (2,)，归一化坐标 [0, 1]^2
+        """
+        if seed is not None:
+            np.random.seed(seed)
+        
+        # 尝试采样，最多尝试 1000 次
+        max_attempts = 1000
+        for _ in range(max_attempts):
+            x = np.random.uniform(0.0, 1.0)
+            y = np.random.uniform(0.0, 1.0)
+            state = np.array([x, y], dtype=np.float32)
+            if self.is_valid_state(state):
+                return state
+        
+        # 如果采样失败，返回起点（应该是合法的）
+        return np.array(self.start, dtype=np.float32)
     
     def _project_to_valid(self, x: float, y: float) -> Tuple[float, float]:
         """将位置投影到最近的合法区域"""
@@ -277,27 +316,36 @@ class ContinuousObstacle2D(gym.Env):
     
     def compute_shortest_path_distance(
         self,
-        start: Optional[Tuple[float, float]] = None,
-        goal: Optional[Tuple[float, float]] = None
+        start: Optional[np.ndarray] = None,
+        goal: Optional[np.ndarray] = None
     ) -> float:
         """
         计算从起点到终点的真实最短路径距离（使用 grid discretization + A*）
         仅用于评估，不参与训练
         
         Args:
-            start: 起始位置，如果为 None 则使用 self.start
-            goal: 目标位置，如果为 None 则使用 self.goal
+            start: 起始位置（归一化坐标），如果为 None 则使用 self.start
+            goal: 目标位置（归一化坐标），如果为 None 则使用 self.goal
         
         Returns:
             最短路径距离（欧几里得距离）
         """
         if start is None:
-            start = self.start
+            start = np.array(self.start, dtype=np.float32)
+        else:
+            start = np.array(start, dtype=np.float32)
+        
         if goal is None:
-            goal = self.goal
+            goal = np.array(self.goal, dtype=np.float32)
+        else:
+            goal = np.array(goal, dtype=np.float32)
+        
+        # 转换为元组格式（用于内部实现）
+        start_tuple = (float(start[0]), float(start[1]))
+        goal_tuple = (float(goal[0]), float(goal[1]))
         
         # 使用缓存
-        cache_key = (start, goal)
+        cache_key = (start_tuple, goal_tuple)
         if self._distance_cache is not None and cache_key in self._distance_cache:
             return self._distance_cache[cache_key]
         
