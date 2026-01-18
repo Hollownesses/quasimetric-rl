@@ -2,22 +2,48 @@
 # 一键运行最小 QRL 训练脚本
 # 支持 Apple Silicon MPS 加速
 
-# 默认配置（自动检测最佳设备：MPS > CUDA > CPU）
+# 默认simple_grid环境
 python minimal_qrl/train.py \
-    --seed 42 \
     --device auto \
+    --env-type simple_grid \
+    --env-name grid2d \
     --output-dir ./results/minimal_qrl \
     --grid-size 10 10 \
     --num-episodes 100 \
     --max-steps-per-episode 200 \
     --batch-size 256 \
-    --total-steps 5000 \
+    --total-steps 8000 \
     --num-critics 2 \
     --log-interval 100 \
     --save-interval 1000 \
     --eval-interval 1000 \
     --eval-n-pairs 500 \
     --visualization-interval 1000
+
+"""
+
+# obstacle环境
+python minimal_qrl/train.py \
+    --device auto \
+    --env-type obstacle \
+    --env-name obstacle2d \
+    --output-dir ./results/minimal_qrl \
+    --grid-resolution 50 \
+    --num-episodes 100 \
+    --max-steps-per-episode 200 \
+    --batch-size 256 \
+    --total-steps 8000 \
+    --num-critics 2 \
+    --log-interval 100 \
+    --save-interval 1000 \
+    --eval-interval 1000 \
+    --eval-n-pairs 500 \
+    --visualization-interval 1000 \
+    --planning-num-action-candidates 64 \
+    --planning-visualize-failures \
+    --planning-visualize-interval 2000
+
+"""
 
 # 如果需要更快的训练（减少评估和可视化频率）:
 # python minimal_qrl/train.py \

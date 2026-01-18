@@ -10,6 +10,7 @@ import argparse
 import logging
 from pathlib import Path
 from typing import *
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -24,7 +25,7 @@ from quasimetric_rl.modules import QRLConf, QRLAgent, QRLLosses
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
 from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D
 from minimal_qrl.dataset import create_dataset
-from minimal_qrl.evaluation import evaluate_quasimetric, visualize_distance_field_heatmap
+from minimal_qrl.evaluation import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning
 
 
 def setup_logging(output_dir: str):
@@ -183,8 +184,12 @@ def train(args):
         pin_memory=use_pin_memory,
     )
     
-    # 创建 TensorBoard writer
-    writer = SummaryWriter(log_dir=os.path.join(output_dir, 'tensorboard'))
+    # 创建 TensorBoard writer（使用带时间戳的子目录，便于区分不同训练）
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    tensorboard_dir = os.path.join(output_dir, 'tensorboard', timestamp)
+    os.makedirs(tensorboard_dir, exist_ok=True)
+    writer = SummaryWriter(log_dir=tensorboard_dir)
+    logger.info(f"TensorBoard 日志目录: {tensorboard_dir}")
     
     # 创建环境实例用于评估
     eval_env = create_env_fn()
@@ -281,6 +286,53 @@ def train(args):
                     eval_str += f"Pearson={eval_metrics['pearson_corr']:.4f}"
                     logger.info(eval_str)
                     
+                    # Planning / Reachability 评估（仅对 obstacle 环境）
+                    if args.env_type == 'obstacle' and args.planning_eval_interval > 0:
+                        if optim_steps % args.planning_eval_interval == 0:
+                            try:
+                                logger.info("开始 Planning / Reachability 评估...")
+                                planning_results = evaluate_planning(
+                                    agent=agent,
+                                    env=eval_env,
+                                    n_trials=args.planning_eval_n_trials,
+                                    device=str(device),
+                                    seed=args.seed + optim_steps,
+                                    num_action_candidates=args.planning_num_action_candidates,
+                                    visualize_failures=(args.planning_visualize_failures and 
+                                                       optim_steps % args.planning_visualize_interval == 0),
+                                    output_dir=output_dir,
+                                    step=optim_steps
+                                )
+                                
+                                # 记录到 TensorBoard
+                                if 'greedy_navigation' in planning_results:
+                                    gn = planning_results['greedy_navigation']
+                                    writer.add_scalar('planning/success_rate', gn['success_rate'], optim_steps)
+                                    writer.add_scalar('planning/avg_steps', gn['avg_steps'], optim_steps)
+                                    writer.add_scalar('planning/avg_path_length', gn['avg_path_length'], optim_steps)
+                                
+                                if 'path_efficiency' in planning_results:
+                                    pe = planning_results['path_efficiency']
+                                    writer.add_scalar('planning/avg_efficiency_ratio', pe['avg_efficiency_ratio'], optim_steps)
+                                    writer.add_scalar('planning/median_efficiency_ratio', pe['median_efficiency_ratio'], optim_steps)
+                                
+                                # 打印结果
+                                if 'greedy_navigation' in planning_results:
+                                    gn = planning_results['greedy_navigation']
+                                    planning_str = f"Planning评估: Success Rate={gn['success_rate']:.3f}, "
+                                    planning_str += f"Avg Steps={gn['avg_steps']:.1f}, "
+                                    planning_str += f"Avg Path Length={gn['avg_path_length']:.3f}"
+                                    logger.info(planning_str)
+                                
+                                if 'path_efficiency' in planning_results:
+                                    pe = planning_results['path_efficiency']
+                                    efficiency_str = f"Path Efficiency: Avg Ratio={pe['avg_efficiency_ratio']:.3f}, "
+                                    efficiency_str += f"Median={pe['median_efficiency_ratio']:.3f}"
+                                    logger.info(efficiency_str)
+                                
+                            except Exception as e:
+                                logger.warning(f"Planning 评估失败: {e}")
+                    
                     # 可视化距离场（按照 visualization_interval 间隔执行）
                     if args.visualization_interval > 0 and optim_steps % args.visualization_interval == 0:
                         try:
@@ -365,7 +417,7 @@ def main():
     
     # 训练参数
     parser.add_argument('--batch-size', type=int, default=256, help='批次大小（增大可提升GPU利用率）')
-    parser.add_argument('--total-steps', type=int, default=5000, help='总训练步数')
+    parser.add_argument('--total-steps', type=int, default=10000, help='总训练步数')
     parser.add_argument('--num-critics', type=int, default=2, help='Critic 数量')
     
     # 日志和保存
@@ -377,6 +429,18 @@ def main():
     parser.add_argument('--eval-n-pairs', type=int, default=500, help='评估时采样的状态-目标对数（减少可加速评估）')
     parser.add_argument('--visualization-interval', type=int, default=1000,
                         help='可视化间隔（步数），设为0禁用可视化')
+    
+    # Planning / Reachability 评估参数
+    parser.add_argument('--planning-eval-interval', type=int, default=1000,
+                        help='Planning 评估间隔（步数），设为0禁用 Planning 评估')
+    parser.add_argument('--planning-eval-n-trials', type=int, default=100,
+                        help='Planning 评估时的测试次数')
+    parser.add_argument('--planning-num-action-candidates', type=int, default=32,
+                        help='Planning 评估时每步候选动作数量')
+    parser.add_argument('--planning-visualize-failures', action='store_true',
+                        help='是否可视化失败案例')
+    parser.add_argument('--planning-visualize-interval', type=int, default=2000,
+                        help='Failure mode 可视化间隔（步数）')
     
     args = parser.parse_args()
     train(args)

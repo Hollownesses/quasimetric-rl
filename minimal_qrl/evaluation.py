@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import gym
 from scipy.stats import spearmanr
 from minimal_qrl.envs.base import BaseNavigationEnv
+from minimal_qrl.planning_evaluation import evaluate_planning_reachability
 
 
 def compute_ground_truth_distance(
@@ -307,4 +308,47 @@ def visualize_distance_field_heatmap(
     plt.close()
     
     return fname
+
+
+def evaluate_planning(
+    agent: nn.Module,
+    env: gym.Env,
+    n_trials: int = 100,
+    device: str = 'cpu',
+    seed: Optional[int] = None,
+    num_action_candidates: int = 32,
+    visualize_failures: bool = False,
+    output_dir: str = './results',
+    step: int = 0
+) -> Dict[str, any]:
+    """
+    评估 Planning / Reachability 功能（便捷函数）
+    
+    这是 evaluate_planning_reachability 的便捷包装，用于与现有评估流程集成
+    
+    Args:
+        agent: QRL Agent
+        env: 环境实例
+        n_trials: 测试次数
+        device: 设备
+        seed: 随机种子
+        num_action_candidates: 每步候选动作数量
+        visualize_failures: 是否可视化失败案例
+        output_dir: 输出目录
+        step: 训练步数
+    
+    Returns:
+        包含所有评估指标的字典
+    """
+    return evaluate_planning_reachability(
+        agent=agent,
+        env=env,
+        n_trials=n_trials,
+        device=device,
+        seed=seed,
+        num_action_candidates=num_action_candidates,
+        visualize_failures=visualize_failures,
+        output_dir=output_dir,
+        step=step
+    )
 

@@ -10,6 +10,10 @@
 - ✅ **可观测结果**：输出 loss 曲线（TensorBoard）和训练统计
 - ✅ **评估指标**：自动计算真实距离、Spearman/Pearson 相关系数、MSE/MAE 等
 - ✅ **可视化**：距离场热力图，对比预测距离与真实距离
+- ✅ **Planning / Reachability 评估**：专门面向 obstacle navigation 的评估功能
+  - Greedy Navigation Success Rate：使用 QRL distance 进行 greedy navigation
+  - Path Efficiency：计算实际路径与最短路径的竞争比
+  - Failure Mode 可视化：分析 QRL 在 obstacle 场景下的典型失效模式
 
 ## 快速开始
 
@@ -66,7 +70,15 @@ python minimal_qrl/train.py \
 
 ### 评估参数
 - `--eval-interval`: 评估间隔（默认: 1000）
-- `--eval-n-pairs`: 评估时采样的状态-目标对数（默认: 2000）
+- `--eval-n-pairs`: 评估时采样的状态-目标对数（默认: 500）
+- `--visualization-interval`: 可视化间隔（默认: 1000，设为 0 禁用）
+
+### Planning / Reachability 评估参数（仅 obstacle 环境）
+- `--planning-eval-interval`: Planning 评估间隔（默认: 1000，设为 0 禁用）
+- `--planning-eval-n-trials`: Planning 评估时的测试次数（默认: 100）
+- `--planning-num-action-candidates`: 每步候选动作数量（默认: 32）
+- `--planning-visualize-failures`: 是否可视化失败案例（需要配合 `--planning-visualize-interval` 使用）
+- `--planning-visualize-interval`: Failure mode 可视化间隔（默认: 2000）
 
 ## 输出
 
@@ -77,6 +89,7 @@ python minimal_qrl/train.py \
 - `checkpoint_*.pth`: 训练检查点
 - `checkpoint_final.pth`: 最终模型
 - `distance_heatmap_step*.png`: 距离场热力图（每个评估间隔生成一次）
+- `failure_mode_*_step*.png`: Failure mode 可视化（如果启用）
 - `COMPLETE`: 完成标记文件
 
 ### 评估指标
@@ -88,6 +101,13 @@ python minimal_qrl/train.py \
 - `pearson_corr`: Pearson 相关系数（衡量线性相关性）
 - `relative_error`: 相对误差
 - `distance_heatmap`: 距离场热力图可视化
+
+在 TensorBoard 的 `planning/` 标签下可以查看（仅 obstacle 环境）：
+- `success_rate`: Greedy Navigation 成功率
+- `avg_steps`: 平均步数（仅成功案例）
+- `avg_path_length`: 平均路径长度（仅成功案例）
+- `avg_efficiency_ratio`: 平均路径效率比（实际路径长度 / 最短路径长度）
+- `median_efficiency_ratio`: 中位数路径效率比
 
 ## 查看训练结果
 
@@ -109,12 +129,17 @@ tail -f results/minimal_qrl/train.log
 
 ```
 minimal_qrl/
-├── __init__.py          # 包初始化
-├── simple_env.py        # 简单的 2D 网格环境
-├── dataset.py           # 数据集创建
-├── train.py             # 主训练脚本
-├── run.sh               # 运行脚本
-└── README.md            # 本文件
+├── __init__.py              # 包初始化
+├── envs/                    # 环境模块
+│   ├── base.py             # 环境基类
+│   ├── simple_grid_2d.py   # 简单的 2D 网格环境
+│   └── continuous_obstacle_2d.py  # 2D 连续障碍物环境
+├── dataset.py              # 数据集创建
+├── train.py                # 主训练脚本
+├── evaluation.py           # 基础评估模块
+├── planning_evaluation.py  # Planning / Reachability 评估模块
+├── run.sh                  # 运行脚本
+└── README.md               # 本文件
 ```
 
 ## 核心实现复用
@@ -156,9 +181,54 @@ python minimal_qrl/train.py
 - 减小 `--num-episodes`
 - 减小 `--grid-size`
 
+## Planning / Reachability 评估
+
+对于 `obstacle` 环境，系统会自动进行 Planning / Reachability 评估（如果启用），包括：
+
+### 1. Greedy Navigation Success Rate
+
+使用 QRL 学到的 quasimetric 作为距离函数，在给定 start 和 goal 的情况下，每一步选择能最小化下一状态到 goal 的 QRL distance 的动作，进行 greedy navigation。统计：
+- 成功率（Success Rate）
+- 平均步数（仅成功案例）
+- 平均路径长度（仅成功案例）
+
+### 2. Path Efficiency
+
+对成功到达目标的 rollout，计算实际轨迹长度与 `compute_shortest_path_distance` 得到的最短路径长度之比，统计：
+- 平均效率比
+- 中位数效率比
+- 最小/最大效率比
+
+### 3. Failure Mode 可视化
+
+自动收集 greedy rollout 失败的起点，对这些 failure case 可视化：
+- QRL learned distance heatmap
+- shortest-path distance heatmap
+- 实际 rollout 轨迹（叠加在环境上）
+
+用于分析 QRL 在 obstacle 场景下的典型失效模式。
+
+### 使用示例
+
+```bash
+# 启用 Planning 评估（默认已启用，每 1000 步评估一次）
+python minimal_qrl/train.py \
+    --env-type obstacle \
+    --planning-eval-interval 1000 \
+    --planning-eval-n-trials 100 \
+    --planning-visualize-failures \
+    --planning-visualize-interval 2000
+```
+
+评估结果会：
+- 记录到 TensorBoard（`planning/success_rate`, `planning/avg_efficiency_ratio` 等）
+- 打印到日志
+- 失败案例可视化保存到输出目录（`failure_mode_*_step*.png`）
+
 ## 下一步
 
 - 可以修改 `simple_env.py` 创建更复杂的环境
 - 可以启用 Actor 训练（修改 `train.py` 中的 `actor=None`）
 - 可以调整 QRL 超参数（通过 `QRLConf`）
+- 可以使用 Planning / Reachability 评估分析 QRL 在 obstacle navigation 中的表现
 
