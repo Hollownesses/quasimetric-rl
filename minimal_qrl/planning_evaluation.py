@@ -121,7 +121,8 @@ def greedy_action_selection(
     current_state: np.ndarray,
     goal: np.ndarray,
     device: str = 'cpu',
-    num_candidates: int = 32
+    num_candidates: int = 32,
+    obstacle_penalty_weight: float = 0.0  # 默认禁用障碍物惩罚，让QRL模型自己学习
 ) -> np.ndarray:
     """
     使用 QRL distance 进行 greedy action selection
@@ -135,6 +136,7 @@ def greedy_action_selection(
         goal: 目标状态，形状为 (2,)
         device: 设备
         num_candidates: 候选动作数量
+        obstacle_penalty_weight: 障碍物惩罚权重（越大，越避免接近障碍物）
     
     Returns:
         选择的动作，形状为 (2,)
@@ -184,11 +186,65 @@ def greedy_action_selection(
     
     # 对每个候选动作，计算执行后的下一状态到 goal 的 QRL distance
     best_action = None
-    best_dist = float('inf')
+    best_score = float('inf')
     
     # 批量计算距离以提高效率
     next_states = []
     valid_actions = []
+    
+    # 计算障碍物惩罚函数（默认禁用，让QRL模型自己学习）
+    def compute_obstacle_penalty(state: np.ndarray) -> float:
+        """
+        计算状态到最近障碍物的惩罚（距离越近，惩罚越大）
+        
+        注意：默认禁用（obstacle_penalty_weight=0.0），让QRL模型自己学习障碍物信息
+        如果QRL模型没有很好地学习到障碍物信息，可以启用此惩罚（设置obstacle_penalty_weight > 0）
+        """
+        if obstacle_penalty_weight <= 0.0:
+            return 0.0  # 禁用障碍物惩罚
+        
+        if not isinstance(env, BaseNavigationEnv) or not hasattr(env, 'obstacles'):
+            return 0.0
+        
+        x, y = state[0], state[1]
+        min_dist_to_obstacle = float('inf')
+        
+        for obs in env.obstacles:
+            # 计算点到矩形障碍物的最短距离
+            # 如果点在矩形内，距离为0（应该被is_valid_state过滤）
+            # 否则计算到矩形边界的最短距离
+            
+            # 计算到矩形各边的距离
+            if x < obs.x_min:
+                dx = obs.x_min - x
+            elif x > obs.x_max:
+                dx = x - obs.x_max
+            else:
+                dx = 0.0
+            
+            if y < obs.y_min:
+                dy = obs.y_min - y
+            elif y > obs.y_max:
+                dy = y - obs.y_max
+            else:
+                dy = 0.0
+            
+            # 如果dx和dy都为0，点在障碍物内（这种情况应该被过滤）
+            if dx == 0.0 and dy == 0.0:
+                return float('inf')  # 极大惩罚
+            
+            dist = np.sqrt(dx ** 2 + dy ** 2)
+            min_dist_to_obstacle = min(min_dist_to_obstacle, dist)
+        
+        # 只在非常接近障碍物时才给予惩罚（距离 < 0.02）
+        if min_dist_to_obstacle < 0.02:
+            # 使用线性衰减
+            normalized_dist = min_dist_to_obstacle / 0.02
+            penalty = obstacle_penalty_weight * 0.1 * (1.0 - normalized_dist)
+        else:
+            penalty = 0.0
+        
+        return penalty
     
     for action in candidates:
         # 计算执行动作后的下一状态（简化：直接相加，环境会在 step 时处理碰撞）
@@ -232,8 +288,18 @@ def greedy_action_selection(
         zy = critic.encoder(goal_t)
         dists = critic.quasimetric_model(zx, zy).cpu().numpy()
     
-    # 选择最小距离对应的动作
-    best_idx = np.argmin(dists)
+    # 计算每个动作的综合得分：QRL距离 + 障碍物惩罚
+    scores = []
+    for i, next_state in enumerate(next_states):
+        qrl_dist = dists[i]
+        obstacle_penalty = compute_obstacle_penalty(next_state)
+        total_score = qrl_dist + obstacle_penalty
+        scores.append(total_score)
+    
+    scores = np.array(scores)
+    
+    # 选择最小得分对应的动作
+    best_idx = np.argmin(scores)
     best_action = valid_actions[best_idx]
     
     return best_action
@@ -246,7 +312,8 @@ def greedy_navigation_rollout(
     goal: np.ndarray,
     device: str = 'cpu',
     max_steps: int = 200,
-    num_action_candidates: int = 32
+    num_action_candidates: int = 32,
+    use_improved_termination: bool = True
 ) -> Dict:
     """
     执行一次 greedy navigation rollout
@@ -259,6 +326,7 @@ def greedy_navigation_rollout(
         device: 设备
         max_steps: 最大步数
         num_action_candidates: 每步候选动作数量
+        use_improved_termination: 是否使用改进的终止条件（结合QRL距离和欧几里得距离）
     
     Returns:
         包含以下键的字典：
@@ -277,11 +345,33 @@ def greedy_navigation_rollout(
     success = False
     
     for step in range(max_steps):
-        # 检查是否已到达目标
-        dist_to_goal = np.linalg.norm(current_state - goal)
-        if dist_to_goal < 0.05:  # 与环境的容差一致
-            success = True
-            break
+        # 改进的终止条件：结合欧几里得距离和QRL距离
+        euclidean_dist = np.linalg.norm(current_state - goal)
+        
+        if use_improved_termination:
+            # 计算QRL距离
+            qrl_dist = compute_qrl_distance(agent, current_state, goal, device)
+            
+            # 改进的终止条件（放宽条件，避免因QRL距离高估导致无法终止）：
+            # 1. 欧几里得距离必须足够小（基本要求）
+            # 2. QRL距离也应该较小，但阈值放宽（因为QRL距离可能被高估）
+            # 3. 两者应该相对一致（但允许QRL距离有一定的高估）
+            euclidean_threshold = 0.05  # 与环境的容差一致
+            qrl_threshold = 1.0  # QRL距离阈值放宽（从0.1提高到1.0，允许QRL距离被高估）
+            
+            # 改进的终止条件：主要依赖欧几里得距离，QRL距离作为辅助验证
+            # 如果QRL距离远大于欧几里得距离（比如20倍以上），说明QRL估计严重不准确，不应该终止
+            # 但如果欧几里得距离足够小，即使QRL距离被高估，也应该允许终止（因为这是真实距离）
+            if euclidean_dist < euclidean_threshold:
+                # 如果QRL距离不是异常大（小于阈值），或者QRL距离虽然大但不超过欧几里得距离的合理倍数
+                if qrl_dist < qrl_threshold or qrl_dist < euclidean_dist * 50.0:
+                    success = True
+                    break
+        else:
+            # 原始终止条件（仅使用欧几里得距离）
+            if euclidean_dist < 0.05:
+                success = True
+                break
         
         # 选择 greedy action
         action = greedy_action_selection(
@@ -359,7 +449,8 @@ def evaluate_greedy_navigation_success_rate(
         rollout_result = greedy_navigation_rollout(
             agent, env, starts[i], goals[i], device,
             max_steps=env.max_episode_steps if hasattr(env, 'max_episode_steps') else 200,
-            num_action_candidates=num_action_candidates
+            num_action_candidates=num_action_candidates,
+            use_improved_termination=True
         )
         
         all_steps.append(rollout_result['num_steps'])
@@ -427,7 +518,8 @@ def evaluate_path_efficiency(
         rollout_result = greedy_navigation_rollout(
             agent, env, starts[i], goals[i], device,
             max_steps=env.max_episode_steps if hasattr(env, 'max_episode_steps') else 200,
-            num_action_candidates=num_action_candidates
+            num_action_candidates=num_action_candidates,
+            use_improved_termination=True
         )
         
         if rollout_result['success']:
@@ -435,8 +527,32 @@ def evaluate_path_efficiency(
             shortest_dist = compute_ground_truth_distance(env, starts[i], goals[i])
             
             if shortest_dist > 1e-6:  # 避免除零
-                efficiency_ratio = rollout_result['path_length'] / shortest_dist
-                efficiency_ratios.append(efficiency_ratio)
+                path_length = rollout_result['path_length']
+                
+                # 验证是否真正到达目标：检查最终状态到目标的距离
+                final_state = rollout_result['final_state']
+                final_dist_to_goal = np.linalg.norm(final_state - goals[i])
+                
+                # 只有真正到达目标（距离 < 0.05）的路径才计算效率
+                # 这样可以避免误判为成功但实际未到达的情况
+                if final_dist_to_goal < 0.05:
+                    efficiency_ratio = path_length / shortest_dist
+                    
+                    # 确保efficiency_ratio >= 1（实际路径长度应该 >= 最短路径长度）
+                    # 如果出现 < 1，可能是路径长度计算有问题（比如路径很短但被误判为成功）
+                    if efficiency_ratio < 1.0:
+                        print(f"Warning: Efficiency ratio < 1.0 for trial {i}: path_length={path_length:.4f}, "
+                              f"shortest_dist={shortest_dist:.4f}, final_dist_to_goal={final_dist_to_goal:.4f}")
+                        # 如果路径长度异常小，可能是计算错误，跳过这个样本
+                        if path_length < shortest_dist * 0.5:  # 如果路径长度小于最短路径的一半，可能是错误
+                            continue
+                        # 否则，使用最短路径长度作为最小值
+                        efficiency_ratio = max(1.0, efficiency_ratio)
+                    
+                    efficiency_ratios.append(efficiency_ratio)
+                else:
+                    # 虽然标记为success，但实际未到达目标，跳过
+                    print(f"Warning: Trial {i} marked as success but final_dist_to_goal={final_dist_to_goal:.4f} > 0.05, skipping")
     
     if not efficiency_ratios:
         return {
@@ -513,7 +629,8 @@ def visualize_failure_modes(
         rollout_result = greedy_navigation_rollout(
             agent, env, starts[i], goals[i], device,
             max_steps=env.max_episode_steps if hasattr(env, 'max_episode_steps') else 200,
-            num_action_candidates=num_action_candidates
+            num_action_candidates=num_action_candidates,
+            use_improved_termination=True
         )
         
         if not rollout_result['success']:

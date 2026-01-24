@@ -292,14 +292,17 @@ class ContinuousObstacle2D(BaseNavigationEnv):
         new_y = y + dy
         
         # 检查是否穿越障碍物
+        collision_occurred = False
         if self._check_collision(x, y, new_x, new_y):
             # 如果穿越障碍物，保持当前位置不变
             new_x, new_y = x, y
+            collision_occurred = True
         else:
             # 检查新位置是否合法
             if not self._is_valid_position(new_x, new_y):
                 # 投影到合法区域
                 new_x, new_y = self._project_to_valid(new_x, new_y)
+                collision_occurred = True  # 进入障碍物也算碰撞
         
         self.agent_pos = (new_x, new_y)
         self._t += 1
@@ -309,8 +312,14 @@ class ContinuousObstacle2D(BaseNavigationEnv):
         terminated = dist_to_goal < 0.05  # 容差：0.05
         truncated = self._t >= self.max_episode_steps
         
-        # 奖励: 到达目标 +1，否则 -0.01 (步数惩罚)
-        reward = 1.0 if terminated else -0.01
+        # 改进的奖励函数：增加碰撞惩罚
+        # 到达目标 +1，碰撞 -0.1（比步数惩罚大10倍），否则 -0.01 (步数惩罚)
+        if terminated:
+            reward = 1.0
+        elif collision_occurred:
+            reward = -0.1  # 碰撞惩罚：比步数惩罚大10倍，让模型学习避免碰撞
+        else:
+            reward = -0.01  # 步数惩罚
         
         return self._get_obs(), float(reward), terminated, truncated, {"is_success": terminated}
     
