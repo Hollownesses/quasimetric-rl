@@ -7,7 +7,12 @@ minimal_qrl.eval
 """
 
 from .evaluation import evaluate_planning, evaluate_quasimetric, visualize_distance_field_heatmap
-from .planning_evaluation import evaluate_planning_reachability, greedy_navigation_rollout
+from .planning_evaluation import (
+    evaluate_planning_reachability,
+    greedy_navigation_rollout,
+    navigation_rollout,
+    LookaheadConfig,
+)
 
 __all__ = [
     "evaluate_quasimetric",
@@ -15,5 +20,7 @@ __all__ = [
     "evaluate_planning",
     "evaluate_planning_reachability",
     "greedy_navigation_rollout",
+    "navigation_rollout",
+    "LookaheadConfig",
 ]
 

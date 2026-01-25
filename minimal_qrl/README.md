@@ -77,6 +77,11 @@ python minimal_qrl/train.py \
 - `--planning-eval-interval`: Planning 评估间隔（默认: 1000，设为 0 禁用）
 - `--planning-eval-n-trials`: Planning 评估时的测试次数（默认: 100）
 - `--planning-num-action-candidates`: 每步候选动作数量（默认: 32）
+- `--planning-execution-modes`: 执行机制对比（逗号分隔），例如 `greedy` 或 `greedy,lookahead`（默认: greedy）
+- `--lookahead-horizon`: lookahead 规划步长（默认: 5，仅 lookahead 模式）
+- `--lookahead-num-sequences`: lookahead 序列数量（默认: 128，仅 lookahead 模式）
+- `--lookahead-step-cost-weight`: 步长惩罚权重（默认: 0，仅 lookahead 模式）
+- `--lookahead-collision-penalty`: 碰撞惩罚（默认: 0，仅 lookahead 模式）
 - `--planning-visualize-failures`: 是否可视化失败案例（需要配合 `--planning-visualize-interval` 使用）
 - `--planning-visualize-interval`: Failure mode 可视化间隔（默认: 2000）
 
@@ -89,7 +94,8 @@ python minimal_qrl/train.py \
 - `checkpoint_*.pth`: 训练检查点
 - `checkpoint_final.pth`: 最终模型
 - `distance_heatmap_step*.png`: 距离场热力图（每个评估间隔生成一次）
-- `failure_mode_*_step*.png`: Failure mode 可视化（如果启用）
+- `failure_mode_{mode}_*_step*.png`: Failure mode 可视化（如果启用；mode=greedy/lookahead）
+- `failure_start_distribution_step*.png`: 不同执行机制下 failure start 分布对比图（当同时评估 greedy 与 lookahead 且启用可视化时）
 - `COMPLETE`: 完成标记文件
 
 ### 评估指标
@@ -103,11 +109,11 @@ python minimal_qrl/train.py \
 - `distance_heatmap`: 距离场热力图可视化
 
 在 TensorBoard 的 `planning/` 标签下可以查看（仅 obstacle 环境）：
-- `success_rate`: Greedy Navigation 成功率
-- `avg_steps`: 平均步数（仅成功案例）
-- `avg_path_length`: 平均路径长度（仅成功案例）
-- `avg_efficiency_ratio`: 平均路径效率比（实际路径长度 / 最短路径长度）
-- `median_efficiency_ratio`: 中位数路径效率比
+- **旧标签（兼容）**：
+  - `success_rate`, `avg_steps`, `avg_path_length`, `avg_efficiency_ratio`, `median_efficiency_ratio`（默认对应 greedy）
+- **新标签（按执行机制分组，推荐用于对比）**：
+  - `planning/greedy/*`
+  - `planning/lookahead/*`
 
 ## 查看训练结果
 
@@ -141,6 +147,7 @@ minimal_qrl/
 │   ├── evaluation.py       # 基础评估模块
 │   ├── planning_evaluation.py  # Planning / Reachability 评估模块
 │   └── qualitative_multigoal_eval.py  # 定性评估可视化脚本（展示用）
+│   └── execution_mode_eval.py  # 执行机制对比评估（greedy vs lookahead）
 ├── run.sh                  # 运行脚本
 └── README.md               # 本文件
 ```

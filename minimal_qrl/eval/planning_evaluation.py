@@ -6,7 +6,8 @@ Planning / Reachability 评估模块
 3. Failure Mode 可视化
 """
 import os
-from typing import Tuple, Dict, Optional, List
+from typing import Tuple, Dict, Optional, List, Literal
+from dataclasses import dataclass
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,6 +15,104 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import gym
 from minimal_qrl.envs.base import BaseNavigationEnv
+
+
+ExecutionMode = Literal["greedy", "lookahead"]
+
+
+def _unwrap_env(env: gym.Env) -> gym.Env:
+    return env.unwrapped if hasattr(env, "unwrapped") else env
+
+
+def _as_nav_env(env: gym.Env) -> Optional[BaseNavigationEnv]:
+    u = _unwrap_env(env)
+    return u if isinstance(u, BaseNavigationEnv) else None
+
+
+def _capture_env_state(env: gym.Env) -> dict:
+    """
+    捕获环境状态，用于 lookahead 多分支仿真后恢复。
+    优先使用 BaseNavigationEnv.get_state / set_state。
+    """
+    u = _unwrap_env(env)
+    state: dict = {}
+
+    if hasattr(u, "get_state") and callable(getattr(u, "get_state")):
+        try:
+            state["unwrapped"] = u.get_state()
+        except NotImplementedError:
+            state["unwrapped"] = None
+    else:
+        state["unwrapped"] = None
+
+    # 兼容可能存在的 TimeLimit / wrapper 计步器
+    if hasattr(env, "_elapsed_steps"):
+        state["_elapsed_steps"] = int(getattr(env, "_elapsed_steps"))
+
+    return state
+
+
+def _restore_env_state(env: gym.Env, state: dict) -> None:
+    u = _unwrap_env(env)
+
+    if state.get("unwrapped") is not None and hasattr(u, "set_state") and callable(getattr(u, "set_state")):
+        u.set_state(state["unwrapped"])
+
+    if "_elapsed_steps" in state and hasattr(env, "_elapsed_steps"):
+        setattr(env, "_elapsed_steps", int(state["_elapsed_steps"]))
+
+
+def _get_action_bounds(env: gym.Env) -> Tuple[np.ndarray, np.ndarray]:
+    # 获取动作空间范围
+    if hasattr(env, "action_space"):
+        action_space = env.action_space
+        if hasattr(action_space, "low") and hasattr(action_space, "high"):
+            low = np.array(action_space.low, dtype=np.float32).reshape(-1)
+            high = np.array(action_space.high, dtype=np.float32).reshape(-1)
+            return low, high
+
+    # 默认范围（与原 greedy 保持一致）
+    low = np.array([-0.1, -0.1], dtype=np.float32)
+    high = np.array([0.1, 0.1], dtype=np.float32)
+    return low, high
+
+
+def compute_qrl_distance_batch(
+    agent: nn.Module,
+    states: np.ndarray,
+    goal: np.ndarray,
+    device: str = "cpu",
+) -> np.ndarray:
+    """
+    批量计算 states -> goal 的 QRL distance。
+    """
+    states = np.asarray(states, dtype=np.float32)
+    goal = np.asarray(goal, dtype=np.float32).reshape(2)
+
+    critic = agent.critics[0]
+    device_obj = torch.device(device)
+
+    states_t = torch.tensor(states, device=device_obj, dtype=torch.float32)
+    goal_t = torch.tensor(goal[None].repeat(len(states), 0), device=device_obj, dtype=torch.float32)
+
+    with torch.no_grad():
+        zx = critic.encoder(states_t)
+        zy = critic.encoder(goal_t)
+        dists = critic.quasimetric_model(zx, zy).cpu().numpy()
+
+    return dists.astype(np.float32).reshape(-1)
+
+
+@dataclass
+class LookaheadConfig:
+    """
+    QRL-guided lookahead / local planning 的超参数（仅用于 evaluation / rollout）。
+    """
+    horizon: int = 5
+    num_sequences: int = 64
+    step_cost_weight: float = 0.0
+    collision_penalty: float = 0.0
+    biased_sequences: int = 12  # 添加一部分朝向 goal 的序列以增强稳定性
 
 
 def compute_ground_truth_distance(
@@ -35,8 +134,9 @@ def compute_ground_truth_distance(
     Returns:
         真实最短路径距离
     """
-    if isinstance(env, BaseNavigationEnv):
-        return env.compute_shortest_path_distance(start=start, goal=goal)
+    nav_env = _as_nav_env(env)
+    if nav_env is not None:
+        return nav_env.compute_shortest_path_distance(start=start, goal=goal)
     else:
         # 默认使用欧几里得距离
         return float(np.linalg.norm(start - goal))
@@ -66,10 +166,11 @@ def sample_state_goal_pairs(
     goals = []
     
     # 如果环境实现了 BaseNavigationEnv 接口，使用其 sample_valid_state 方法
-    if isinstance(env, BaseNavigationEnv):
+    nav_env = _as_nav_env(env)
+    if nav_env is not None:
         for i in range(n_pairs):
-            state = env.sample_valid_state(seed=seed + i if seed is not None else None)
-            goal = env.sample_valid_state(seed=seed + i + n_pairs if seed is not None else None)
+            state = nav_env.sample_valid_state(seed=seed + i if seed is not None else None)
+            goal = nav_env.sample_valid_state(seed=seed + i + n_pairs if seed is not None else None)
             states.append(state)
             goals.append(goal)
     else:
@@ -141,19 +242,7 @@ def greedy_action_selection(
     Returns:
         选择的动作，形状为 (2,)
     """
-    # 获取动作空间范围
-    if hasattr(env, 'action_space'):
-        action_space = env.action_space
-        if hasattr(action_space, 'low') and hasattr(action_space, 'high'):
-            low = action_space.low
-            high = action_space.high
-        else:
-            # 默认范围
-            low = np.array([-0.1, -0.1], dtype=np.float32)
-            high = np.array([0.1, 0.1], dtype=np.float32)
-    else:
-        low = np.array([-0.1, -0.1], dtype=np.float32)
-        high = np.array([0.1, 0.1], dtype=np.float32)
+    low, high = _get_action_bounds(env)
     
     # 采样候选动作（包括朝向 goal 的方向）
     candidates = []
@@ -203,13 +292,14 @@ def greedy_action_selection(
         if obstacle_penalty_weight <= 0.0:
             return 0.0  # 禁用障碍物惩罚
         
-        if not isinstance(env, BaseNavigationEnv) or not hasattr(env, 'obstacles'):
+        nav_env = _as_nav_env(env)
+        if nav_env is None or not hasattr(nav_env, 'obstacles'):
             return 0.0
         
         x, y = state[0], state[1]
         min_dist_to_obstacle = float('inf')
         
-        for obs in env.obstacles:
+        for obs in nav_env.obstacles:
             # 计算点到矩形障碍物的最短距离
             # 如果点在矩形内，距离为0（应该被is_valid_state过滤）
             # 否则计算到矩形边界的最短距离
@@ -254,8 +344,9 @@ def greedy_action_selection(
         next_state = np.clip(next_state, 0.0, 1.0)
         
         # 检查是否合法（对于障碍物环境）
-        if isinstance(env, BaseNavigationEnv):
-            if not env.is_valid_state(next_state):
+        nav_env = _as_nav_env(env)
+        if nav_env is not None:
+            if not nav_env.is_valid_state(next_state):
                 # 如果状态不合法，跳过
                 continue
         
@@ -276,17 +367,7 @@ def greedy_action_selection(
     # 批量计算 QRL distance
     next_states = np.array(next_states, dtype=np.float32)
     valid_actions = np.array(valid_actions, dtype=np.float32)
-    
-    critic = agent.critics[0]
-    device_obj = torch.device(device)
-    
-    states_t = torch.tensor(next_states, device=device_obj, dtype=torch.float32)
-    goal_t = torch.tensor(goal[None].repeat(len(next_states), 0), device=device_obj, dtype=torch.float32)
-    
-    with torch.no_grad():
-        zx = critic.encoder(states_t)
-        zy = critic.encoder(goal_t)
-        dists = critic.quasimetric_model(zx, zy).cpu().numpy()
+    dists = compute_qrl_distance_batch(agent, next_states, goal, device=device)
     
     # 计算每个动作的综合得分：QRL距离 + 障碍物惩罚
     scores = []
@@ -305,7 +386,114 @@ def greedy_action_selection(
     return best_action
 
 
-def greedy_navigation_rollout(
+def lookahead_action_selection(
+    agent: nn.Module,
+    env: gym.Env,
+    current_state: np.ndarray,
+    goal: np.ndarray,
+    *,
+    device: str = "cpu",
+    config: Optional[LookaheadConfig] = None,
+) -> np.ndarray:
+    """
+    QRL-guided lookahead / local planning：
+    - 使用环境 step 进行短视野多步仿真（shooting）
+    - 用 QRL distance 作为终端代价（可叠加步长/碰撞惩罚）
+    - 返回最优动作序列的第一个动作（receding horizon）
+    """
+    if config is None:
+        config = LookaheadConfig()
+
+    horizon = int(max(1, config.horizon))
+    num_sequences = int(max(1, config.num_sequences))
+    low, high = _get_action_bounds(env)
+
+    current_state = np.asarray(current_state, dtype=np.float32).reshape(2)
+    goal = np.asarray(goal, dtype=np.float32).reshape(2)
+
+    # 采样 action sequences
+    seqs = np.random.uniform(low=low, high=high, size=(num_sequences, horizon, 2)).astype(np.float32)
+
+    # 加入少量“朝向 goal”的偏置序列，提升稳定性
+    direction = goal - current_state
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm > 1e-6:
+        unit = direction / direction_norm
+        max_step = float(min(abs(high[0]), abs(high[1]))) if len(high) >= 2 else 0.1
+        base = (unit * max_step).astype(np.float32)
+        n_bias = int(min(max(0, config.biased_sequences), num_sequences))
+        scales = [1.0, 0.75, 0.5, 0.35, 0.25, 0.15]
+        for i in range(n_bias):
+            s = scales[i % len(scales)]
+            seqs[i, 0] = base * float(s)
+            if horizon > 1:
+                # 后续动作给较小随机扰动，避免过于僵硬
+                seqs[i, 1:] = np.random.uniform(low=low, high=high, size=(horizon - 1, 2)).astype(np.float32) * 0.25
+    else:
+        # 极少数情况下 start==goal，加入零动作序列
+        seqs[0, :, :] = 0.0
+
+    # 仿真并打分（先累积非终端部分，终端 QRL distance 批量算）
+    base_env_state = _capture_env_state(env)
+    success_mask = np.zeros((num_sequences,), dtype=bool)
+    collision_counts = np.zeros((num_sequences,), dtype=np.int32)
+    step_costs = np.zeros((num_sequences,), dtype=np.float32)
+    terminal_states = np.zeros((num_sequences, 2), dtype=np.float32)
+
+    nav_env = _as_nav_env(env)
+
+    for i in range(num_sequences):
+        _restore_env_state(env, base_env_state)
+
+        obs = None
+        terminated = False
+        truncated = False
+
+        for t in range(horizon):
+            a = seqs[i, t]
+            obs, reward, terminated, truncated, _info = env.step(a)
+
+            # 代价：可选步长惩罚（抑制抖动/绕圈）
+            if config.step_cost_weight > 0.0:
+                step_costs[i] += float(config.step_cost_weight) * float(np.linalg.norm(a))
+
+            # 代价：可选碰撞惩罚（ContinuousObstacle2D 碰撞奖励为 -0.1）
+            if config.collision_penalty > 0.0:
+                if float(reward) <= -0.05:
+                    collision_counts[i] += 1
+
+            if terminated:
+                success_mask[i] = True
+                break
+
+            if truncated:
+                break
+
+        # 记录终端状态（如果 horizon 内未赋值 obs，退化为当前状态）
+        if obs is None:
+            terminal_states[i] = current_state
+        else:
+            terminal_states[i] = np.asarray(obs, dtype=np.float32).reshape(2)
+
+        # 基于环境可行性做一次兜底（防止异常）
+        if nav_env is not None and not nav_env.is_valid_state(terminal_states[i]):
+            collision_counts[i] += 5
+
+    # 恢复环境状态（外部 rollout 继续使用原始状态）
+    _restore_env_state(env, base_env_state)
+
+    # 终端 QRL distance（成功序列 cost=0）
+    qrl_terminal = compute_qrl_distance_batch(agent, terminal_states, goal, device=device)
+    qrl_terminal = qrl_terminal.astype(np.float32)
+    qrl_terminal[success_mask] = 0.0
+
+    costs = qrl_terminal + step_costs + (collision_counts.astype(np.float32) * float(config.collision_penalty))
+    best_idx = int(np.argmin(costs))
+    best_action = seqs[best_idx, 0].astype(np.float32)
+    return best_action
+
+
+def navigation_rollout(
     agent: nn.Module,
     env: gym.Env,
     start: np.ndarray,
@@ -313,10 +501,12 @@ def greedy_navigation_rollout(
     device: str = 'cpu',
     max_steps: int = 200,
     num_action_candidates: int = 32,
-    use_improved_termination: bool = True
+    use_improved_termination: bool = True,
+    execution_mode: ExecutionMode = "greedy",
+    lookahead_config: Optional[LookaheadConfig] = None,
 ) -> Dict:
     """
-    执行一次 greedy navigation rollout
+    执行一次 navigation rollout（支持 greedy / lookahead 两种执行机制）
     
     Args:
         agent: QRL Agent
@@ -373,10 +563,17 @@ def greedy_navigation_rollout(
                 success = True
                 break
         
-        # 选择 greedy action
-        action = greedy_action_selection(
-            agent, env, current_state, goal, device, num_action_candidates
-        )
+        # 选择动作（execution mechanism）
+        if execution_mode == "greedy":
+            action = greedy_action_selection(
+                agent, env, current_state, goal, device, num_action_candidates
+            )
+        elif execution_mode == "lookahead":
+            action = lookahead_action_selection(
+                agent, env, current_state, goal, device=device, config=lookahead_config
+            )
+        else:
+            raise ValueError(f"未知 execution_mode: {execution_mode}")
         
         # 执行动作
         next_obs, reward, terminated, truncated, info = env.step(action)
@@ -406,16 +603,47 @@ def greedy_navigation_rollout(
     }
 
 
-def evaluate_greedy_navigation_success_rate(
+def greedy_navigation_rollout(
+    agent: nn.Module,
+    env: gym.Env,
+    start: np.ndarray,
+    goal: np.ndarray,
+    device: str = 'cpu',
+    max_steps: int = 200,
+    num_action_candidates: int = 32,
+    use_improved_termination: bool = True
+) -> Dict:
+    """
+    兼容旧接口：greedy navigation rollout（内部调用 navigation_rollout）。
+    """
+    return navigation_rollout(
+        agent=agent,
+        env=env,
+        start=start,
+        goal=goal,
+        device=device,
+        max_steps=max_steps,
+        num_action_candidates=num_action_candidates,
+        use_improved_termination=use_improved_termination,
+        execution_mode="greedy",
+        lookahead_config=None,
+    )
+
+
+def evaluate_navigation_success_rate(
     agent: nn.Module,
     env: gym.Env,
     n_trials: int = 100,
     device: str = 'cpu',
     seed: Optional[int] = None,
-    num_action_candidates: int = 32
+    num_action_candidates: int = 32,
+    execution_mode: ExecutionMode = "greedy",
+    lookahead_config: Optional[LookaheadConfig] = None,
+    starts: Optional[np.ndarray] = None,
+    goals: Optional[np.ndarray] = None,
 ) -> Dict[str, float]:
     """
-    评估 Greedy Navigation Success Rate
+    评估 Navigation Success Rate（greedy / lookahead）
     
     Args:
         agent: QRL Agent
@@ -436,8 +664,9 @@ def evaluate_greedy_navigation_success_rate(
     if seed is not None:
         np.random.seed(seed)
     
-    # 采样起点和目标对
-    starts, goals = sample_state_goal_pairs(env, n_pairs=n_trials, seed=seed)
+    # 采样起点和目标对（允许外部传入，保证不同 mode 公平对比）
+    if starts is None or goals is None:
+        starts, goals = sample_state_goal_pairs(env, n_pairs=n_trials, seed=seed)
     
     success_count = 0
     success_steps = []
@@ -446,11 +675,13 @@ def evaluate_greedy_navigation_success_rate(
     all_path_lengths = []
     
     for i in range(n_trials):
-        rollout_result = greedy_navigation_rollout(
+        rollout_result = navigation_rollout(
             agent, env, starts[i], goals[i], device,
             max_steps=env.max_episode_steps if hasattr(env, 'max_episode_steps') else 200,
             num_action_candidates=num_action_candidates,
-            use_improved_termination=True
+            use_improved_termination=True,
+            execution_mode=execution_mode,
+            lookahead_config=lookahead_config,
         )
         
         all_steps.append(rollout_result['num_steps'])
@@ -476,13 +707,40 @@ def evaluate_greedy_navigation_success_rate(
     }
 
 
-def evaluate_path_efficiency(
+def evaluate_greedy_navigation_success_rate(
     agent: nn.Module,
     env: gym.Env,
     n_trials: int = 100,
     device: str = 'cpu',
     seed: Optional[int] = None,
     num_action_candidates: int = 32
+) -> Dict[str, float]:
+    """
+    兼容旧接口：评估 Greedy Navigation Success Rate
+    """
+    return evaluate_navigation_success_rate(
+        agent=agent,
+        env=env,
+        n_trials=n_trials,
+        device=device,
+        seed=seed,
+        num_action_candidates=num_action_candidates,
+        execution_mode="greedy",
+        lookahead_config=None,
+    )
+
+
+def evaluate_path_efficiency(
+    agent: nn.Module,
+    env: gym.Env,
+    n_trials: int = 100,
+    device: str = 'cpu',
+    seed: Optional[int] = None,
+    num_action_candidates: int = 32,
+    execution_mode: ExecutionMode = "greedy",
+    lookahead_config: Optional[LookaheadConfig] = None,
+    starts: Optional[np.ndarray] = None,
+    goals: Optional[np.ndarray] = None,
 ) -> Dict[str, float]:
     """
     评估 Path Efficiency（与最短路径的竞争比）
@@ -509,17 +767,20 @@ def evaluate_path_efficiency(
     if seed is not None:
         np.random.seed(seed)
     
-    # 采样起点和目标对
-    starts, goals = sample_state_goal_pairs(env, n_pairs=n_trials, seed=seed)
+    # 采样起点和目标对（允许外部传入，保证不同 mode 公平对比）
+    if starts is None or goals is None:
+        starts, goals = sample_state_goal_pairs(env, n_pairs=n_trials, seed=seed)
     
     efficiency_ratios = []
     
     for i in range(n_trials):
-        rollout_result = greedy_navigation_rollout(
+        rollout_result = navigation_rollout(
             agent, env, starts[i], goals[i], device,
             max_steps=env.max_episode_steps if hasattr(env, 'max_episode_steps') else 200,
             num_action_candidates=num_action_candidates,
-            use_improved_termination=True
+            use_improved_termination=True,
+            execution_mode=execution_mode,
+            lookahead_config=lookahead_config,
         )
         
         if rollout_result['success']:
@@ -587,12 +848,14 @@ def visualize_failure_modes(
     output_dir: str = './results',
     step: int = 0,
     num_action_candidates: int = 32,
-    resolution: Tuple[int, int] = (50, 50)
+    resolution: Tuple[int, int] = (50, 50),
+    execution_mode: ExecutionMode = "greedy",
+    lookahead_config: Optional[LookaheadConfig] = None,
 ) -> List[str]:
     """
     可视化 Failure Mode
     
-    自动收集 greedy rollout 失败的起点，对这些 failure case 可视化：
+    自动收集 rollout 失败的起点，对这些 failure case 可视化：
     - QRL learned distance heatmap
     - shortest-path distance heatmap
     - 实际 rollout 轨迹（叠加在环境上）
@@ -626,11 +889,13 @@ def visualize_failure_modes(
         if len(failure_cases) >= n_failures:
             break
         
-        rollout_result = greedy_navigation_rollout(
+        rollout_result = navigation_rollout(
             agent, env, starts[i], goals[i], device,
             max_steps=env.max_episode_steps if hasattr(env, 'max_episode_steps') else 200,
             num_action_candidates=num_action_candidates,
-            use_improved_termination=True
+            use_improved_termination=True,
+            execution_mode=execution_mode,
+            lookahead_config=lookahead_config,
         )
         
         if not rollout_result['success']:
@@ -777,13 +1042,74 @@ def visualize_failure_modes(
         plt.tight_layout()
         
         # 保存
-        fname = os.path.join(output_dir, f'failure_mode_{idx+1}_step{step:05d}.png')
+        fname = os.path.join(output_dir, f'failure_mode_{execution_mode}_{idx+1}_step{step:05d}.png')
         plt.savefig(fname, dpi=150, bbox_inches='tight')
         plt.close()
         
         saved_paths.append(fname)
     
     return saved_paths
+
+
+def visualize_failure_start_distribution(
+    env: gym.Env,
+    failures_by_mode: Dict[str, List[dict]],
+    *,
+    output_dir: str,
+    step: int,
+) -> str:
+    """
+    聚合可视化：不同 execution mode 的 failure start 空间分布对比。
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(7.5, 7.5))
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title("Failure start distribution (by execution mode)")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+
+    nav_env = _as_nav_env(env)
+    if nav_env is not None and hasattr(nav_env, "obstacles"):
+        for obs in nav_env.obstacles:
+            rect = patches.Rectangle(
+                (obs.x_min, obs.y_min),
+                obs.x_max - obs.x_min,
+                obs.y_max - obs.y_min,
+                linewidth=1.5,
+                edgecolor="black",
+                facecolor="gray",
+                alpha=0.45,
+            )
+            ax.add_patch(rect)
+
+    colors = {
+        "greedy": "tab:red",
+        "lookahead": "tab:blue",
+    }
+
+    for mode, cases in failures_by_mode.items():
+        if not cases:
+            continue
+        starts = np.stack([np.asarray(c["start"], dtype=np.float32).reshape(2) for c in cases], axis=0)
+        ax.scatter(
+            starts[:, 0],
+            starts[:, 1],
+            s=26,
+            alpha=0.75,
+            c=colors.get(mode, None),
+            label=f"{mode} (n={len(cases)})",
+        )
+
+    ax.legend(loc="upper right", framealpha=0.9)
+    plt.tight_layout()
+
+    fname = os.path.join(output_dir, f"failure_start_distribution_step{step:05d}.png")
+    plt.savefig(fname, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return fname
 
 
 def evaluate_planning_reachability(
@@ -795,7 +1121,9 @@ def evaluate_planning_reachability(
     num_action_candidates: int = 32,
     visualize_failures: bool = False,
     output_dir: str = './results',
-    step: int = 0
+    step: int = 0,
+    execution_modes: Optional[List[ExecutionMode]] = None,
+    lookahead_config: Optional[LookaheadConfig] = None,
 ) -> Dict[str, any]:
     """
     综合评估 Planning / Reachability 功能
@@ -821,30 +1149,89 @@ def evaluate_planning_reachability(
     """
     results = {}
     
-    # 1. Greedy Navigation Success Rate
-    print("评估 Greedy Navigation Success Rate...")
-    success_metrics = evaluate_greedy_navigation_success_rate(
-        agent, env, n_trials=n_trials, device=device, seed=seed,
-        num_action_candidates=num_action_candidates
-    )
-    results['greedy_navigation'] = success_metrics
-    
-    # 2. Path Efficiency
-    print("评估 Path Efficiency...")
-    efficiency_metrics = evaluate_path_efficiency(
-        agent, env, n_trials=n_trials, device=device, seed=seed,
-        num_action_candidates=num_action_candidates
-    )
-    results['path_efficiency'] = efficiency_metrics
-    
-    # 3. Failure Mode 可视化
-    if visualize_failures:
-        print("生成 Failure Mode 可视化...")
-        failure_viz_paths = visualize_failure_modes(
-            agent, env, n_failures=min(10, n_trials // 10), device=device,
-            seed=seed, output_dir=output_dir, step=step,
-            num_action_candidates=num_action_candidates
+    if execution_modes is None:
+        execution_modes = ["greedy"]
+
+    # 为了公平对比：所有 mode 使用同一批 start-goal 对
+    starts, goals = sample_state_goal_pairs(env, n_pairs=n_trials, seed=seed)
+
+    path_eff_by_mode: Dict[str, dict] = {}
+    failure_viz_by_mode: Dict[str, List[str]] = {}
+    failure_cases_by_mode: Dict[str, List[dict]] = {}
+
+    for mode in execution_modes:
+        print(f"评估 Navigation Success Rate ({mode})...")
+        success_metrics = evaluate_navigation_success_rate(
+            agent, env, n_trials=n_trials, device=device, seed=seed,
+            num_action_candidates=num_action_candidates,
+            execution_mode=mode,
+            lookahead_config=lookahead_config,
+            starts=starts, goals=goals,
         )
-        results['failure_visualizations'] = failure_viz_paths
+
+        if mode == "greedy":
+            # 保持与旧版 train.py / tensorboard tag 兼容
+            results["greedy_navigation"] = success_metrics
+        else:
+            results[f"{mode}_navigation"] = success_metrics
+
+        print(f"评估 Path Efficiency ({mode})...")
+        efficiency_metrics = evaluate_path_efficiency(
+            agent, env, n_trials=n_trials, device=device, seed=seed,
+            num_action_candidates=num_action_candidates,
+            execution_mode=mode,
+            lookahead_config=lookahead_config,
+            starts=starts, goals=goals,
+        )
+        path_eff_by_mode[mode] = efficiency_metrics
+
+        if mode == "greedy" and "path_efficiency" not in results:
+            # 旧 key：默认放 greedy
+            results["path_efficiency"] = efficiency_metrics
+
+        if visualize_failures:
+            print(f"生成 Failure Mode 可视化 ({mode})...")
+
+            # 先收集失败案例（用于分布对比）
+            failure_cases: List[dict] = []
+            max_attempts = max(50, min(500, n_trials * 10))
+            starts_v, goals_v = sample_state_goal_pairs(env, n_pairs=max_attempts, seed=seed)
+            for i in range(max_attempts):
+                rr = navigation_rollout(
+                    agent, env, starts_v[i], goals_v[i], device,
+                    max_steps=env.max_episode_steps if hasattr(env, 'max_episode_steps') else 200,
+                    num_action_candidates=num_action_candidates,
+                    use_improved_termination=True,
+                    execution_mode=mode,
+                    lookahead_config=lookahead_config,
+                )
+                if not rr["success"]:
+                    failure_cases.append({"start": starts_v[i], "goal": goals_v[i], "rollout_result": rr})
+                if len(failure_cases) >= min(10, n_trials // 10):
+                    break
+            failure_cases_by_mode[mode] = failure_cases
+
+            # 生成每个失败案例的热力图/轨迹可视化
+            failure_viz_paths = visualize_failure_modes(
+                agent, env, n_failures=min(10, n_trials // 10), device=device,
+                seed=seed, output_dir=output_dir, step=step,
+                num_action_candidates=num_action_candidates,
+                execution_mode=mode,
+                lookahead_config=lookahead_config,
+            )
+            failure_viz_by_mode[mode] = failure_viz_paths
+
+    results["path_efficiency_by_mode"] = path_eff_by_mode
+
+    if visualize_failures:
+        results["failure_visualizations_by_mode"] = failure_viz_by_mode
+        if len(execution_modes) >= 2:
+            dist_path = visualize_failure_start_distribution(
+                env,
+                failure_cases_by_mode,
+                output_dir=output_dir,
+                step=step,
+            )
+            results["failure_start_distribution"] = dist_path
     
     return results

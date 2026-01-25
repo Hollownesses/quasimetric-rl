@@ -35,7 +35,7 @@ from quasimetric_rl.data import Dataset, register_offline_env
 from quasimetric_rl.data.base import CREATE_ENV_REGISTRY, LOAD_EPISODES_REGISTRY
 
 from minimal_qrl.envs import ContinuousObstacle2D
-from minimal_qrl.eval.planning_evaluation import greedy_navigation_rollout
+from minimal_qrl.eval.planning_evaluation import navigation_rollout, LookaheadConfig
 
 
 def _auto_device(device_str: str) -> torch.device:
@@ -281,8 +281,17 @@ def main():
     # 模型结构（需与训练一致）
     parser.add_argument("--num-critics", type=int, default=2, help="Critic 数量（需与训练一致）")
 
-    # rollout 策略参数（复用 planning_evaluation 的 greedy 逻辑）
+    # rollout 策略参数（greedy / lookahead）
+    parser.add_argument(
+        "--execution-mode",
+        type=str,
+        default="greedy",
+        choices=["greedy", "lookahead"],
+        help="执行机制：greedy（一步）或 lookahead（短视野仿真规划）",
+    )
     parser.add_argument("--num-action-candidates", type=int, default=32, help="每步采样候选动作数量")
+    parser.add_argument("--lookahead-horizon", type=int, default=5, help="lookahead 规划步长（仅 lookahead 模式）")
+    parser.add_argument("--lookahead-num-sequences", type=int, default=64, help="lookahead 序列数量（仅 lookahead 模式）")
 
     # 定性评估配置
     parser.add_argument("--seed", type=int, default=0, help="随机种子（影响起点采样与 greedy 采样）")
@@ -359,8 +368,16 @@ def main():
     np.random.seed(int(args.seed))  # greedy_action_selection 内会用 np.random
     paths: List[np.ndarray] = []
     successes: List[bool] = []
+
+    lookahead_cfg = None
+    if args.execution_mode == "lookahead":
+        lookahead_cfg = LookaheadConfig(
+            horizon=int(args.lookahead_horizon),
+            num_sequences=int(args.lookahead_num_sequences),
+        )
+
     for start in starts:
-        rr = greedy_navigation_rollout(
+        rr = navigation_rollout(
             agent=agent,
             env=env,
             start=start,
@@ -369,6 +386,8 @@ def main():
             max_steps=int(args.max_steps),
             num_action_candidates=int(args.num_action_candidates),
             use_improved_termination=True,
+            execution_mode=str(args.execution_mode),
+            lookahead_config=lookahead_cfg,
         )
         paths.append(_extract_path_xy(rr, start=start))
         successes.append(bool(rr.get("success", False)))

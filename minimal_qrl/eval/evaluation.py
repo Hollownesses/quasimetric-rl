@@ -319,7 +319,9 @@ def evaluate_planning(
     num_action_candidates: int = 32,
     visualize_failures: bool = False,
     output_dir: str = './results',
-    step: int = 0
+    step: int = 0,
+    execution_modes: Optional[list] = None,
+    lookahead_config: Optional[object] = None,
 ) -> Dict[str, any]:
     """
     评估 Planning / Reachability 功能（便捷函数）
@@ -349,6 +351,8 @@ def evaluate_planning(
         num_action_candidates=num_action_candidates,
         visualize_failures=visualize_failures,
         output_dir=output_dir,
-        step=step
+        step=step,
+        execution_modes=execution_modes,
+        lookahead_config=lookahead_config,
     )
 

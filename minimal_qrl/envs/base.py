@@ -76,3 +76,25 @@ class BaseNavigationEnv(gym.Env):
                 raise ValueError("无法确定起点或终点")
         
         return float(np.linalg.norm(start - goal))
+
+    # -----------------------------
+    # 可选：用于评估阶段的状态保存/恢复
+    # -----------------------------
+    def get_state(self) -> dict:
+        """
+        获取环境的内部状态快照（用于 evaluation / planning 的多分支仿真）。
+        
+        说明：
+        - 该接口仅用于 rollout / evaluation，不应影响训练过程
+        - 如果环境不支持可逆仿真，可不实现（保持 NotImplementedError）
+        """
+        raise NotImplementedError
+
+    def set_state(self, state: dict) -> None:
+        """
+        从 state 恢复环境内部状态（与 get_state 配套）。
+        
+        Args:
+            state: get_state() 返回的字典
+        """
+        raise NotImplementedError

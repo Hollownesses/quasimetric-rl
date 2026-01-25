@@ -516,3 +516,28 @@ class ContinuousObstacle2D(BaseNavigationEnv):
         print("\n".join(["".join(row) for row in grid]))
         print(f"Agent: ({self.agent_pos[0]:.2f}, {self.agent_pos[1]:.2f})")
         print()
+
+    # -----------------------------
+    # 用于 evaluation / lookahead 的状态保存/恢复
+    # -----------------------------
+    def get_state(self) -> dict:
+        """
+        获取环境内部状态快照（用于 planning / lookahead 仿真）。
+        
+        注意：该接口仅用于评估阶段，不参与训练。
+        """
+        return {
+            "agent_pos": (float(self.agent_pos[0]), float(self.agent_pos[1])),
+            "start": (float(self.start[0]), float(self.start[1])),
+            "goal": (float(self.goal[0]), float(self.goal[1])),
+            "t": int(self._t),
+        }
+
+    def set_state(self, state: dict) -> None:
+        """
+        恢复 get_state() 返回的内部状态快照。
+        """
+        self.agent_pos = (float(state["agent_pos"][0]), float(state["agent_pos"][1]))
+        self.start = (float(state["start"][0]), float(state["start"][1]))
+        self.goal = (float(state["goal"][0]), float(state["goal"][1]))
+        self._t = int(state["t"])
