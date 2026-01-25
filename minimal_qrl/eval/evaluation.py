@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import gym
 from scipy.stats import spearmanr
 from minimal_qrl.envs.base import BaseNavigationEnv
-from minimal_qrl.planning_evaluation import evaluate_planning_reachability
+from .planning_evaluation import evaluate_planning_reachability
 
 
 def compute_ground_truth_distance(

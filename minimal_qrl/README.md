@@ -136,8 +136,11 @@ minimal_qrl/
 │   └── continuous_obstacle_2d.py  # 2D 连续障碍物环境
 ├── dataset.py              # 数据集创建
 ├── train.py                # 主训练脚本
-├── evaluation.py           # 基础评估模块
-├── planning_evaluation.py  # Planning / Reachability 评估模块
+├── eval/                   # 评估脚本/模块（集中管理）
+│   ├── __init__.py         # 评估 API 导出（供 train.py 调用）
+│   ├── evaluation.py       # 基础评估模块
+│   ├── planning_evaluation.py  # Planning / Reachability 评估模块
+│   └── qualitative_multigoal_eval.py  # 定性评估可视化脚本（展示用）
 ├── run.sh                  # 运行脚本
 └── README.md               # 本文件
 ```

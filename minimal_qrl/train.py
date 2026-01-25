@@ -25,7 +25,7 @@ from quasimetric_rl.modules import QRLConf, QRLAgent, QRLLosses
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
 from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D
 from minimal_qrl.dataset import create_dataset
-from minimal_qrl.evaluation import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning
+from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning
 
 
 def setup_logging(output_dir: str):
