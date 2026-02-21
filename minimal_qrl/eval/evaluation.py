@@ -11,74 +11,11 @@ import matplotlib.pyplot as plt
 import gym
 from scipy.stats import spearmanr
 from minimal_qrl.envs.base import BaseNavigationEnv
-from .planning_evaluation import evaluate_planning_reachability
-
-
-def compute_ground_truth_distance(
-    env: gym.Env,
-    start: np.ndarray,
-    goal: np.ndarray
-) -> float:
-    """
-    计算两个状态之间的真实最短路径距离
-    
-    如果环境实现了 BaseNavigationEnv 接口，使用其 compute_shortest_path_distance 方法
-    否则使用欧几里得距离作为默认值
-    
-    Args:
-        env: 环境实例
-        start: 起始状态，归一化坐标
-        goal: 目标状态，归一化坐标
-    
-    Returns:
-        真实最短路径距离
-    """
-    if isinstance(env, BaseNavigationEnv):
-        return env.compute_shortest_path_distance(start=start, goal=goal)
-    else:
-        # 默认使用欧几里得距离
-        return float(np.linalg.norm(start - goal))
-
-
-def sample_state_goal_pairs(
-    env: gym.Env,
-    n_pairs: int = 2000,
-    seed: Optional[int] = None
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    随机采样状态-目标对，确保状态合法
-    
-    Args:
-        env: 环境实例（应实现 BaseNavigationEnv 接口）
-        n_pairs: 采样对数
-        seed: 随机种子
-    
-    Returns:
-        states: (n_pairs, obs_dim) 合法状态
-        goals: (n_pairs, obs_dim) 合法目标
-    """
-    if seed is not None:
-        np.random.seed(seed)
-    
-    states = []
-    goals = []
-    
-    # 如果环境实现了 BaseNavigationEnv 接口，使用其 sample_valid_state 方法
-    if isinstance(env, BaseNavigationEnv):
-        for i in range(n_pairs):
-            state = env.sample_valid_state(seed=seed + i if seed is not None else None)
-            goal = env.sample_valid_state(seed=seed + i + n_pairs if seed is not None else None)
-            states.append(state)
-            goals.append(goal)
-    else:
-        # 否则，从观察空间采样
-        for i in range(n_pairs):
-            state = env.observation_space.sample()
-            goal = env.observation_space.sample()
-            states.append(state)
-            goals.append(goal)
-    
-    return np.array(states, dtype=np.float32), np.array(goals, dtype=np.float32)
+from .planning_evaluation import (
+    evaluate_planning_reachability,
+    compute_ground_truth_distance,
+    sample_state_goal_pairs,
+)
 
 
 def evaluate_quasimetric(

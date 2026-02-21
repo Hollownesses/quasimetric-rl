@@ -84,10 +84,63 @@ def get_env_kwargs(args) -> dict:
     elif args.env_type == 'obstacle':
         return {
             'max_episode_steps': args.max_steps_per_episode,
-            'grid_resolution': getattr(args, 'grid_resolution', 100),
+            'grid_resolution': args.grid_resolution,
         }
     else:
         raise ValueError(f"未知的环境类型: {args.env_type}")
+
+
+def _log_planning_results(planning_results: dict, execution_modes: list, writer, logger, optim_steps: int, prefix: str = 'planning'):
+    """
+    统一的 planning 评估结果记录和打印函数
+    
+    Args:
+        planning_results: evaluate_planning 返回的结果字典
+        execution_modes: 执行模式列表
+        writer: TensorBoard SummaryWriter
+        logger: 日志记录器
+        optim_steps: 当前优化步数
+        prefix: TensorBoard tag 前缀（用于区分不同的 distance_type）
+    """
+    # 记录到 TensorBoard
+    for mode in execution_modes:
+        key = 'greedy_navigation' if mode == 'greedy' else f'{mode}_navigation'
+        if key in planning_results:
+            mres = planning_results[key]
+            writer.add_scalar(f'{prefix}/{mode}/success_rate', mres['success_rate'], optim_steps)
+            writer.add_scalar(f'{prefix}/{mode}/avg_steps', mres['avg_steps'], optim_steps)
+            writer.add_scalar(f'{prefix}/{mode}/avg_path_length', mres['avg_path_length'], optim_steps)
+    
+    # Path efficiency
+    pe_by_mode = planning_results.get('path_efficiency_by_mode', {})
+    if isinstance(pe_by_mode, dict):
+        for mode, pe in pe_by_mode.items():
+            if not isinstance(pe, dict):
+                continue
+            writer.add_scalar(f'{prefix}/{mode}/avg_efficiency_ratio', pe.get('avg_efficiency_ratio', 0.0), optim_steps)
+            writer.add_scalar(f'{prefix}/{mode}/median_efficiency_ratio', pe.get('median_efficiency_ratio', 0.0), optim_steps)
+    
+    # 打印结果
+    for mode in execution_modes:
+        key = 'greedy_navigation' if mode == 'greedy' else f'{mode}_navigation'
+        if key in planning_results:
+            mres = planning_results[key]
+            mode_prefix = f"[{prefix.split('/')[-1]}] " if '/' in prefix else ""
+            logger.info(
+                f"{mode_prefix}Planning评估({mode}): Success Rate={mres['success_rate']:.3f}, "
+                f"Avg Steps={mres['avg_steps']:.1f}, "
+                f"Avg Path Length={mres['avg_path_length']:.3f}"
+            )
+    
+    if pe_by_mode:
+        for mode, pe in pe_by_mode.items():
+            if not isinstance(pe, dict):
+                continue
+            mode_prefix = f"[{prefix.split('/')[-1]}] " if '/' in prefix else ""
+            logger.info(
+                f"{mode_prefix}Path Efficiency({mode}): Avg Ratio={float(pe.get('avg_efficiency_ratio', 0.0)):.3f}, "
+                f"Median={float(pe.get('median_efficiency_ratio', 0.0)):.3f}"
+            )
 
 
 def train(args):
@@ -194,7 +247,7 @@ def train(args):
     # 创建环境实例用于评估
     eval_env = create_env_fn()
     
-    # 训练循环
+    # 初始化训练状态
     logger.info("开始训练...")
     optim_steps = 0
     pbar = tqdm(total=args.total_steps, desc="训练进度")
@@ -291,21 +344,25 @@ def train(args):
                         if optim_steps % args.planning_eval_interval == 0:
                             try:
                                 logger.info("开始 Planning / Reachability 评估...")
-                                execution_modes = [m.strip() for m in str(getattr(args, "planning_execution_modes", "greedy")).split(",") if m.strip()]
-                                distance_types = [d.strip() for d in str(getattr(args, "lookahead_distance_types", "qrl")).split(",") if d.strip()]
+                                execution_modes = [m.strip() for m in args.planning_execution_modes.split(",") if m.strip()]
+                                distance_types = [d.strip() for d in args.lookahead_distance_types.split(",") if d.strip()]
                                 if not distance_types:
                                     distance_types = ["qrl"]
 
-                                # 为保持向后兼容：仅在单一 QRL distance 时，维持原有 TensorBoard tag 结构
-                                if distance_types == ["qrl"]:
+                                # 统一处理：对每个 distance_type 进行评估
+                                for dist_type in distance_types:
+                                    if len(distance_types) > 1:
+                                        logger.info(f"Planning / Reachability 评估（distance_type={dist_type})...")
+                                    
+                                    # 构建 lookahead 配置
                                     lookahead_cfg = None
                                     if "lookahead" in execution_modes:
                                         lookahead_cfg = LookaheadConfig(
-                                            horizon=int(getattr(args, "lookahead_horizon", 5)),
-                                            num_sequences=int(getattr(args, "lookahead_num_sequences", 128)),
-                                            step_cost_weight=float(getattr(args, "lookahead_step_cost_weight", 0.0)),
-                                            collision_penalty=float(getattr(args, "lookahead_collision_penalty", 0.0)),
-                                            distance_type="qrl",
+                                            horizon=args.lookahead_horizon,
+                                            num_sequences=args.lookahead_num_sequences,
+                                            step_cost_weight=args.lookahead_step_cost_weight,
+                                            collision_penalty=args.lookahead_collision_penalty,
+                                            distance_type=dist_type,
                                         )
 
                                     planning_results = evaluate_planning(
@@ -323,150 +380,11 @@ def train(args):
                                         lookahead_config=lookahead_cfg,
                                     )
                                     
-                                    # 记录到 TensorBoard
-                                    if 'greedy_navigation' in planning_results:
-                                        gn = planning_results['greedy_navigation']
-                                        writer.add_scalar('planning/success_rate', gn['success_rate'], optim_steps)
-                                        writer.add_scalar('planning/avg_steps', gn['avg_steps'], optim_steps)
-                                        writer.add_scalar('planning/avg_path_length', gn['avg_path_length'], optim_steps)
-
-                                    # 新：按 mode 记录（用于公平对比曲线）
-                                    for mode in execution_modes:
-                                        key = 'greedy_navigation' if mode == 'greedy' else f'{mode}_navigation'
-                                        if key in planning_results:
-                                            mres = planning_results[key]
-                                            writer.add_scalar(f'planning/{mode}/success_rate', mres['success_rate'], optim_steps)
-                                            writer.add_scalar(f'planning/{mode}/avg_steps', mres['avg_steps'], optim_steps)
-                                            writer.add_scalar(f'planning/{mode}/avg_path_length', mres['avg_path_length'], optim_steps)
+                                    # 确定 TensorBoard tag 前缀（单一 QRL 时保持向后兼容）
+                                    prefix = 'planning' if (distance_types == ["qrl"] and dist_type == "qrl") else f'planning/{dist_type}'
                                     
-                                    # Path efficiency：旧 key 仍写入 planning/*
-                                    if 'path_efficiency' in planning_results:
-                                        pe = planning_results['path_efficiency']
-                                        writer.add_scalar('planning/avg_efficiency_ratio', pe['avg_efficiency_ratio'], optim_steps)
-                                        writer.add_scalar('planning/median_efficiency_ratio', pe['median_efficiency_ratio'], optim_steps)
-
-                                    # 新：按 mode 写入 planning/{mode}/*
-                                    pe_by_mode = planning_results.get('path_efficiency_by_mode', {})
-                                    if isinstance(pe_by_mode, dict):
-                                        for mode, pe in pe_by_mode.items():
-                                            if not isinstance(pe, dict):
-                                                continue
-                                            writer.add_scalar(f'planning/{mode}/avg_efficiency_ratio', pe.get('avg_efficiency_ratio', 0.0), optim_steps)
-                                            writer.add_scalar(f'planning/{mode}/median_efficiency_ratio', pe.get('median_efficiency_ratio', 0.0), optim_steps)
-                                    
-                                    # 打印结果
-                                    if 'greedy_navigation' in planning_results:
-                                        gn = planning_results['greedy_navigation']
-                                        planning_str = f"Planning评估: Success Rate={gn['success_rate']:.3f}, "
-                                        planning_str += f"Avg Steps={gn['avg_steps']:.1f}, "
-                                        planning_str += f"Avg Path Length={gn['avg_path_length']:.3f}"
-                                        logger.info(planning_str)
-
-                                    for mode in execution_modes:
-                                        key = 'greedy_navigation' if mode == 'greedy' else f'{mode}_navigation'
-                                        if key in planning_results:
-                                            mres = planning_results[key]
-                                            logger.info(
-                                                f"Planning评估({mode}): Success Rate={mres['success_rate']:.3f}, "
-                                                f"Avg Steps={mres['avg_steps']:.1f}, "
-                                                f"Avg Path Length={mres['avg_path_length']:.3f}"
-                                            )
-                                    
-                                    if 'path_efficiency' in planning_results:
-                                        pe = planning_results['path_efficiency']
-                                        efficiency_str = f"Path Efficiency(greedy): Avg Ratio={pe['avg_efficiency_ratio']:.3f}, "
-                                        efficiency_str += f"Median={pe['median_efficiency_ratio']:.3f}"
-                                        logger.info(efficiency_str)
-
-                                    pe_by_mode = planning_results.get('path_efficiency_by_mode', {})
-                                    if isinstance(pe_by_mode, dict):
-                                        for mode, pe in pe_by_mode.items():
-                                            if not isinstance(pe, dict):
-                                                continue
-                                            logger.info(
-                                                f"Path Efficiency({mode}): Avg Ratio={float(pe.get('avg_efficiency_ratio', 0.0)):.3f}, "
-                                                f"Median={float(pe.get('median_efficiency_ratio', 0.0)):.3f}"
-                                            )
-                                else:
-                                    # 多 distance_type：逐个评估并分别写入 TensorBoard（tag 中带 distance_type）
-                                    for dist_type in distance_types:
-                                        logger.info(f"Planning / Reachability 评估（distance_type={dist_type})...")
-                                        lookahead_cfg = None
-                                        if "lookahead" in execution_modes:
-                                            lookahead_cfg = LookaheadConfig(
-                                                horizon=int(getattr(args, "lookahead_horizon", 5)),
-                                                num_sequences=int(getattr(args, "lookahead_num_sequences", 128)),
-                                                step_cost_weight=float(getattr(args, "lookahead_step_cost_weight", 0.0)),
-                                                collision_penalty=float(getattr(args, "lookahead_collision_penalty", 0.0)),
-                                                distance_type=dist_type,
-                                            )
-
-                                        planning_results = evaluate_planning(
-                                            agent=agent,
-                                            env=eval_env,
-                                            n_trials=args.planning_eval_n_trials,
-                                            device=str(device),
-                                            seed=args.seed + optim_steps,
-                                            num_action_candidates=args.planning_num_action_candidates,
-                                            visualize_failures=(args.planning_visualize_failures and 
-                                                               optim_steps % args.planning_visualize_interval == 0),
-                                            output_dir=output_dir,
-                                            step=optim_steps,
-                                            execution_modes=execution_modes,
-                                            lookahead_config=lookahead_cfg,
-                                        )
-
-                                        # 记录到 TensorBoard，tag 中带 distance_type 前缀
-                                        prefix = f'planning/{dist_type}'
-                                        if 'greedy_navigation' in planning_results:
-                                            gn = planning_results['greedy_navigation']
-                                            writer.add_scalar(f'{prefix}/success_rate', gn['success_rate'], optim_steps)
-                                            writer.add_scalar(f'{prefix}/avg_steps', gn['avg_steps'], optim_steps)
-                                            writer.add_scalar(f'{prefix}/avg_path_length', gn['avg_path_length'], optim_steps)
-
-                                        for mode in execution_modes:
-                                            key = 'greedy_navigation' if mode == 'greedy' else f'{mode}_navigation'
-                                            if key in planning_results:
-                                                mres = planning_results[key]
-                                                writer.add_scalar(f'{prefix}/{mode}/success_rate', mres['success_rate'], optim_steps)
-                                                writer.add_scalar(f'{prefix}/{mode}/avg_steps', mres['avg_steps'], optim_steps)
-                                                writer.add_scalar(f'{prefix}/{mode}/avg_path_length', mres['avg_path_length'], optim_steps)
-
-                                        pe_by_mode = planning_results.get('path_efficiency_by_mode', {})
-                                        if isinstance(pe_by_mode, dict):
-                                            for mode, pe in pe_by_mode.items():
-                                                if not isinstance(pe, dict):
-                                                    continue
-                                                writer.add_scalar(f'{prefix}/{mode}/avg_efficiency_ratio', pe.get('avg_efficiency_ratio', 0.0), optim_steps)
-                                                writer.add_scalar(f'{prefix}/{mode}/median_efficiency_ratio', pe.get('median_efficiency_ratio', 0.0), optim_steps)
-
-                                        # 日志打印（带 distance_type）
-                                        if 'greedy_navigation' in planning_results:
-                                            gn = planning_results['greedy_navigation']
-                                            planning_str = f"[{dist_type}] Planning评估: Success Rate={gn['success_rate']:.3f}, "
-                                            planning_str += f"Avg Steps={gn['avg_steps']:.1f}, "
-                                            planning_str += f"Avg Path Length={gn['avg_path_length']:.3f}"
-                                            logger.info(planning_str)
-
-                                        for mode in execution_modes:
-                                            key = 'greedy_navigation' if mode == 'greedy' else f'{mode}_navigation'
-                                            if key in planning_results:
-                                                mres = planning_results[key]
-                                                logger.info(
-                                                    f"[{dist_type}] Planning评估({mode}): Success Rate={mres['success_rate']:.3f}, "
-                                                    f"Avg Steps={mres['avg_steps']:.1f}, "
-                                                    f"Avg Path Length={mres['avg_path_length']:.3f}"
-                                                )
-
-                                        pe_by_mode = planning_results.get('path_efficiency_by_mode', {})
-                                        if isinstance(pe_by_mode, dict):
-                                            for mode, pe in pe_by_mode.items():
-                                                if not isinstance(pe, dict):
-                                                    continue
-                                                logger.info(
-                                                    f"[{dist_type}] Path Efficiency({mode}): Avg Ratio={float(pe.get('avg_efficiency_ratio', 0.0)):.3f}, "
-                                                    f"Median={float(pe.get('median_efficiency_ratio', 0.0)):.3f}"
-                                                )
+                                    # 统一记录和打印结果
+                                    _log_planning_results(planning_results, execution_modes, writer, logger, optim_steps, prefix)
                                 
                             except Exception as e:
                                 logger.warning(f"Planning 评估失败: {e}")

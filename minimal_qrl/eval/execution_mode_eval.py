@@ -27,29 +27,12 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from quasimetric_rl.modules import QRLConf
-from quasimetric_rl.data import Dataset, register_offline_env
-from quasimetric_rl.data.base import CREATE_ENV_REGISTRY, LOAD_EPISODES_REGISTRY
+from quasimetric_rl.data import Dataset
 
 from minimal_qrl.envs import ContinuousObstacle2D
 from minimal_qrl.eval import evaluate_planning, LookaheadConfig
 from minimal_qrl.eval.planning_evaluation import sample_state_goal_pairs
-
-
-def _auto_device(device_str: str) -> torch.device:
-    if device_str != "auto":
-        return torch.device(device_str)
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
-def _ensure_registered_env(kind: str, name: str, *, create_env_fn, load_episodes_fn):
-    key = (kind, name)
-    if key in CREATE_ENV_REGISTRY and key in LOAD_EPISODES_REGISTRY:
-        return
-    register_offline_env(kind, name, create_env_fn=create_env_fn, load_episodes_fn=load_episodes_fn)
+from minimal_qrl.eval.utils import auto_device, ensure_registered_env
 
 
 def main():
@@ -95,7 +78,7 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    device = _auto_device(args.device)
+    device = auto_device(args.device)
 
     # 构建环境（与训练一致）
     env_kwargs = dict(max_episode_steps=int(args.max_steps), grid_resolution=int(args.grid_resolution))
@@ -106,7 +89,7 @@ def main():
     def load_episodes_fn():
         return iter(())
 
-    _ensure_registered_env("obstacle", args.env_name, create_env_fn=create_env_fn, load_episodes_fn=load_episodes_fn)
+    ensure_registered_env("obstacle", args.env_name, create_env_fn=create_env_fn, load_episodes_fn=load_episodes_fn)
 
     # dummy Dataset：只为拿 env_spec
     dataset_conf = Dataset.Conf(kind="obstacle", name=args.env_name, future_observation_discount=0.99)
