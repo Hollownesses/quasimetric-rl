@@ -95,8 +95,14 @@ class ContinuousObstacle2D(BaseNavigationEnv):
         # 默认障碍物配置（如果没有提供）
         if obstacles is None:
             obstacles = [
-                Obstacle(x_min=0.3, x_max=0.5, y_min=0.2, y_max=0.4),
-                Obstacle(x_min=0.6, x_max=0.8, y_min=0.6, y_max=0.8),
+                # 中间一堵长竖墙，几乎把空间一分为二，只在上方留窄缝
+                Obstacle(x_min=0.35, x_max=0.65, y_min=0.15, y_max=0.75),
+                # 右上角再加一个块，迫使从下方绕
+                Obstacle(x_min=0.65, x_max=0.9, y_min=0.55, y_max=0.85),
+                # 左下角加一个块，避免出现太直的对角线
+                Obstacle(x_min=0.1, x_max=0.35, y_min=0.1, y_max=0.3),
+                # 左中部再加一个小障碍，让路径更弯
+                Obstacle(x_min=0.1, x_max=0.3, y_min=0.45, y_max=0.6),
             ]
         
         self.obstacles = obstacles

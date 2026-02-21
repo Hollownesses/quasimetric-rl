@@ -32,6 +32,7 @@ from quasimetric_rl.data.base import CREATE_ENV_REGISTRY, LOAD_EPISODES_REGISTRY
 
 from minimal_qrl.envs import ContinuousObstacle2D
 from minimal_qrl.eval import evaluate_planning, LookaheadConfig
+from minimal_qrl.eval.planning_evaluation import sample_state_goal_pairs
 
 
 def _auto_device(device_str: str) -> torch.device:
@@ -79,6 +80,12 @@ def main():
     parser.add_argument("--lookahead-num-sequences", type=int, default=64)
     parser.add_argument("--lookahead-step-cost-weight", type=float, default=0.0)
     parser.add_argument("--lookahead-collision-penalty", type=float, default=0.0)
+    parser.add_argument(
+        "--lookahead-distance-types",
+        type=str,
+        default="qrl,euclidean",
+        help='lookahead 终端代价的 distance 类型，逗号分隔："qrl" 或 "euclidean"',
+    )
 
     # 模型结构（需与训练一致）
     parser.add_argument("--num-critics", type=int, default=2, help="Critic 数量（需与训练一致）")
@@ -122,31 +129,70 @@ def main():
     env = create_env_fn()
 
     execution_modes = [m.strip() for m in str(args.execution_modes).split(",") if m.strip()]
+    distance_types = [d.strip() for d in str(args.lookahead_distance_types).split(",") if d.strip()]
+    if not distance_types:
+        distance_types = ["qrl"]
 
-    lookahead_cfg = None
-    if "lookahead" in execution_modes:
-        lookahead_cfg = LookaheadConfig(
-            horizon=int(args.lookahead_horizon),
-            num_sequences=int(args.lookahead_num_sequences),
-            step_cost_weight=float(args.lookahead_step_cost_weight),
-            collision_penalty=float(args.lookahead_collision_penalty),
-        )
-
-    # 运行评估
+    # 运行评估：按 distance_type 区分结果，保持对单一 QRL 配置的向后兼容
     np.random.seed(int(args.seed))
-    results = evaluate_planning(
-        agent=agent,
-        env=env,
-        n_trials=int(args.n_trials),
-        device=str(device),
-        seed=int(args.seed),
-        num_action_candidates=int(args.num_action_candidates),
-        visualize_failures=bool(args.visualize_failures),
-        output_dir=str(args.output_dir),
-        step=int(ckpt_step) if ckpt_step is not None else 0,
-        execution_modes=execution_modes,
-        lookahead_config=lookahead_cfg,
-    )
+
+    if distance_types == ["qrl"]:
+        lookahead_cfg = None
+        if "lookahead" in execution_modes:
+            lookahead_cfg = LookaheadConfig(
+                horizon=int(args.lookahead_horizon),
+                num_sequences=int(args.lookahead_num_sequences),
+                step_cost_weight=float(args.lookahead_step_cost_weight),
+                collision_penalty=float(args.lookahead_collision_penalty),
+                distance_type="qrl",
+            )
+
+        results = evaluate_planning(
+            agent=agent,
+            env=env,
+            n_trials=int(args.n_trials),
+            device=str(device),
+            seed=int(args.seed),
+            num_action_candidates=int(args.num_action_candidates),
+            visualize_failures=bool(args.visualize_failures),
+            output_dir=str(args.output_dir),
+            step=int(ckpt_step) if ckpt_step is not None else 0,
+            execution_modes=execution_modes,
+            lookahead_config=lookahead_cfg,
+        )
+    else:
+        # 多个 distance_type：在同一批 start-goal 对上分别评估，并打包在 by_distance_type 中
+        starts, goals = sample_state_goal_pairs(env, n_pairs=int(args.n_trials), seed=int(args.seed))
+        results_by_distance = {}
+        for dist_type in distance_types:
+            lookahead_cfg = None
+            if "lookahead" in execution_modes:
+                lookahead_cfg = LookaheadConfig(
+                    horizon=int(args.lookahead_horizon),
+                    num_sequences=int(args.lookahead_num_sequences),
+                    step_cost_weight=float(args.lookahead_step_cost_weight),
+                    collision_penalty=float(args.lookahead_collision_penalty),
+                    distance_type=dist_type,
+                )
+
+            res = evaluate_planning(
+                agent=agent,
+                env=env,
+                n_trials=int(args.n_trials),
+                device=str(device),
+                seed=int(args.seed),
+                num_action_candidates=int(args.num_action_candidates),
+                visualize_failures=bool(args.visualize_failures),
+                output_dir=str(args.output_dir),
+                step=int(ckpt_step) if ckpt_step is not None else 0,
+                execution_modes=execution_modes,
+                lookahead_config=lookahead_cfg,
+                starts=starts,
+                goals=goals,
+            )
+            results_by_distance[dist_type] = res
+
+        results = {"by_distance_type": results_by_distance}
 
     # 保存 json
     tag = f"step{int(ckpt_step):05d}" if ckpt_step is not None else "checkpoint"
@@ -156,24 +202,33 @@ def main():
 
     # 控制台摘要
     print(f"[execution_mode_eval] saved: {out_json}")
-    for mode in execution_modes:
-        key = "greedy_navigation" if mode == "greedy" else f"{mode}_navigation"
-        if key in results:
-            m = results[key]
-            print(
-                f"- {mode}: success_rate={m.get('success_rate', 0.0):.3f}, "
-                f"avg_steps={m.get('avg_steps', 0.0):.1f}, "
-                f"avg_path_length={m.get('avg_path_length', 0.0):.3f}"
-            )
-    pe_by_mode = results.get("path_efficiency_by_mode", {})
-    if isinstance(pe_by_mode, dict):
-        for mode, pe in pe_by_mode.items():
-            if not isinstance(pe, dict):
-                continue
-            print(
-                f"- {mode}: avg_eff={float(pe.get('avg_efficiency_ratio', 0.0)):.3f}, "
-                f"median_eff={float(pe.get('median_efficiency_ratio', 0.0)):.3f}"
-            )
+
+    def _print_summary(prefix: str, res: dict):
+        for mode in execution_modes:
+            key = "greedy_navigation" if mode == "greedy" else f"{mode}_navigation"
+            if key in res:
+                m = res[key]
+                print(
+                    f"{prefix}- {mode}: success_rate={m.get('success_rate', 0.0):.3f}, "
+                    f"avg_steps={m.get('avg_steps', 0.0):.1f}, "
+                    f"avg_path_length={m.get('avg_path_length', 0.0):.3f}"
+                )
+        pe_by_mode = res.get("path_efficiency_by_mode", {})
+        if isinstance(pe_by_mode, dict):
+            for mode, pe in pe_by_mode.items():
+                if not isinstance(pe, dict):
+                    continue
+                print(
+                    f"{prefix}- {mode}: avg_eff={float(pe.get('avg_efficiency_ratio', 0.0)):.3f}, "
+                    f"median_eff={float(pe.get('median_efficiency_ratio', 0.0)):.3f}"
+                )
+
+    if "by_distance_type" in results:
+        for dist_type, res in results["by_distance_type"].items():
+            print(f"[distance_type={dist_type}]")
+            _print_summary(prefix="  ", res=res)
+    else:
+        _print_summary(prefix="", res=results)
 
 
 if __name__ == "__main__":

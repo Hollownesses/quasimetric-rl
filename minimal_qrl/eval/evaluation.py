@@ -322,6 +322,8 @@ def evaluate_planning(
     step: int = 0,
     execution_modes: Optional[list] = None,
     lookahead_config: Optional[object] = None,
+    starts: Optional[np.ndarray] = None,
+    goals: Optional[np.ndarray] = None,
 ) -> Dict[str, any]:
     """
     评估 Planning / Reachability 功能（便捷函数）
@@ -354,5 +356,7 @@ def evaluate_planning(
         step=step,
         execution_modes=execution_modes,
         lookahead_config=lookahead_config,
+        starts=starts,
+        goals=goals,
     )
 

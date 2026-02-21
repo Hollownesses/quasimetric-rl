@@ -18,6 +18,7 @@ from minimal_qrl.envs.base import BaseNavigationEnv
 
 
 ExecutionMode = Literal["greedy", "lookahead"]
+DistanceType = Literal["qrl", "euclidean"]
 
 
 def _unwrap_env(env: gym.Env) -> gym.Env:
@@ -113,6 +114,10 @@ class LookaheadConfig:
     step_cost_weight: float = 0.0
     collision_penalty: float = 0.0
     biased_sequences: int = 12  # 添加一部分朝向 goal 的序列以增强稳定性
+    # 终端代价使用的 distance 类型：
+    # - "qrl": 使用 QRL learned distance（默认，保持向后兼容）
+    # - "euclidean": 使用欧几里得距离 ||s_T - goal|| 作为启发式
+    distance_type: DistanceType = "qrl"
 
 
 def compute_ground_truth_distance(
@@ -482,12 +487,21 @@ def lookahead_action_selection(
     # 恢复环境状态（外部 rollout 继续使用原始状态）
     _restore_env_state(env, base_env_state)
 
-    # 终端 QRL distance（成功序列 cost=0）
-    qrl_terminal = compute_qrl_distance_batch(agent, terminal_states, goal, device=device)
-    qrl_terminal = qrl_terminal.astype(np.float32)
-    qrl_terminal[success_mask] = 0.0
+    # 终端代价：根据 distance_type 选择 QRL 或欧几里得距离
+    distance_type: DistanceType = getattr(config, "distance_type", "qrl")  # 向后兼容
+    if distance_type == "qrl":
+        terminal_costs = compute_qrl_distance_batch(agent, terminal_states, goal, device=device)
+        terminal_costs = terminal_costs.astype(np.float32)
+    elif distance_type == "euclidean":
+        diffs = terminal_states - goal[None, :].astype(np.float32)
+        terminal_costs = np.linalg.norm(diffs, axis=1).astype(np.float32)
+    else:
+        raise ValueError(f"未知 distance_type: {distance_type}")
 
-    costs = qrl_terminal + step_costs + (collision_counts.astype(np.float32) * float(config.collision_penalty))
+    # 成功序列的终端代价视为 0
+    terminal_costs[success_mask] = 0.0
+
+    costs = terminal_costs + step_costs + (collision_counts.astype(np.float32) * float(config.collision_penalty))
     best_idx = int(np.argmin(costs))
     best_action = seqs[best_idx, 0].astype(np.float32)
     return best_action
@@ -1124,6 +1138,8 @@ def evaluate_planning_reachability(
     step: int = 0,
     execution_modes: Optional[List[ExecutionMode]] = None,
     lookahead_config: Optional[LookaheadConfig] = None,
+    starts: Optional[np.ndarray] = None,
+    goals: Optional[np.ndarray] = None,
 ) -> Dict[str, any]:
     """
     综合评估 Planning / Reachability 功能
@@ -1152,8 +1168,9 @@ def evaluate_planning_reachability(
     if execution_modes is None:
         execution_modes = ["greedy"]
 
-    # 为了公平对比：所有 mode 使用同一批 start-goal 对
-    starts, goals = sample_state_goal_pairs(env, n_pairs=n_trials, seed=seed)
+    # 为了公平对比：所有 mode（以及可选的不同 distance_type）可以共享同一批 start-goal 对
+    if starts is None or goals is None:
+        starts, goals = sample_state_goal_pairs(env, n_pairs=n_trials, seed=seed)
 
     path_eff_by_mode: Dict[str, dict] = {}
     failure_viz_by_mode: Dict[str, List[str]] = {}
