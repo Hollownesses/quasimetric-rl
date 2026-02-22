@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quasimetric_rl.modules import QRLConf, QRLAgent, QRLLosses
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
-from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D
+from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D, DubinsUAV2D
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
 
@@ -48,7 +48,7 @@ def create_env_factory(env_type: str, **env_kwargs):
     创建环境工厂函数
     
     Args:
-        env_type: 环境类型 ('simple_grid' 或 'obstacle')
+        env_type: 环境类型 ('simple_grid', 'obstacle', 或 'dubins_uav')
         **env_kwargs: 环境参数
     
     Returns:
@@ -61,6 +61,10 @@ def create_env_factory(env_type: str, **env_kwargs):
     elif env_type == 'obstacle':
         def factory():
             return ContinuousObstacle2D(**env_kwargs)
+        return factory
+    elif env_type == 'dubins_uav':
+        def factory():
+            return DubinsUAV2D(**env_kwargs)
         return factory
     else:
         raise ValueError(f"未知的环境类型: {env_type}")
@@ -86,6 +90,26 @@ def get_env_kwargs(args) -> dict:
             'max_episode_steps': args.max_steps_per_episode,
             'grid_resolution': args.grid_resolution,
         }
+    elif args.env_type == 'dubins_uav':
+        kwargs = {
+            'max_episode_steps': args.max_steps_per_episode,
+        }
+        # 添加 Dubins UAV 特定参数（如果提供）
+        if hasattr(args, 'bounds') and args.bounds:
+            kwargs['bounds'] = tuple(args.bounds)
+        if hasattr(args, 'omega_max') and args.omega_max:
+            kwargs['omega_max'] = args.omega_max
+        if hasattr(args, 'v') and args.v:
+            kwargs['v'] = args.v
+        if hasattr(args, 'dt') and args.dt:
+            kwargs['dt'] = args.dt
+        if hasattr(args, 'epsilon_pos') and args.epsilon_pos:
+            kwargs['epsilon_pos'] = args.epsilon_pos
+        if hasattr(args, 'epsilon_theta') and args.epsilon_theta:
+            kwargs['epsilon_theta'] = args.epsilon_theta
+        if hasattr(args, 'collision_penalty') and args.collision_penalty:
+            kwargs['collision_penalty'] = args.collision_penalty
+        return kwargs
     else:
         raise ValueError(f"未知的环境类型: {args.env_type}")
 
@@ -182,7 +206,7 @@ def train(args):
     
     # 注册环境（如果还没注册）
     from quasimetric_rl.data.base import CREATE_ENV_REGISTRY
-    env_key = (args.env_type, args.env_name)
+    env_key = (args.env_type, args.env_type)  # 使用 env_type 作为 name
     if env_key not in CREATE_ENV_REGISTRY:
         def load_episodes():
             env = create_env_fn()
@@ -195,7 +219,7 @@ def train(args):
             )
         
         register_offline_env(
-            args.env_type, args.env_name,
+            args.env_type, args.env_type,  # 使用 env_type 作为 name
             create_env_fn=create_env_fn,
             load_episodes_fn=load_episodes,
         )
@@ -205,7 +229,7 @@ def train(args):
     logger.info("创建数据集...")
     dataset_conf = Dataset.Conf(
         kind=args.env_type,
-        name=args.env_name,
+        name=args.env_type,  # 使用 env_type 作为 name
         future_observation_discount=0.99,
     )
     dataset = dataset_conf.make(dummy=False)
@@ -460,14 +484,30 @@ def main():
     
     # 环境参数
     parser.add_argument('--env-type', type=str, default='simple_grid',
-                        choices=['simple_grid', 'obstacle'],
-                        help='环境类型: simple_grid (简单网格) 或 obstacle (障碍物环境)')
-    parser.add_argument('--env-name', type=str, default='grid2d',
-                        help='环境名称（用于注册，如 grid2d, obstacle2d）')
+                        choices=['simple_grid', 'obstacle', 'dubins_uav'],
+                        help='环境类型: simple_grid (简单网格), obstacle (障碍物环境), 或 dubins_uav (Dubins UAV)')
     parser.add_argument('--grid-size', type=int, nargs=2, default=[10, 10],
                         help='网格大小 (height, width)，仅用于 simple_grid 环境')
     parser.add_argument('--grid-resolution', type=int, default=50,
                         help='A* 搜索的网格分辨率，仅用于 obstacle 环境（降低可加速评估）')
+    
+    # Dubins UAV 特定参数
+    parser.add_argument('--bounds', type=float, nargs=4, default=None,
+                        metavar=('X_MIN', 'Y_MIN', 'X_MAX', 'Y_MAX'),
+                        help='地图边界，仅用于 dubins_uav 环境')
+    parser.add_argument('--omega-max', type=float, default=None,
+                        help='最大角速度（弧度/秒），仅用于 dubins_uav 环境')
+    parser.add_argument('--v', type=float, default=None,
+                        help='固定前进速度（单位/秒），仅用于 dubins_uav 环境')
+    parser.add_argument('--dt', type=float, default=None,
+                        help='时间步长（秒），仅用于 dubins_uav 环境')
+    parser.add_argument('--epsilon-pos', type=float, default=None,
+                        help='位置到达目标的容差，仅用于 dubins_uav 环境')
+    parser.add_argument('--epsilon-theta', type=float, default=None,
+                        help='朝向到达目标的容差（弧度），仅用于 dubins_uav 环境')
+    parser.add_argument('--collision-penalty', type=float, default=None,
+                        help='碰撞时的负奖励，仅用于 dubins_uav 环境')
+    
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')
     

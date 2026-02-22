@@ -2,11 +2,10 @@
 # 一键运行最小 QRL 训练脚本
 # 支持 Apple Silicon MPS 加速
 
-# 默认simple_grid环境
+# 默认simple_grid环境（env-name 默认等于 env-type，可省略）
 python minimal_qrl/train.py \
     --device auto \
     --env-type simple_grid \
-    --env-name grid2d \
     --output-dir ./results/minimal_qrl \
     --grid-size 10 10 \
     --num-episodes 100 \
@@ -22,11 +21,10 @@ python minimal_qrl/train.py \
 
 """
 
-# obstacle环境
+# obstacle环境（env-name 默认等于 env-type，可省略）
 python minimal_qrl/train.py \
     --device auto \
     --env-type obstacle \
-    --env-name obstacle2d \
     --output-dir ./results/minimal_qrl \
     --grid-resolution 50 \
     --num-episodes 100 \
@@ -47,11 +45,10 @@ python minimal_qrl/train.py \
 
 """
 
-# 在obstacle环境下使用lookahead
+# 在obstacle环境下使用lookahead（env-name 默认等于 env-type，可省略）
 python minimal_qrl/train.py \
     --device auto \
     --env-type obstacle \
-    --env-name obstacle2d \
     --output-dir ./results/minimal_qrl \
     --grid-resolution 100 \
     --num-episodes 100 \
