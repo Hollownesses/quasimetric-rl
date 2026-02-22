@@ -21,7 +21,7 @@ python minimal_qrl/train.py \
 
 """
 
-# obstacle环境（env-name 默认等于 env-type，可省略）
+# obstacle环境
 python minimal_qrl/train.py \
     --device auto \
     --env-type obstacle \
@@ -45,7 +45,7 @@ python minimal_qrl/train.py \
 
 """
 
-# 在obstacle环境下使用lookahead（env-name 默认等于 env-type，可省略）
+# 在obstacle环境下使用lookahead
 python minimal_qrl/train.py \
     --device auto \
     --env-type obstacle \
