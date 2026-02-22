@@ -888,7 +888,8 @@ def visualize_failure_modes(
     Returns:
         保存的图像文件路径列表
     """
-    os.makedirs(output_dir, exist_ok=True)
+    failure_dir = os.path.join(output_dir, 'failure_mode')
+    os.makedirs(failure_dir, exist_ok=True)
     
     if seed is not None:
         np.random.seed(seed)
@@ -1055,8 +1056,8 @@ def visualize_failure_modes(
         
         plt.tight_layout()
         
-        # 保存
-        fname = os.path.join(output_dir, f'failure_mode_{execution_mode}_{idx+1}_step{step:05d}.png')
+        # 保存到 failure_mode 子目录
+        fname = os.path.join(failure_dir, f'failure_mode_{execution_mode}_{idx+1}_step{step:05d}.png')
         plt.savefig(fname, dpi=150, bbox_inches='tight')
         plt.close()
         
@@ -1075,7 +1076,8 @@ def visualize_failure_start_distribution(
     """
     聚合可视化：不同 execution mode 的 failure start 空间分布对比。
     """
-    os.makedirs(output_dir, exist_ok=True)
+    failure_dir = os.path.join(output_dir, 'failure_mode')
+    os.makedirs(failure_dir, exist_ok=True)
 
     fig, ax = plt.subplots(figsize=(7.5, 7.5))
     ax.set_xlim(0.0, 1.0)
@@ -1120,7 +1122,7 @@ def visualize_failure_start_distribution(
     ax.legend(loc="upper right", framealpha=0.9)
     plt.tight_layout()
 
-    fname = os.path.join(output_dir, f"failure_start_distribution_step{step:05d}.png")
+    fname = os.path.join(failure_dir, f"failure_start_distribution_step{step:05d}.png")
     plt.savefig(fname, dpi=220, bbox_inches="tight")
     plt.close(fig)
     return fname

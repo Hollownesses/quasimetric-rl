@@ -93,9 +93,8 @@ python minimal_qrl/train.py \
 - `tensorboard/`: TensorBoard 日志（可用 `tensorboard --logdir=results/minimal_qrl/tensorboard` 查看）
 - `checkpoint_*.pth`: 训练检查点
 - `checkpoint_final.pth`: 最终模型
-- `distance_heatmap_step*.png`: 距离场热力图（每个评估间隔生成一次）
-- `failure_mode_{mode}_*_step*.png`: Failure mode 可视化（如果启用；mode=greedy/lookahead）
-- `failure_start_distribution_step*.png`: 不同执行机制下 failure start 分布对比图（当同时评估 greedy 与 lookahead 且启用可视化时）
+- `distance_heatmap/`: 距离场热力图目录，内含 `distance_heatmap_step*.png`（每个评估间隔生成一次）
+- `failure_mode/`: Failure 可视化目录，内含 `failure_mode_{mode}_*_step*.png`（若启用；mode=greedy/lookahead）及 `failure_start_distribution_step*.png`（当同时评估 greedy 与 lookahead 且启用可视化时）
 - `COMPLETE`: 完成标记文件
 
 ### 评估指标
@@ -233,7 +232,7 @@ python minimal_qrl/train.py \
 评估结果会：
 - 记录到 TensorBoard（`planning/success_rate`, `planning/avg_efficiency_ratio` 等）
 - 打印到日志
-- 失败案例可视化保存到输出目录（`failure_mode_*_step*.png`）
+- 失败案例可视化保存到输出目录下的 `failure_mode/` 子目录（`failure_mode_*_step*.png`）
 
 ## 下一步
 

@@ -129,7 +129,8 @@ def visualize_distance_field_heatmap(
         device: 设备
         resolution: 可视化分辨率 (height, width)，如果为 None 则根据环境自动确定
     """
-    os.makedirs(output_dir, exist_ok=True)
+    heatmap_dir = os.path.join(output_dir, 'distance_heatmap')
+    os.makedirs(heatmap_dir, exist_ok=True)
     
     # 确定目标
     if goal is None:
@@ -239,8 +240,8 @@ def visualize_distance_field_heatmap(
     
     plt.tight_layout()
     
-    # 保存
-    fname = os.path.join(output_dir, f'distance_heatmap_step{step:05d}.png')
+    # 保存到 distance_heatmap 子目录
+    fname = os.path.join(heatmap_dir, f'distance_heatmap_step{step:05d}.png')
     plt.savefig(fname, dpi=150, bbox_inches='tight')
     plt.close()
     
