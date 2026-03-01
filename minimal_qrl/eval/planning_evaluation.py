@@ -128,23 +128,16 @@ def compute_ground_truth_distance(
     """
     计算两个状态之间的真实最短路径距离
     
-    如果环境实现了 BaseNavigationEnv 接口，使用其 compute_shortest_path_distance 方法
-    否则使用欧几里得距离作为默认值
-    
-    Args:
-        env: 环境实例
-        start: 起始状态，归一化坐标
-        goal: 目标状态，归一化坐标
-    
-    Returns:
-        真实最短路径距离
+    如果环境实现了 BaseNavigationEnv 接口，使用其 compute_shortest_path_distance 方法；
+    若还提供 compute_min_time_to_go（如 Dubins UAV），则优先使用时间作为距离（用于 time-to-go 学习）。
+    否则使用欧几里得距离作为默认值。
     """
     nav_env = _as_nav_env(env)
     if nav_env is not None:
+        if hasattr(nav_env, "compute_min_time_to_go"):
+            return nav_env.compute_min_time_to_go(start=start, goal=goal)
         return nav_env.compute_shortest_path_distance(start=start, goal=goal)
-    else:
-        # 默认使用欧几里得距离
-        return float(np.linalg.norm(start - goal))
+    return float(np.linalg.norm(start - goal))
 
 
 def sample_state_goal_pairs(

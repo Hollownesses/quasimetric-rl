@@ -22,6 +22,9 @@ from torch.utils.tensorboard import SummaryWriter
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quasimetric_rl.modules import QRLConf, QRLAgent, QRLLosses
+from quasimetric_rl.modules.quasimetric_critic import QuasimetricCriticConf
+from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
+from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
 from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D, DubinsUAV2D
 from minimal_qrl.dataset import create_dataset
@@ -91,23 +94,19 @@ def get_env_kwargs(args) -> dict:
             'grid_resolution': args.grid_resolution,
         }
     elif args.env_type == 'dubins_uav':
+        # 初步训练默认：小地图、无障碍、固定 v/dt、大 omega_max、cos/sin 观测
         kwargs = {
             'max_episode_steps': args.max_steps_per_episode,
+            'bounds': tuple(args.bounds) if (hasattr(args, 'bounds') and args.bounds) else (0.0, 0.0, 5.0, 5.0),
+            'omega_max': args.omega_max if (hasattr(args, 'omega_max') and args.omega_max is not None) else 3.0,
+            'v': args.v if (hasattr(args, 'v') and args.v is not None) else 1.0,
+            'dt': args.dt if (hasattr(args, 'dt') and args.dt is not None) else 0.1,
+            'epsilon_pos': args.epsilon_pos if (hasattr(args, 'epsilon_pos') and args.epsilon_pos is not None) else 0.15,
+            'epsilon_theta': args.epsilon_theta if (hasattr(args, 'epsilon_theta') and args.epsilon_theta is not None) else 0.2,
+            'obstacles': [],  # 初步训练无障碍
+            'use_cos_sin_obs': getattr(args, 'use_cos_sin_obs', True),
         }
-        # 添加 Dubins UAV 特定参数（如果提供）
-        if hasattr(args, 'bounds') and args.bounds:
-            kwargs['bounds'] = tuple(args.bounds)
-        if hasattr(args, 'omega_max') and args.omega_max:
-            kwargs['omega_max'] = args.omega_max
-        if hasattr(args, 'v') and args.v:
-            kwargs['v'] = args.v
-        if hasattr(args, 'dt') and args.dt:
-            kwargs['dt'] = args.dt
-        if hasattr(args, 'epsilon_pos') and args.epsilon_pos:
-            kwargs['epsilon_pos'] = args.epsilon_pos
-        if hasattr(args, 'epsilon_theta') and args.epsilon_theta:
-            kwargs['epsilon_theta'] = args.epsilon_theta
-        if hasattr(args, 'collision_penalty') and args.collision_penalty:
+        if hasattr(args, 'collision_penalty') and args.collision_penalty is not None:
             kwargs['collision_penalty'] = args.collision_penalty
         return kwargs
     else:
@@ -196,7 +195,12 @@ def train(args):
     else:
         device = torch.device(args.device)
     logger.info(f"使用设备: {device}")
-    
+    # MPS 在部分评估/热力图运算上会触发 buffer 错误，评估与可视化改用 CPU
+    eval_device = torch.device('cpu') if device.type == 'mps' else device
+    eval_device_str = str(eval_device)
+    if eval_device_str == 'cpu' and device.type == 'mps':
+        logger.info("评估与可视化将使用 CPU 以避免 MPS 兼容性问题")
+
     # 获取环境参数
     env_kwargs = get_env_kwargs(args)
     logger.info(f"环境参数: {env_kwargs}")
@@ -235,12 +239,25 @@ def train(args):
     dataset = dataset_conf.make(dummy=False)
     logger.info(f"数据集大小: {len(dataset)} 个转移")
     
-    # 创建 QRL Agent 和 Losses
+    # 创建 QRL Agent 和 Losses（Dubins 时 step_cost=dt 以学习 time-to-go）
     logger.info("创建 QRL Agent 和 Losses...")
-    agent_conf = QRLConf(
-        actor=None,  # 不训练 actor，只训练 critic
-        num_critics=args.num_critics,
-    )
+    step_cost = 1.0
+    if args.env_type == 'dubins_uav':
+        step_cost = env_kwargs.get('dt', 0.1)
+        agent_conf = QRLConf(
+            actor=None,
+            num_critics=args.num_critics,
+            quasimetric_critic=QuasimetricCriticConf(
+                losses=QuasimetricCriticLosses.Conf(
+                    local_constraint=LocalConstraintLoss.Conf(step_cost=step_cost),
+                )
+            ),
+        )
+    else:
+        agent_conf = QRLConf(
+            actor=None,
+            num_critics=args.num_critics,
+        )
     agent, losses = agent_conf.make(
         env_spec=dataset.env_spec,
         total_optim_steps=args.total_steps,
@@ -302,7 +319,6 @@ def train(args):
             
             # 记录日志
             if optim_steps % args.log_interval == 0:
-                # 记录损失信息
                 def log_dict(d, prefix='', step=optim_steps):
                     for k, v in d.items():
                         if isinstance(v, dict):
@@ -314,6 +330,17 @@ def train(args):
                 
                 log_dict(loss_result.info, prefix='train/')
                 writer.add_scalar('train/total_loss', loss_result.loss.item(), optim_steps)
+                # 监控一步距离与 TD 类偏差（便于验证收敛与震荡）
+                try:
+                    lc = loss_result.info.get('critic_00', {}).get('local_constraint', {})
+                    if lc and 'dist' in lc:
+                        d = lc['dist']
+                        one_step_dist = d.mean().item() if hasattr(d, 'mean') else (d.item() if hasattr(d, 'item') else float(d))
+                        writer.add_scalar('train/one_step_dist', one_step_dist, optim_steps)
+                        step_cost_val = getattr(losses.critic_losses[0].local_constraint, 'step_cost', 1.0)
+                        writer.add_scalar('train/td_like_error', one_step_dist - step_cost_val, optim_steps)
+                except Exception:
+                    pass
                 
                 # 打印到控制台（包含详细信息）
                 loss_str = f"Step {optim_steps}: total_loss={loss_result.loss.item():.4f}"
@@ -341,15 +368,17 @@ def train(args):
             if optim_steps % args.eval_interval == 0:
                 logger.info(f"Step {optim_steps}: 开始评估...")
                 agent.eval()
-                
+                # MPS 时临时迁到 CPU 做评估与热力图，避免 Metal buffer 错误
+                if device != eval_device:
+                    agent.to(eval_device)
                 try:
                     # 评估 quasimetric
                     eval_metrics = evaluate_quasimetric(
                         agent=agent,
                         env=eval_env,
                         n_pairs=args.eval_n_pairs,
-                        device=str(device),  # 使用实际设备而非 args.device（可能是 'auto'）
-                        seed=args.seed + optim_steps,  # 使用不同的种子
+                        device=eval_device_str,
+                        seed=args.seed + optim_steps,
                     )
                     
                     # 记录到 TensorBoard
@@ -393,7 +422,7 @@ def train(args):
                                         agent=agent,
                                         env=eval_env,
                                         n_trials=args.planning_eval_n_trials,
-                                        device=str(device),
+                                        device=eval_device_str,
                                         seed=args.seed + optim_steps,
                                         num_action_candidates=args.planning_num_action_candidates,
                                         visualize_failures=(args.planning_visualize_failures and 
@@ -419,10 +448,10 @@ def train(args):
                             heatmap_path = visualize_distance_field_heatmap(
                                 agent=agent,
                                 env=eval_env,
-                                goal=None,  # 使用 env.goal_pos
+                                goal=None,
                                 step=optim_steps,
                                 output_dir=output_dir,
-                                device=str(device),
+                                device=eval_device_str,
                             )
                             logger.info(f"已保存距离场热力图: {heatmap_path}")
                             # 将图像添加到 TensorBoard
@@ -442,6 +471,8 @@ def train(args):
                 except Exception as e:
                     logger.warning(f"评估失败: {e}")
                 finally:
+                    if device != eval_device:
+                        agent.to(device)
                     agent.train()
             
             # 保存检查点
@@ -507,6 +538,10 @@ def main():
                         help='朝向到达目标的容差（弧度），仅用于 dubins_uav 环境')
     parser.add_argument('--collision-penalty', type=float, default=None,
                         help='碰撞时的负奖励，仅用于 dubins_uav 环境')
+    parser.add_argument('--use-cos-sin-obs', action='store_true', default=True,
+                        help='Dubins 使用 (x,y,cosθ,sinθ) 作为观测（默认 True）')
+    parser.add_argument('--no-use-cos-sin-obs', action='store_false', dest='use_cos_sin_obs',
+                        help='禁用 cos/sin 观测，使用 (x,y,θ)')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')

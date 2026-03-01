@@ -104,6 +104,7 @@ class DubinsUAV2D(BaseNavigationEnv):
         start: Optional[Tuple[float, float, float]] = None,
         goal: Optional[Tuple[float, float, float]] = None,
         render_mode: Optional[str] = None,
+        use_cos_sin_obs: bool = False,
     ):
         """
         初始化环境
@@ -121,6 +122,7 @@ class DubinsUAV2D(BaseNavigationEnv):
             start: 初始状态 (x, y, theta)，如果为 None 则随机采样
             goal: 目标状态 (x, y, theta)，如果为 None 则随机采样
             render_mode: 渲染模式
+            use_cos_sin_obs: 若 True，观察为 (x, y, cos(theta), sin(theta))，便于网络学习
         """
         super().__init__()
         
@@ -137,6 +139,7 @@ class DubinsUAV2D(BaseNavigationEnv):
         self.obstacles = obstacles if obstacles is not None else []
         self.collision_penalty = collision_penalty
         self.render_mode = render_mode
+        self.use_cos_sin_obs = use_cos_sin_obs
         
         # 动作空间: 角速度 u ∈ [-omega_max, omega_max]
         self.action_space = spaces.Box(
@@ -146,14 +149,21 @@ class DubinsUAV2D(BaseNavigationEnv):
             dtype=np.float32
         )
         
-        # 观察空间: (x, y, theta)
-        # x, y 范围由 bounds 指定，theta 范围 [-pi, pi]
-        self.observation_space = spaces.Box(
-            low=np.array([x_min, y_min, -np.pi], dtype=np.float32),
-            high=np.array([x_max, y_max, np.pi], dtype=np.float32),
-            shape=(3,),
-            dtype=np.float32
-        )
+        # 观察空间: (x, y, theta) 或 (x, y, cos(theta), sin(theta))
+        if use_cos_sin_obs:
+            self.observation_space = spaces.Box(
+                low=np.array([x_min, y_min, -1.0, -1.0], dtype=np.float32),
+                high=np.array([x_max, y_max, 1.0, 1.0], dtype=np.float32),
+                shape=(4,),
+                dtype=np.float32
+            )
+        else:
+            self.observation_space = spaces.Box(
+                low=np.array([x_min, y_min, -np.pi], dtype=np.float32),
+                high=np.array([x_max, y_max, np.pi], dtype=np.float32),
+                shape=(3,),
+                dtype=np.float32
+            )
         
         # 起终点（可在 reset 时设置）
         self.start = start
@@ -237,8 +247,33 @@ class DubinsUAV2D(BaseNavigationEnv):
         return False
     
     def _get_obs(self) -> np.ndarray:
-        """获取当前观察"""
-        return self.state.copy()
+        """获取当前观察：内部状态恒为 (x, y, theta)，观察可为 (x, y, cos θ, sin θ)"""
+        return self.state_to_observation(self.state)
+    
+    def state_to_observation(self, state: np.ndarray) -> np.ndarray:
+        """
+        将内部状态 (x, y, theta) 转为网络输入观察。
+        若 use_cos_sin_obs=True 返回 (x, y, cos θ, sin θ)，否则返回 (x, y, theta)。
+        """
+        state = np.asarray(state, dtype=np.float32).reshape(3)
+        x, y, theta = state[0], state[1], state[2]
+        if self.use_cos_sin_obs:
+            return np.array([x, y, np.cos(theta), np.sin(theta)], dtype=np.float32)
+        return state.copy()
+    
+    def observation_to_state(self, obs: np.ndarray) -> np.ndarray:
+        """
+        将观察转回内部状态 (x, y, theta)。
+        若 use_cos_sin_obs=True，obs 为 (x, y, cos θ, sin θ)，用 atan2 恢复 theta。
+        """
+        obs = np.asarray(obs, dtype=np.float32).flatten()
+        if self.use_cos_sin_obs and len(obs) >= 4:
+            x, y, c, s = obs[0], obs[1], obs[2], obs[3]
+            theta = np.arctan2(s, c)
+            return np.array([x, y, theta], dtype=np.float32)
+        if len(obs) >= 3:
+            return np.array([obs[0], obs[1], obs[2]], dtype=np.float32)
+        return np.array([0.0, 0.0, 0.0], dtype=np.float32)
     
     def reset(
         self,
@@ -361,17 +396,8 @@ class DubinsUAV2D(BaseNavigationEnv):
         goal: Optional[np.ndarray] = None
     ) -> float:
         """
-        计算从起点到终点的最短路径距离
-        
-        对于 Dubins 路径，这里使用简化的欧几里得距离作为近似
-        如果需要精确的 Dubins 路径距离，可以使用 Dubins 路径规划算法
-        
-        Args:
-            start: 起始状态，如果为 None 则使用 self.start
-            goal: 目标状态，如果为 None 则使用 self.goal
-        
-        Returns:
-            最短路径距离（标量）
+        计算从起点到终点的最短路径距离（位置欧几里得近似）。
+        若需与 time-to-go 一致的度量，请使用 compute_min_time_to_go。
         """
         if start is None:
             start = np.array(self.start, dtype=np.float32)
@@ -383,11 +409,35 @@ class DubinsUAV2D(BaseNavigationEnv):
         else:
             goal = np.array(goal, dtype=np.float32)
         
-        # 简化的距离计算：使用位置欧几里得距离
-        # 注意：这不是真正的 Dubins 路径距离，但可以作为近似
         pos_dist = np.sqrt((start[0] - goal[0]) ** 2 + (start[1] - goal[1]) ** 2)
-        
         return float(pos_dist)
+    
+    def compute_min_time_to_go(
+        self,
+        start: Optional[np.ndarray] = None,
+        goal: Optional[np.ndarray] = None
+    ) -> float:
+        """
+        近似最小 time-to-go（秒）：在 Dubins 动力学下从 start 到 goal 的估计时间。
+        使用下界估计: max(直线距离/v, 角度差/omega_max) 的凸组合近似。
+        用于 QRL 学习 d(s,g) ≈ minimum time-to-go 时的 ground truth。
+        """
+        if start is None:
+            start = np.array(self.start, dtype=np.float32)
+        else:
+            start = np.array(start, dtype=np.float32).reshape(3)
+        
+        if goal is None:
+            goal = np.array(self.goal, dtype=np.float32)
+        else:
+            goal = np.array(goal, dtype=np.float32).reshape(3)
+        
+        pos_dist = np.sqrt((start[0] - goal[0]) ** 2 + (start[1] - goal[1]) ** 2)
+        theta_diff = abs(self._normalize_angle(goal[2] - start[2]))
+        time_pos = pos_dist / (self.v + 1e-8)
+        time_angle = theta_diff / (self.omega_max + 1e-8)
+        # 保守上界：先转向再直线，或同时进行的下界
+        return float(time_pos + time_angle)
     
     def get_state(self) -> dict:
         """
