@@ -21,7 +21,7 @@ python minimal_qrl/train.py \
     --num-episodes 150 \
     --max-steps-per-episode 150 \
     --batch-size 256 \
-    --total-steps 8000 \
+    --total-steps 16000 \
     --num-critics 2 \
     --log-interval 100 \
     --save-interval 2000 \

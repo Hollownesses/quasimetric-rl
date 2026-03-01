@@ -65,6 +65,14 @@ def evaluate_quasimetric(
         zy = critic.encoder(goals_t)
         pred_dists = critic.quasimetric_model(zx, zy).cpu().numpy()
     
+    # 若环境提供 get_distance_scale（如 Dubins 用 step_cost=1，预测为「步数」，乘 dt 得时间）
+    scale = None
+    u = getattr(env, 'unwrapped', env)
+    if hasattr(u, 'get_distance_scale'):
+        scale = u.get_distance_scale()
+    if scale is not None:
+        pred_dists = pred_dists * scale
+    
     # 真实距离用原始状态对计算（compute_ground_truth_distance 接受内部状态）
     gt_dists = np.array([
         compute_ground_truth_distance(env, s, g)
@@ -168,6 +176,8 @@ def visualize_distance_field_heatmap(
             zy = critic.encoder(goal_t)
             pred_dists = critic.quasimetric_model(zx, zy).cpu().numpy()
         pred_dists = pred_dists.reshape(h, w).astype(np.float32)
+        if hasattr(u, 'get_distance_scale'):
+            pred_dists = pred_dists * u.get_distance_scale()
         invalid = ~valid_mask.reshape(h, w)
         pred_dists[invalid] = np.nan
         gt_dists = np.zeros((h, w), dtype=np.float32)

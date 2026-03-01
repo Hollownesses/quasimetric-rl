@@ -22,6 +22,7 @@ from torch.utils.tensorboard import SummaryWriter
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quasimetric_rl.modules import QRLConf, QRLAgent, QRLLosses
+from quasimetric_rl.modules.optim import AdamWSpec
 from quasimetric_rl.modules.quasimetric_critic import QuasimetricCriticConf
 from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
@@ -239,17 +240,20 @@ def train(args):
     dataset = dataset_conf.make(dummy=False)
     logger.info(f"数据集大小: {len(dataset)} 个转移")
     
-    # 创建 QRL Agent 和 Losses（Dubins 时 step_cost=dt 以学习 time-to-go）
+    # 创建 QRL Agent 和 Losses（Dubins 用 step_cost=1.0 使约束与网络输出尺度一致，评估时再乘 dt 得时间）
     logger.info("创建 QRL Agent 和 Losses...")
     step_cost = 1.0
     if args.env_type == 'dubins_uav':
-        step_cost = env_kwargs.get('dt', 0.1)
+        # 约束为 d(s,s') 不超过 step_cost；网络输出多为 O(1)，故用 1.0 易满足，评估时 pred*dt 得时间
+        step_cost = 1.0
         agent_conf = QRLConf(
             actor=None,
             num_critics=args.num_critics,
             quasimetric_critic=QuasimetricCriticConf(
                 losses=QuasimetricCriticLosses.Conf(
                     local_constraint=LocalConstraintLoss.Conf(step_cost=step_cost),
+                    critic_optim=AdamWSpec.Conf(lr=5e-5),
+                    lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
                 )
             ),
         )

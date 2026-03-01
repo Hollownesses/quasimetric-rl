@@ -439,6 +439,13 @@ class DubinsUAV2D(BaseNavigationEnv):
         # 保守上界：先转向再直线，或同时进行的下界
         return float(time_pos + time_angle)
     
+    def get_distance_scale(self) -> float:
+        """
+        将 QRL 学到的「步长单位」距离转为时间的缩放因子。
+        当 local constraint 使用 step_cost=1.0（一步=1）时，预测距离 * dt = 时间（秒）。
+        """
+        return float(self.dt)
+    
     def get_state(self) -> dict:
         """
         获取环境内部状态快照（用于 planning / lookahead 仿真）
