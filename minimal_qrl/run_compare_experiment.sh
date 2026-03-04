@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Dubins UAV：QRL vs TD-based goal-conditioned RL 统一对比实验
+#
+# - 复用现有 QRL checkpoint（不改动 QRL 训练逻辑）
+# - 在同一 Dubins 环境上训练：
+#     1) HER + DDPG
+#     2) Goal-conditioned SAC
+#     3) UVFA-style value learning
+# - 将三种对比算法的结果与 QRL 的结果进行对比
+#
+# 运行后会得到：
+#   results/minimal_qrl_dubins_benchmark/all_algorithms_metrics.json
+#   results/minimal_qrl_dubins_benchmark/summary_table.csv
+# 每个算法子目录：
+#   her_ddpg/metrics.json, gc_sac/metrics.json, uvfa/metrics.json；qrl 在综合 json 中。
+
+set -e
+cd "$(dirname "$0")/.."
+
+python -m minimal_qrl.run_dubins_gc_experiments \
+    --qrl-ckpt results/minimal_qrl_dubins_initial/checkpoint_final.pth \
+    --output-dir results/minimal_qrl_dubins_benchmark \
+    --total-env-steps 160000 \
+    --bounds 0 0 5 5 \
+    --omega-max 3.0 \
+    --v 1.0 \
+    --dt 0.1 \
+    --max-episode-steps 200 \
+    --epsilon-pos 0.15 \
+    --epsilon-theta 0.2 \
+    --eval-n-trials 150 \
+    --eval-n-pairs 1500 \
+    --r-train 1.5 \
+    --r-test 2.0
