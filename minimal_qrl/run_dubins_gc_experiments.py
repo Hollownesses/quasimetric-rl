@@ -42,7 +42,13 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from minimal_qrl.envs import DubinsUAV2D
-from minimal_qrl.gc_agents import AlgoConfig, train_td_agent
+from minimal_qrl.gc_agents import (
+    AlgoConfig,
+    train_td_agent,
+    HERDDPGAgent,
+    GCSACAgent,
+    UVFAValueAgent,
+)
 from minimal_qrl.eval.gc_benchmark import (
     evaluate_success_rate,
     evaluate_asymmetry_gap,
@@ -51,6 +57,7 @@ from minimal_qrl.eval.gc_benchmark import (
     evaluate_ood_generalization,
     build_qrl_adapter,
 )
+from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
 
 
 def make_env(args) -> DubinsUAV2D:
@@ -67,16 +74,8 @@ def make_env(args) -> DubinsUAV2D:
     )
 
 
-def run_single_algo(
-    algo_name: str,
-    env: DubinsUAV2D,
-    device: torch.device,
-    args,
-) -> Dict[str, Dict]:
-    """
-    在给定环境上训练一个 TD-based 算法，然后运行统一评估。
-    """
-    cfg = AlgoConfig(
+def _make_algo_config(args) -> AlgoConfig:
+    return AlgoConfig(
         total_env_steps=args.total_env_steps,
         batch_size=args.batch_size,
         gamma=args.gamma,
@@ -92,31 +91,82 @@ def run_single_algo(
         log_interval=args.log_interval,
     )
 
+
+def load_td_agent(
+    algo_name: str,
+    env: DubinsUAV2D,
+    device: torch.device,
+    args,
+    ckpt_path: str,
+):
+    """从已有 checkpoint 加载 TD 算法 agent，不训练。"""
+    cfg = _make_algo_config(args)
+    if algo_name == "her_ddpg":
+        agent = HERDDPGAgent(env, cfg, device)
+    elif algo_name == "gc_sac":
+        agent = GCSACAgent(env, cfg, device)
+    elif algo_name == "uvfa":
+        agent = UVFAValueAgent(env, cfg, device)
+    else:
+        raise ValueError(f"未知算法: {algo_name}")
+    state = torch.load(ckpt_path, map_location=device)
+    agent.load_state_dict(state)
+    agent.eval()
+    return agent
+
+
+def run_single_algo(
+    algo_name: str,
+    env: DubinsUAV2D,
+    device: torch.device,
+    args,
+) -> Dict[str, Dict]:
+    """
+    在给定环境上训练一个 TD-based 算法（或从已有 checkpoint 加载），然后运行统一评估。
+    若提供了该算法对应的 --her-ddpg-ckpt / --gc-sac-ckpt / --uvfa-ckpt，则跳过训练，直接加载并评估。
+    """
+    # 是否使用已有 checkpoint（参数名 her_ddpg_ckpt, gc_sac_ckpt, uvfa_ckpt）
+    ckpt_arg = getattr(args, f"{algo_name}_ckpt", None)
     out_algo_dir = os.path.join(args.output_dir, algo_name)
     os.makedirs(out_algo_dir, exist_ok=True)
 
-    def _log(step: int, stats: Dict[str, float]) -> None:
-        # 最小日志：写入一个简单的 txt 方便 quick check
-        with open(os.path.join(out_algo_dir, "train.log"), "a", encoding="utf-8") as f:
-            f.write(f"step={step} " + " ".join(f"{k}={v:.4f}" for k, v in stats.items()) + "\n")
-
-    # 训练（带 ID 目标半径约束，用于 OOD 设置）
-    agent = train_td_agent(
-        algo=algo_name,
-        env=env,
-        cfg=cfg,
-        device=device,
-        train_goal_radius=args.r_train,
-        log_fn=_log,
-    )
-
-    # 保存 checkpoint
-    ckpt_path = os.path.join(out_algo_dir, "checkpoint_final.pth")
-    torch.save(agent.state_dict(), ckpt_path)
+    if ckpt_arg is not None and ckpt_arg.strip() != "":
+        # 从已有 checkpoint 加载，只做评估
+        print(f"  使用已有 checkpoint: {ckpt_arg}")
+        agent = load_td_agent(algo_name, env, device, args, ckpt_arg.strip())
+    else:
+        # 训练并保存
+        cfg = _make_algo_config(args)
+        def _log(step: int, stats: Dict[str, float]) -> None:
+            with open(os.path.join(out_algo_dir, "train.log"), "a", encoding="utf-8") as f:
+                f.write(f"step={step} " + " ".join(f"{k}={v:.4f}" for k, v in stats.items()) + "\n")
+        agent = train_td_agent(
+            algo=algo_name,
+            env=env,
+            cfg=cfg,
+            device=device,
+            train_goal_radius=args.r_train,
+            log_fn=_log,
+        )
+        ckpt_path = os.path.join(out_algo_dir, "checkpoint_final.pth")
+        torch.save(agent.state_dict(), ckpt_path)
 
     # 评估（使用同一个 env 实例，各指标内已有 tqdm）
     results: Dict[str, Dict] = {}
     results["success"] = evaluate_success_rate(agent, env, n_trials=args.eval_n_trials, seed=args.seed)
+    if getattr(args, "eval_lookahead", False):
+        la_cfg = DubinsLookaheadConfig(
+            horizon=args.lookahead_horizon,
+            num_sequences=args.lookahead_num_sequences,
+            biased_sequences=args.lookahead_biased_sequences,
+            bias_kp=args.lookahead_bias_kp,
+            step_cost_weight=args.lookahead_step_cost_weight,
+            collision_penalty=args.lookahead_collision_penalty,
+        )
+        results["success_lookahead"] = evaluate_success_rate(
+            agent, env, n_trials=args.eval_n_trials, seed=args.seed,
+            execution_mode="lookahead", lookahead_config=la_cfg,
+        )
     results["asymmetry"] = evaluate_asymmetry_gap(agent, env, n_pairs=args.eval_n_pairs, seed=args.seed + 1)
     results["triangle"] = evaluate_triangle_inequality(agent, env, n_triples=args.eval_n_pairs, seed=args.seed + 2)
     results["value_true_time"] = evaluate_value_true_time(agent, env, n_pairs=args.eval_n_pairs, seed=args.seed + 3)
@@ -135,6 +185,9 @@ def main():
     parser = argparse.ArgumentParser(description="Dubins UAV QRL vs TD-based GC-RL 统一实验脚本")
     parser.add_argument("--qrl-ckpt", type=str, required=True, help="已有 QRL checkpoint 路径")
     parser.add_argument("--output-dir", type=str, default="./results/minimal_qrl_dubins_benchmark")
+    parser.add_argument("--her-ddpg-ckpt", type=str, default=None, help="已有 HER-DDPG checkpoint；若提供则跳过训练、直接加载评估")
+    parser.add_argument("--gc-sac-ckpt", type=str, default=None, help="已有 GC-SAC checkpoint；若提供则跳过训练、直接加载评估")
+    parser.add_argument("--uvfa-ckpt", type=str, default=None, help="已有 UVFA checkpoint；若提供则跳过训练、直接加载评估")
 
     # Dubins 环境配置（需与 QRL 训练阶段保持一致）
     parser.add_argument("--bounds", type=float, nargs=4, default=[0, 0, 5, 5])
@@ -162,6 +215,13 @@ def main():
     # 评估
     parser.add_argument("--eval-n-trials", type=int, default=200)
     parser.add_argument("--eval-n-pairs", type=int, default=2000)
+    parser.add_argument("--eval-lookahead", action="store_true", help="同时用 lookahead planner 评估成功率，与 act 策略对比")
+    parser.add_argument("--lookahead-horizon", type=int, default=10)
+    parser.add_argument("--lookahead-num-sequences", type=int, default=128)
+    parser.add_argument("--lookahead-biased-sequences", type=int, default=48)
+    parser.add_argument("--lookahead-bias-kp", type=float, default=2.0)
+    parser.add_argument("--lookahead-step-cost-weight", type=float, default=0.0)
+    parser.add_argument("--lookahead-collision-penalty", type=float, default=0.0)
 
     # OOD 设置
     parser.add_argument("--r-train", type=float, default=1.5)
@@ -206,7 +266,7 @@ def main():
     # 使用与 TD 相同参数的新 env 实例，保证初始状态一致性
     qrl_env = make_env(args)
     qrl_adapter = build_qrl_adapter(args, device, qrl_env)
-    all_results["qrl"] = {
+    qrl_results = {
         "success": evaluate_success_rate(qrl_adapter, qrl_env, n_trials=args.eval_n_trials, seed=args.seed),
         "asymmetry": evaluate_asymmetry_gap(qrl_adapter, qrl_env, n_pairs=args.eval_n_pairs, seed=args.seed + 1),
         "triangle": evaluate_triangle_inequality(qrl_adapter, qrl_env, n_triples=args.eval_n_pairs, seed=args.seed + 2),
@@ -220,6 +280,20 @@ def main():
             seed=args.seed + 4,
         ),
     }
+    if getattr(args, "eval_lookahead", False):
+        la_cfg = DubinsLookaheadConfig(
+            horizon=args.lookahead_horizon,
+            num_sequences=args.lookahead_num_sequences,
+            biased_sequences=args.lookahead_biased_sequences,
+            bias_kp=args.lookahead_bias_kp,
+            step_cost_weight=args.lookahead_step_cost_weight,
+            collision_penalty=args.lookahead_collision_penalty,
+        )
+        qrl_results["success_lookahead"] = evaluate_success_rate(
+            qrl_adapter, qrl_env, n_trials=args.eval_n_trials, seed=args.seed,
+            execution_mode="lookahead", lookahead_config=la_cfg,
+        )
+    all_results["qrl"] = qrl_results
 
     # 4) 保存综合 json
     out_json = os.path.join(args.output_dir, "all_algorithms_metrics.json")
@@ -229,48 +303,53 @@ def main():
 
     # 5) 生成一个简单 CSV 对比表（主要几个核心指标）
     csv_path = os.path.join(args.output_dir, "summary_table.csv")
+    has_lookahead = getattr(args, "eval_lookahead", False)
+    header = [
+        "algo",
+        "success_rate",
+        "asym_gap",
+        "asym_gap_normalized",
+        "triangle_violation_ratio",
+        "triangle_violation_mean",
+        "pearson_corr",
+        "spearman_corr",
+        "mse",
+        "ood_id_pearson",
+        "ood_ood_pearson",
+        "ood_id_success",
+        "ood_ood_success",
+    ]
+    if has_lookahead:
+        header.extend(["success_rate_lookahead", "avg_steps_success_lookahead"])
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(
-            [
-                "algo",
-                "success_rate",
-                "asym_gap",
-                "asym_gap_normalized",
-                "triangle_violation_ratio",
-                "triangle_violation_mean",
-                "pearson_corr",
-                "spearman_corr",
-                "mse",
-                "ood_id_pearson",
-                "ood_ood_pearson",
-                "ood_id_success",
-                "ood_ood_success",
-            ]
-        )
+        writer.writerow(header)
         for algo, res in all_results.items():
             succ = res["success"]
             asym = res["asymmetry"]
             tri = res["triangle"]
             vtt = res["value_true_time"]
             ood = res["ood"]
-            writer.writerow(
-                [
-                    algo,
-                    succ.get("success_rate", 0.0),
-                    asym.get("asym_gap", 0.0),
-                    asym.get("asym_gap_normalized", 0.0),
-                    tri.get("triangle_violation_ratio", 0.0),
-                    tri.get("triangle_violation_mean_magnitude", 0.0),
-                    vtt.get("pearson_corr", 0.0),
-                    vtt.get("spearman_corr", 0.0),
-                    vtt.get("mse", 0.0),
-                    ood["id"].get("pearson_corr", 0.0),
-                    ood["ood"].get("pearson_corr", 0.0),
-                    ood["id"].get("success_success_rate", 0.0),
-                    ood["ood"].get("success_success_rate", 0.0),
-                ]
-            )
+            row = [
+                algo,
+                succ.get("success_rate", 0.0),
+                asym.get("asym_gap", 0.0),
+                asym.get("asym_gap_normalized", 0.0),
+                tri.get("triangle_violation_ratio", 0.0),
+                tri.get("triangle_violation_mean_magnitude", 0.0),
+                vtt.get("pearson_corr", 0.0),
+                vtt.get("spearman_corr", 0.0),
+                vtt.get("mse", 0.0),
+                ood["id"].get("pearson_corr", 0.0),
+                ood["ood"].get("pearson_corr", 0.0),
+                ood["id"].get("success_success_rate", 0.0),
+                ood["ood"].get("success_success_rate", 0.0),
+            ]
+            if has_lookahead:
+                sla = res.get("success_lookahead") or {}
+                row.append(sla.get("success_rate", 0.0))
+                row.append(sla.get("avg_steps_success", 0.0))
+            writer.writerow(row)
     print(f"[run_dubins_gc_experiments] 核心对比表已保存到 {csv_path}")
 
 

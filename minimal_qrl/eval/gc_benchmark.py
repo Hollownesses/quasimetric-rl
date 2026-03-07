@@ -95,17 +95,30 @@ def evaluate_success_rate(
     env: DubinsUAV2D,
     n_trials: int = 200,
     seed: int = 0,
+    execution_mode: str = "act",
+    lookahead_config: Optional[object] = None,
 ) -> Dict[str, float]:
     """
     成功率评估：随机起点、随机目标。
-    使用 agent.act 直接与环境交互。
+
+    - execution_mode=="act"：每步用 agent.act(obs, goal_obs, eval_mode=True) 选动作（默认）。
+    - execution_mode=="lookahead"：每步用 Dubins lookahead planner（以 agent.value 为终端代价）选动作，
+      用于与 act 策略及 QRL/TD 算法统一对比。需传入 lookahead_config（DubinsLookaheadConfig），
+      若为 None 则使用默认配置。
     """
-    rng = np.random.RandomState(seed)
+    if execution_mode == "lookahead":
+        from minimal_qrl.eval.dubins_execution_mode_eval import (
+            DubinsLookaheadConfig,
+            dubins_lookahead_action,
+        )
+        if lookahead_config is None:
+            lookahead_config = DubinsLookaheadConfig()
+
     success = 0
     steps_success: List[int] = []
+    desc = "success_rate_lookahead" if execution_mode == "lookahead" else "success_rate"
 
-    for i in tqdm(range(n_trials), desc="success_rate", leave=False):
-        # reset 会随机 start/goal
+    for i in tqdm(range(n_trials), desc=desc, leave=False):
         obs, _ = env.reset(seed=int(seed + i))
         goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
 
@@ -113,7 +126,10 @@ def evaluate_success_rate(
         truncated = False
         t = 0
         while not (done or truncated):
-            action = agent.act(obs, goal_obs, eval_mode=True)
+            if execution_mode == "lookahead":
+                action = dubins_lookahead_action(agent, env, goal_obs, lookahead_config)
+            else:
+                action = agent.act(obs, goal_obs, eval_mode=True)
             next_obs, reward, done, truncated, info = env.step(action)
             obs = next_obs
             t += 1

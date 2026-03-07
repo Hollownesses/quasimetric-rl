@@ -19,6 +19,9 @@ cd "$(dirname "$0")/.."
 
 python -m minimal_qrl.run_dubins_gc_experiments \
     --qrl-ckpt results/minimal_qrl_dubins_initial/checkpoint_final.pth \
+    --her-ddpg-ckpt results/minimal_qrl_dubins_benchmark/her_ddpg/checkpoint_final.pth \
+    --gc-sac-ckpt results/minimal_qrl_dubins_benchmark/gc_sac/checkpoint_final.pth \
+    --uvfa-ckpt results/minimal_qrl_dubins_benchmark/uvfa/checkpoint_final.pth \
     --output-dir results/minimal_qrl_dubins_benchmark \
     --total-env-steps 160000 \
     --bounds 0 0 5 5 \
@@ -28,7 +31,8 @@ python -m minimal_qrl.run_dubins_gc_experiments \
     --max-episode-steps 200 \
     --epsilon-pos 0.15 \
     --epsilon-theta 0.2 \
-    --eval-n-trials 150 \
+    --eval-n-trials 100 \
     --eval-n-pairs 1500 \
     --r-train 1.5 \
-    --r-test 2.0
+    --r-test 2.0 \
+    --eval-lookahead --lookahead-horizon 20 --lookahead-num-sequences 512 --lookahead-biased-sequences 96 --lookahead-bias-kp 2.0

@@ -18,7 +18,7 @@ python minimal_qrl/eval/dubins_execution_mode_eval.py \
   --checkpoint results/minimal_qrl_dubins_initial/checkpoint_final.pth \
   --output-dir results/minimal_qrl_dubins_initial \
   --bounds 0 0 5 5 --omega-max 3.0 --v 1.0 --dt 0.1 \
-  --max-episode-steps 150 --epsilon-pos 0.15 --epsilon-theta 0.2 \
+  --max-episode-steps 200 --epsilon-pos 0.15 --epsilon-theta 0.2 \
   --n-trials 100 --seed 0 \
   --lookahead-horizon 20 \
   --lookahead-num-sequences 512 \
