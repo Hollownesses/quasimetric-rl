@@ -9,10 +9,36 @@
 import numpy as np
 import gym
 from gym import spaces
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union
 from dataclasses import dataclass
 
 from .base import BaseNavigationEnv
+
+
+@dataclass
+class CircleObstacle:
+    """圆形障碍物：(x, y, radius)"""
+    x: float
+    y: float
+    radius: float
+
+    def contains(self, x: float, y: float) -> bool:
+        """检查点是否在圆内（含边界）"""
+        return (x - self.x) ** 2 + (y - self.y) ** 2 <= (self.radius ** 2)
+
+    def intersects_segment(self, x1: float, y1: float, x2: float, y2: float) -> bool:
+        """检查线段是否与圆相交"""
+        if self.contains(x1, y1) or self.contains(x2, y2):
+            return True
+        vx, vy = x2 - x1, y2 - y1
+        wx, wy = self.x - x1, self.y - y1
+        c2 = vx * vx + vy * vy
+        if c2 <= 1e-12:
+            return (wx * wx + wy * wy) <= (self.radius ** 2)
+        t = np.clip((vx * wx + vy * wy) / c2, 0.0, 1.0)
+        px = x1 + t * vx
+        py = y1 + t * vy
+        return (self.x - px) ** 2 + (self.y - py) ** 2 <= (self.radius ** 2)
 
 
 @dataclass
@@ -22,7 +48,7 @@ class Obstacle:
     x_max: float
     y_min: float
     y_max: float
-    
+
     def contains(self, x: float, y: float) -> bool:
         """检查点是否在障碍物内（包含边界）"""
         return self.x_min <= x <= self.x_max and self.y_min <= y <= self.y_max
@@ -99,7 +125,7 @@ class DubinsUAV2D(BaseNavigationEnv):
         max_episode_steps: int = 200,
         epsilon_pos: float = 0.1,
         epsilon_theta: float = 0.2,  # 弧度，约 11.5 度
-        obstacles: Optional[List[Obstacle]] = None,
+        obstacles: Optional[List[Union[Obstacle, CircleObstacle]]] = None,  # noqa: E501
         collision_penalty: float = -10.0,
         start: Optional[Tuple[float, float, float]] = None,
         goal: Optional[Tuple[float, float, float]] = None,

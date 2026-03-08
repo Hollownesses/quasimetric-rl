@@ -13,6 +13,9 @@
 #   results/minimal_qrl_dubins_benchmark/summary_table.csv
 # 每个算法子目录：
 #   her_ddpg/metrics.json, gc_sac/metrics.json, uvfa/metrics.json；qrl 在综合 json 中。
+#
+# 障碍环境：可加 --obstacle-config simple|medium|hard 或 --obstacles x1 y1 r1 x2 y2 r2 ...
+# 例：--obstacle-config simple  或  --obstacles 2.5 2.5 0.5 1 4 0.4
 
 set -e
 cd "$(dirname "$0")/.."

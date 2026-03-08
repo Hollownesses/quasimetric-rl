@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
-from minimal_qrl.envs import DubinsUAV2D, Obstacle
+from minimal_qrl.envs import DubinsUAV2D, Obstacle, CircleObstacle
 
 def test_basic_functionality():
     """测试基本功能"""
@@ -96,6 +96,36 @@ def test_with_obstacles():
             break
     
     print("\n✓ 障碍物功能测试通过\n")
+
+
+def test_circle_obstacles():
+    """测试圆形障碍物 (x, y, radius)"""
+    print("=" * 60)
+    print("测试 2b: 圆形障碍物")
+    print("=" * 60)
+    obstacles = [
+        CircleObstacle(x=5.0, y=5.0, radius=1.0),
+        CircleObstacle(x=2.0, y=8.0, radius=0.5),
+    ]
+    env = DubinsUAV2D(
+        bounds=(0.0, 0.0, 10.0, 10.0),
+        omega_max=1.0,
+        v=1.0,
+        dt=0.1,
+        max_episode_steps=100,
+        obstacles=obstacles,
+        epsilon_pos=0.2,
+        epsilon_theta=0.3,
+    )
+    assert not env.is_valid_state(np.array([5.0, 5.0, 0.0]))
+    assert env.is_valid_state(np.array([1.0, 1.0, 0.0]))
+    obs, _ = env.reset(seed=123)
+    for _ in range(3):
+        obs, reward, term, trunc, info = env.step(np.array([0.0]))
+        if term or trunc:
+            break
+    print("圆形障碍物 contains/intersects 与 step 正常")
+    print("\n✓ 圆形障碍物测试通过\n")
 
 
 def test_custom_start_goal():
@@ -234,6 +264,7 @@ if __name__ == '__main__':
     try:
         test_basic_functionality()
         test_with_obstacles()
+        test_circle_obstacles()
         test_custom_start_goal()
         test_state_save_restore()
         test_reach_goal()

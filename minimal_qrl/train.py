@@ -27,7 +27,7 @@ from quasimetric_rl.modules.quasimetric_critic import QuasimetricCriticConf
 from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
-from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D, DubinsUAV2D
+from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D, DubinsUAV2D, CircleObstacle
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
 
@@ -74,6 +74,42 @@ def create_env_factory(env_type: str, **env_kwargs):
         raise ValueError(f"未知的环境类型: {env_type}")
 
 
+def _dubins_obstacles_from_args(args) -> list:
+    """根据 --obstacle-config 或 --obstacles 为 Dubins 环境生成圆形障碍列表。"""
+    bounds = tuple(args.bounds) if (hasattr(args, 'bounds') and args.bounds) else (0.0, 0.0, 5.0, 5.0)
+    x_min, y_min, x_max, y_max = bounds
+    cx = 0.5 * (x_min + x_max)
+    cy = 0.5 * (y_min + y_max)
+    w, h = x_max - x_min, y_max - y_min
+    if getattr(args, 'obstacles', None) and len(args.obstacles) > 0:
+        vals = list(args.obstacles)
+        if len(vals) % 3 != 0:
+            raise ValueError("--obstacles 必须是 3 的倍数 (x y r x y r ...)")
+        return [CircleObstacle(x=float(vals[i]), y=float(vals[i + 1]), radius=float(vals[i + 2])) for i in range(0, len(vals), 3)]
+    config = getattr(args, 'obstacle_config', 'none') or 'none'
+    if config == 'none':
+        return []
+    if config == 'simple':
+        return [CircleObstacle(x=cx, y=cy, radius=0.12 * min(w, h))]
+    if config == 'medium':
+        r = 0.10 * min(w, h)
+        return [
+            CircleObstacle(x=x_min + 0.35 * w, y=cy, radius=r),
+            CircleObstacle(x=x_min + 0.65 * w, y=cy, radius=r),
+            CircleObstacle(x=cx, y=y_min + 0.3 * h, radius=r * 0.8),
+        ]
+    if config == 'hard':
+        r = 0.08 * min(w, h)
+        return [
+            CircleObstacle(x=x_min + 0.25 * w, y=y_min + 0.25 * h, radius=r),
+            CircleObstacle(x=x_min + 0.75 * w, y=y_min + 0.25 * h, radius=r),
+            CircleObstacle(x=x_min + 0.25 * w, y=y_min + 0.75 * h, radius=r),
+            CircleObstacle(x=x_min + 0.75 * w, y=y_min + 0.75 * h, radius=r),
+            CircleObstacle(x=cx, y=cy, radius=r * 1.2),
+        ]
+    return []
+
+
 def get_env_kwargs(args) -> dict:
     """
     根据环境类型和参数获取环境参数字典
@@ -95,7 +131,7 @@ def get_env_kwargs(args) -> dict:
             'grid_resolution': args.grid_resolution,
         }
     elif args.env_type == 'dubins_uav':
-        # 初步训练默认：小地图、无障碍、固定 v/dt、大 omega_max、cos/sin 观测
+        obstacles = _dubins_obstacles_from_args(args)
         kwargs = {
             'max_episode_steps': args.max_steps_per_episode,
             'bounds': tuple(args.bounds) if (hasattr(args, 'bounds') and args.bounds) else (0.0, 0.0, 5.0, 5.0),
@@ -104,11 +140,13 @@ def get_env_kwargs(args) -> dict:
             'dt': args.dt if (hasattr(args, 'dt') and args.dt is not None) else 0.1,
             'epsilon_pos': args.epsilon_pos if (hasattr(args, 'epsilon_pos') and args.epsilon_pos is not None) else 0.15,
             'epsilon_theta': args.epsilon_theta if (hasattr(args, 'epsilon_theta') and args.epsilon_theta is not None) else 0.2,
-            'obstacles': [],  # 初步训练无障碍
+            'obstacles': obstacles,
             'use_cos_sin_obs': getattr(args, 'use_cos_sin_obs', True),
         }
         if hasattr(args, 'collision_penalty') and args.collision_penalty is not None:
             kwargs['collision_penalty'] = args.collision_penalty
+        else:
+            kwargs['collision_penalty'] = getattr(args, 'collision_penalty', -10.0)
         return kwargs
     else:
         raise ValueError(f"未知的环境类型: {args.env_type}")
@@ -540,8 +578,13 @@ def main():
                         help='位置到达目标的容差，仅用于 dubins_uav 环境')
     parser.add_argument('--epsilon-theta', type=float, default=None,
                         help='朝向到达目标的容差（弧度），仅用于 dubins_uav 环境')
-    parser.add_argument('--collision-penalty', type=float, default=None,
+    parser.add_argument('--collision-penalty', type=float, default=-10.0,
                         help='碰撞时的负奖励，仅用于 dubins_uav 环境')
+    parser.add_argument('--obstacle-config', type=str, default='none',
+                        choices=['none', 'simple', 'medium', 'hard'],
+                        help='Dubins 障碍预设：none=无, simple/medium/hard 为圆形障碍')
+    parser.add_argument('--obstacles', type=float, nargs='*', default=None,
+                        help='Dubins 自定义圆障 (x1 y1 r1 x2 y2 r2 ...)，若提供则忽略 --obstacle-config')
     parser.add_argument('--use-cos-sin-obs', action='store_true', default=True,
                         help='Dubins 使用 (x,y,cosθ,sinθ) 作为观测（默认 True）')
     parser.add_argument('--no-use-cos-sin-obs', action='store_false', dest='use_cos_sin_obs',

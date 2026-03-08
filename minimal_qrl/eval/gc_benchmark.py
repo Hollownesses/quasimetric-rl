@@ -36,7 +36,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -49,7 +49,7 @@ from quasimetric_rl.data import EnvSpec, Dataset  # type: ignore
 from quasimetric_rl.modules import QRLConf  # type: ignore
 from quasimetric_rl.data.base import register_offline_env  # type: ignore
 
-from minimal_qrl.envs import DubinsUAV2D
+from minimal_qrl.envs import DubinsUAV2D, CircleObstacle
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.eval.planning_evaluation import (
     sample_state_goal_pairs,
@@ -61,7 +61,46 @@ from minimal_qrl.gc_agents import (
 )
 
 
+def _obstacles_from_args(args) -> List:
+    """从 args 构建圆形障碍列表，与 run_dubins_gc_experiments 的 _get_obstacles_from_args 一致。"""
+    if getattr(args, "obstacles", None) and len(args.obstacles) > 0:
+        vals = list(args.obstacles)
+        if len(vals) % 3 != 0:
+            raise ValueError("--obstacles 必须是 3 的倍数个数字 (x, y, radius) 每组")
+        return [
+            CircleObstacle(x=float(vals[i]), y=float(vals[i + 1]), radius=float(vals[i + 2]))
+            for i in range(0, len(vals), 3)
+        ]
+    config = getattr(args, "obstacle_config", "none") or "none"
+    x_min, y_min, x_max, y_max = args.bounds
+    cx, cy = 0.5 * (x_min + x_max), 0.5 * (y_min + y_max)
+    w, h = x_max - x_min, y_max - y_min
+    if config == "none":
+        return []
+    if config == "simple":
+        return [CircleObstacle(x=cx, y=cy, radius=0.12 * min(w, h))]
+    if config == "medium":
+        r = 0.10 * min(w, h)
+        return [
+            CircleObstacle(x=x_min + 0.35 * w, y=cy, radius=r),
+            CircleObstacle(x=x_min + 0.65 * w, y=cy, radius=r),
+            CircleObstacle(x=cx, y=y_min + 0.3 * h, radius=r * 0.8),
+        ]
+    if config == "hard":
+        r = 0.08 * min(w, h)
+        return [
+            CircleObstacle(x=x_min + 0.25 * w, y=y_min + 0.25 * h, radius=r),
+            CircleObstacle(x=x_min + 0.75 * w, y=y_min + 0.25 * h, radius=r),
+            CircleObstacle(x=x_min + 0.25 * w, y=y_min + 0.75 * h, radius=r),
+            CircleObstacle(x=x_min + 0.75 * w, y=y_min + 0.75 * h, radius=r),
+            CircleObstacle(x=cx, y=cy, radius=r * 1.2),
+        ]
+    return []
+
+
 def _make_dubins_env(args) -> DubinsUAV2D:
+    obstacles = _obstacles_from_args(args)
+    collision_penalty = getattr(args, "collision_penalty", -10.0)
     env_kwargs = {
         "bounds": tuple(args.bounds),
         "omega_max": args.omega_max,
@@ -70,7 +109,8 @@ def _make_dubins_env(args) -> DubinsUAV2D:
         "max_episode_steps": args.max_episode_steps,
         "epsilon_pos": args.epsilon_pos,
         "epsilon_theta": args.epsilon_theta,
-        "obstacles": [],
+        "obstacles": obstacles,
+        "collision_penalty": collision_penalty,
         "use_cos_sin_obs": True,
     }
     return DubinsUAV2D(**env_kwargs)
@@ -435,6 +475,15 @@ def main():
 
     # Dubins 参数（需与训练保持一致）
     parser.add_argument("--bounds", type=float, nargs=4, default=[0, 0, 5, 5])
+    parser.add_argument(
+        "--obstacle-config",
+        type=str,
+        default="none",
+        choices=["none", "simple", "medium", "hard"],
+        help="障碍预设",
+    )
+    parser.add_argument("--obstacles", type=float, nargs="*", default=None, help="自定义圆障 (x y r x y r ...)")
+    parser.add_argument("--collision-penalty", type=float, default=-10.0)
     parser.add_argument("--omega-max", type=float, default=0.5)
     parser.add_argument("--v", type=float, default=1.0)
     parser.add_argument("--dt", type=float, default=0.1)

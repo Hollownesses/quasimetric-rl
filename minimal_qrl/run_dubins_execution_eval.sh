@@ -21,8 +21,8 @@ python minimal_qrl/eval/dubins_execution_mode_eval.py \
   --max-episode-steps 200 --epsilon-pos 0.15 --epsilon-theta 0.2 \
   --n-trials 100 --seed 0 \
   --lookahead-horizon 20 \
-  --lookahead-num-sequences 512 \
-  --lookahead-biased-sequences 96 \
+  --lookahead-num-sequences 256 \
+  --lookahead-biased-sequences 48 \
   --lookahead-bias-kp 2.0
 
 

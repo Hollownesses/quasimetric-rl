@@ -8,7 +8,12 @@ Dubins UAV 2D 环境可视化脚本
 3. 距离场可视化：固定目标 g 与朝向 theta，V(x,y, theta_fixed) 热力图（为 QRL 准备）
 
 图片保存至 results/minimal_qrl/dubins_uav_vis/
+
+带障碍时请加参数，例如：
+  python -m minimal_qrl.visualize_dubins_uav --obstacle-config simple
+  python -m minimal_qrl.visualize_dubins_uav --obstacles 5 5 1 2 8 0.5
 """
+import argparse
 import sys
 from pathlib import Path
 import os
@@ -19,11 +24,47 @@ from typing import List, Tuple, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from minimal_qrl.envs import DubinsUAV2D, Obstacle
+from minimal_qrl.envs import DubinsUAV2D, Obstacle, CircleObstacle
 
 
 # Output directory: project_root/results/minimal_qrl/dubins_uav_vis
 OUTPUT_DIR = Path(__file__).parent.parent / "results" / "minimal_qrl" / "dubins_uav_vis"
+
+
+def _obstacles_from_args(bounds: Tuple[float, float, float, float], obstacle_config: str, obstacles_raw: Optional[List[float]]) -> List:
+    """根据预设或自定义列表生成圆形障碍。obstacles_raw 为 [x1,y1,r1, x2,y2,r2, ...]。"""
+    if obstacles_raw and len(obstacles_raw) > 0:
+        if len(obstacles_raw) % 3 != 0:
+            raise ValueError("--obstacles 必须是 3 的倍数个数字 (x y r x y r ...)")
+        return [
+            CircleObstacle(x=float(obstacles_raw[i]), y=float(obstacles_raw[i + 1]), radius=float(obstacles_raw[i + 2]))
+            for i in range(0, len(obstacles_raw), 3)
+        ]
+    x_min, y_min, x_max, y_max = bounds
+    cx = 0.5 * (x_min + x_max)
+    cy = 0.5 * (y_min + y_max)
+    w, h = x_max - x_min, y_max - y_min
+    if obstacle_config == "none":
+        return []
+    if obstacle_config == "simple":
+        return [CircleObstacle(x=cx, y=cy, radius=0.12 * min(w, h))]
+    if obstacle_config == "medium":
+        r = 0.10 * min(w, h)
+        return [
+            CircleObstacle(x=x_min + 0.35 * w, y=cy, radius=r),
+            CircleObstacle(x=x_min + 0.65 * w, y=cy, radius=r),
+            CircleObstacle(x=cx, y=y_min + 0.3 * h, radius=r * 0.8),
+        ]
+    if obstacle_config == "hard":
+        r = 0.08 * min(w, h)
+        return [
+            CircleObstacle(x=x_min + 0.25 * w, y=y_min + 0.25 * h, radius=r),
+            CircleObstacle(x=x_min + 0.75 * w, y=y_min + 0.25 * h, radius=r),
+            CircleObstacle(x=x_min + 0.25 * w, y=y_min + 0.75 * h, radius=r),
+            CircleObstacle(x=x_min + 0.75 * w, y=y_min + 0.75 * h, radius=r),
+            CircleObstacle(x=cx, y=cy, radius=r * 1.2),
+        ]
+    return []
 
 
 def _normalize_angle(theta: float) -> float:
@@ -35,7 +76,7 @@ def _normalize_angle(theta: float) -> float:
     return theta
 
 
-def _make_env(obstacles: Optional[List[Obstacle]] = None, **kwargs) -> DubinsUAV2D:
+def _make_env(obstacles: Optional[List] = None, **kwargs) -> DubinsUAV2D:
     """创建带可选障碍物的环境"""
     default = dict(
         bounds=(0.0, 0.0, 10.0, 10.0),
@@ -153,18 +194,20 @@ def plot_basic_trajectory(
     ax.set_xlim(x_min - 0.5, x_max + 0.5)
     ax.set_ylim(y_min - 0.5, y_max + 0.5)
 
-    # 障碍物
+    # 障碍物（圆或矩形）
     for obs in env.obstacles:
-        rect = patches.Rectangle(
-            (obs.x_min, obs.y_min),
-            obs.x_max - obs.x_min,
-            obs.y_max - obs.y_min,
-            linewidth=1.5,
-            edgecolor="k",
-            facecolor="gray",
-            alpha=0.6,
-        )
-        ax.add_patch(rect)
+        if isinstance(obs, CircleObstacle):
+            patch = patches.Circle(
+                (obs.x, obs.y), obs.radius,
+                linewidth=1.5, edgecolor="k", facecolor="gray", alpha=0.6,
+            )
+        else:
+            patch = patches.Rectangle(
+                (obs.x_min, obs.y_min),
+                obs.x_max - obs.x_min, obs.y_max - obs.y_min,
+                linewidth=1.5, edgecolor="k", facecolor="gray", alpha=0.6,
+            )
+        ax.add_patch(patch)
 
     # Trajectory
     xs = [s[0] for s in states]
@@ -224,12 +267,18 @@ def plot_asymmetry(
     ax.set_ylim(y_min - 0.5, y_max + 0.5)
 
     for obs in env.obstacles:
-        rect = patches.Rectangle(
-            (obs.x_min, obs.y_min),
-            obs.x_max - obs.x_min, obs.y_max - obs.y_min,
-            linewidth=1.5, edgecolor="k", facecolor="gray", alpha=0.6,
-        )
-        ax.add_patch(rect)
+        if isinstance(obs, CircleObstacle):
+            patch = patches.Circle(
+                (obs.x, obs.y), obs.radius,
+                linewidth=1.5, edgecolor="k", facecolor="gray", alpha=0.6,
+            )
+        else:
+            patch = patches.Rectangle(
+                (obs.x_min, obs.y_min),
+                obs.x_max - obs.x_min, obs.y_max - obs.y_min,
+                linewidth=1.5, edgecolor="k", facecolor="gray", alpha=0.6,
+            )
+        ax.add_patch(patch)
 
     ax.plot([s[0] for s in path_12], [s[1] for s in path_12], "b-", linewidth=2, label=f"s1->s2 (steps={steps_12})", zorder=3)
     ax.plot([s[0] for s in path_21], [s[1] for s in path_21], "orange", linewidth=2, linestyle="--", label=f"s2->s1 (steps={steps_21})", zorder=3)
@@ -327,11 +376,32 @@ def plot_distance_field(
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Dubins UAV 2D 可视化（可带障碍）")
+    parser.add_argument("--bounds", type=float, nargs=4, default=[0, 0, 10, 10], help="地图边界 x_min y_min x_max y_max")
+    parser.add_argument(
+        "--obstacle-config",
+        type=str,
+        default="none",
+        choices=["none", "simple", "medium", "hard"],
+        help="障碍预设：none=无, simple=单圆, medium=2～3 圆, hard=4～5 圆",
+    )
+    parser.add_argument(
+        "--obstacles",
+        type=float,
+        nargs="*",
+        default=None,
+        help="自定义圆形障碍 (x1 y1 r1 x2 y2 r2 ...)，若提供则忽略 --obstacle-config",
+    )
+    args = parser.parse_args()
+
+    bounds = tuple(args.bounds)
+    obstacles = _obstacles_from_args(bounds, args.obstacle_config, args.obstacles)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print(f"Output dir: {OUTPUT_DIR}")
+    if obstacles:
+        print(f"Obstacles: {len(obstacles)} circles (config={args.obstacle_config})")
 
-    # No obstacles — obstacle-free environment for visualization
-    env = _make_env(obstacles=None)
+    env = _make_env(obstacles=obstacles, bounds=bounds)
 
     # 1. Basic trajectory
     start = (1.0, 1.0, 0.0)
