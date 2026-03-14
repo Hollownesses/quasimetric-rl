@@ -8,24 +8,16 @@ Dubins UAV 上 QRL vs TD-based goal-conditioned RL 的统一对比评估脚本�
 - Goal-conditioned SAC
 - UVFA-style value learning
 
-统一输出以下指标：
+统一输出以下核心指标：
 1) 成功率（随机起点、随机目标）
-2) Asymmetry Gap:
-   E[ |V(s,g) - V(g,s)| ] 及归一化版本
-3) Triangle Inequality Violation:
+2) Triangle Inequality Violation:
    违反比例 & 平均违反幅度
-4) Value-to-True-Time 相关性：Pearson / Spearman / MSE
-5) OOD Goal Generalization：
-   - 训练：目标限制在半径 r <= R_train
-   - 测试：r > R_test
+3) Value-to-True-Time 相关性：Pearson / Spearman / MSE
 
 用法示例（假设已经分别训练好 QRL 和各 TD agent 的 checkpoint）：
 
   python -m minimal_qrl.eval.gc_benchmark \\
       --qrl-ckpt results/minimal_qrl_dubins_initial/checkpoint_final.pth \\
-      --her-ddpg-ckpt path/to/her_ddpg.pth \\
-      --gc-sac-ckpt path/to/gc_sac.pth \\
-      --uvfa-ckpt path/to/uvfa.pth \\
       --output-dir results/minimal_qrl_dubins_initial/gc_benchmark
 """
 
@@ -116,20 +108,6 @@ def _make_dubins_env(args) -> DubinsUAV2D:
     return DubinsUAV2D(**env_kwargs)
 
 
-def _center_and_radius(env: DubinsUAV2D, states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    计算相对于地图中心的径向距离，用于 OOD 划分。
-    输入 states 为 (N, 3) 的内部状态 (x,y,theta)。
-    """
-    x_min, y_min, x_max, y_max = env.bounds
-    cx = 0.5 * (x_min + x_max)
-    cy = 0.5 * (y_min + y_max)
-    center = np.array([cx, cy], dtype=np.float32)
-    pos = states[:, :2]
-    r = np.linalg.norm(pos - center[None, :], axis=-1)
-    return center, r
-
-
 def evaluate_success_rate(
     agent: GoalConditionedAgentBase,
     env: DubinsUAV2D,
@@ -187,44 +165,6 @@ def evaluate_success_rate(
         "avg_steps_success": avg_steps,
         "num_success": float(success),
         "num_trials": float(n_trials),
-    }
-
-
-def evaluate_asymmetry_gap(
-    agent: GoalConditionedAgentBase,
-    env: DubinsUAV2D,
-    n_pairs: int = 1000,
-    seed: int = 0,
-) -> Dict[str, float]:
-    """
-    计算 Asymmetry Gap:
-      E[ |V(s,g) - V(g,s)| ] 及归一化版本。
-    """
-    states_raw, goals_raw = sample_state_goal_pairs(env, n_pairs=n_pairs, seed=seed)
-    u = env
-    states_obs = np.array([u.state_to_observation(s) for s in states_raw], dtype=np.float32)
-    goals_obs = np.array([u.state_to_observation(g) for g in goals_raw], dtype=np.float32)
-
-    vals_sg = []
-    vals_gs = []
-    for s_obs, g_obs, s_raw, g_raw in tqdm(
-        zip(states_obs, goals_obs, states_raw, goals_raw), total=n_pairs, desc="asymmetry", leave=False
-    ):
-        v_sg = agent.value(s_obs, g_obs)
-        v_gs = agent.value(g_obs, s_obs)
-        vals_sg.append(v_sg)
-        vals_gs.append(v_gs)
-
-    vals_sg = np.asarray(vals_sg, dtype=np.float64)
-    vals_gs = np.asarray(vals_gs, dtype=np.float64)
-    gap = np.abs(vals_sg - vals_gs)
-    mean_gap = float(np.mean(gap))
-    mean_v = float(np.mean(vals_sg))
-    norm_gap = float(mean_gap / (mean_v + 1e-8)) if mean_v > 0 else 0.0
-    return {
-        "asym_gap": mean_gap,
-        "asym_gap_normalized": norm_gap,
-        "mean_v": mean_v,
     }
 
 
@@ -328,109 +268,6 @@ def evaluate_value_true_time(
     }
 
 
-def evaluate_ood_generalization(
-    agent: GoalConditionedAgentBase,
-    env: DubinsUAV2D,
-    r_train: float,
-    r_test: float,
-    n_pairs: int = 3000,
-    seed: int = 0,
-) -> Dict[str, Dict[str, float]]:
-    """
-    OOD Goal Generalization：
-    - 使用 radius 划分 goal 区域
-    - 输出 ID（r<=R_train）和 OOD（r>R_test）两套指标（成功率+value误差+相关性）
-    """
-    # 用于 value & 相关性
-    states_raw, goals_raw = sample_state_goal_pairs(env, n_pairs=n_pairs, seed=seed)
-    _, r_goals = _center_and_radius(env, goals_raw)
-
-    mask_id = r_goals <= r_train
-    mask_ood = r_goals > r_test
-
-    def _metrics_subset(mask: np.ndarray) -> Dict[str, float]:
-        if not mask.any():
-            return {
-                "pearson_corr": 0.0,
-                "spearman_corr": 0.0,
-                "mse": 0.0,
-                "pred_mean": 0.0,
-                "true_mean": 0.0,
-                "num_pairs": 0.0,
-            }
-        s_raw = states_raw[mask]
-        g_raw = goals_raw[mask]
-        u = env
-        s_obs = np.array([u.state_to_observation(s) for s in s_raw], dtype=np.float32)
-        g_obs = np.array([u.state_to_observation(g) for g in g_raw], dtype=np.float32)
-        pred_vals = []
-        true_times = []
-        for sr, gr, so, go in tqdm(zip(s_raw, g_raw, s_obs, g_obs), total=len(s_raw), desc="ood_metrics", leave=False):
-            pred_vals.append(agent.value(so, go))
-            true_times.append(compute_ground_truth_distance(env, sr, gr))
-        pred_vals = np.asarray(pred_vals, dtype=np.float64)
-        true_times = np.asarray(true_times, dtype=np.float64)
-
-        pred_c = pred_vals - pred_vals.mean()
-        true_c = true_times - true_times.mean()
-        num = np.sum(pred_c * true_c)
-        den = np.sqrt(np.sum(pred_c ** 2) * np.sum(true_c ** 2)) + 1e-12
-        pearson = float(num / den)
-        spearman_corr, _ = spearmanr(pred_vals, true_times)
-        if np.isnan(spearman_corr):
-            spearman_corr = 0.0
-        mse = float(np.mean((pred_vals - true_times) ** 2))
-        return {
-            "pearson_corr": pearson,
-            "spearman_corr": float(spearman_corr),
-            "mse": mse,
-            "pred_mean": float(pred_vals.mean()),
-            "true_mean": float(true_times.mean()),
-            "num_pairs": float(pred_vals.shape[0]),
-        }
-
-    metrics_id = _metrics_subset(mask_id)
-    metrics_ood = _metrics_subset(mask_ood)
-
-    # 成功率（仅看 goal 半径）
-    def _success_subset(target_region: str) -> Dict[str, float]:
-        n_trials = 200
-        success = 0
-        for i in tqdm(range(n_trials), desc=f"ood_success_{target_region}", leave=False):
-            # 采样直到 goal 落在指定区域
-            for _ in range(1000):
-                obs, _ = env.reset(seed=seed + i * 997 + _)
-                _, r_g = _center_and_radius(env, np.array([env.goal], dtype=np.float32))
-                in_id = r_g[0] <= r_train
-                in_ood = r_g[0] > r_test
-                if (target_region == "id" and in_id) or (target_region == "ood" and in_ood):
-                    break
-            goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
-            done = False
-            truncated = False
-            while not (done or truncated):
-                action = agent.act(obs, goal_obs, eval_mode=True)
-                obs, rew, done, truncated, info = env.step(action)
-                if done:
-                    success += 1
-                    break
-                if truncated:
-                    break
-        return {
-            "success_rate": success / float(n_trials),
-            "num_trials": float(n_trials),
-        }
-
-    succ_id = _success_subset("id")
-    succ_ood = _success_subset("ood")
-
-    out: Dict[str, Dict[str, float]] = {
-        "id": {**metrics_id, **{f"success_{k}": v for k, v in succ_id.items()}},
-        "ood": {**metrics_ood, **{f"success_{k}": v for k, v in succ_ood.items()}},
-    }
-    return out
-
-
 def build_qrl_adapter(args, device: torch.device, env: DubinsUAV2D) -> GoalConditionedAgentBase:
     """
     从 checkpoint 加载 QRL, 并适配为 GoalConditionedAgentBase。
@@ -494,10 +331,6 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="auto")
 
-    # OOD half radii
-    parser.add_argument("--r-train", type=float, default=1.5, help="训练/ID 目标半径上界")
-    parser.add_argument("--r-test", type=float, default=2.0, help="OOD 目标半径下界")
-
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -522,12 +355,8 @@ def main():
     qrl_agent = build_qrl_adapter(args, device, env)
 
     results["QRL_success"] = evaluate_success_rate(qrl_agent, env, n_trials=200, seed=args.seed)
-    results["QRL_asymmetry"] = evaluate_asymmetry_gap(qrl_agent, env, n_pairs=1000, seed=args.seed + 1)
-    results["QRL_triangle"] = evaluate_triangle_inequality(qrl_agent, env, n_triples=1000, seed=args.seed + 2)
-    results["QRL_value_true_time"] = evaluate_value_true_time(qrl_agent, env, n_pairs=2000, seed=args.seed + 3)
-    results["QRL_ood"] = evaluate_ood_generalization(
-        qrl_agent, env, r_train=args.r_train, r_test=args.r_test, n_pairs=3000, seed=args.seed + 4
-    )
+    results["QRL_triangle"] = evaluate_triangle_inequality(qrl_agent, env, n_triples=1000, seed=args.seed + 1)
+    results["QRL_value_true_time"] = evaluate_value_true_time(qrl_agent, env, n_pairs=2000, seed=args.seed + 2)
 
     out_json = os.path.join(args.output_dir, "gc_benchmark_qrl_only.json")
     with open(out_json, "w", encoding="utf-8") as f:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dubins UAV 无障碍环境上 QRL vs TD-based goal-conditioned RL 的统一实验脚本。
+Dubins UAV 环境上 QRL vs TD-based goal-conditioned RL 的统一实验脚本。
 
 功能：
 - 复用现有 QRL checkpoint（不改动 QRL 训练逻辑）
@@ -9,12 +9,10 @@ Dubins UAV 无障碍环境上 QRL vs TD-based goal-conditioned RL 的统一实�
     2) Goal-conditioned SAC
     3) UVFA-style value learning
 - 使用统一训练预算（total_env_steps）
-- 使用统一评估模块 minimal_qrl.eval.gc_benchmark 中的指标：
+- 使用统一评估模块 minimal_qrl.eval.gc_benchmark 中的核心指标：
     - 成功率
-    - Asymmetry Gap
     - Triangle Inequality Violation
     - Value-to-True-Time 相关性
-    - OOD Goal Generalization
 - 将所有方法的指标整理为对比表（json + 简单 csv），便于论文整理。
 
 示例：
@@ -51,10 +49,8 @@ from minimal_qrl.gc_agents import (
 )
 from minimal_qrl.eval.gc_benchmark import (
     evaluate_success_rate,
-    evaluate_asymmetry_gap,
     evaluate_triangle_inequality,
     evaluate_value_true_time,
-    evaluate_ood_generalization,
     build_qrl_adapter,
 )
 from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
@@ -213,12 +209,8 @@ def run_single_algo(
             agent, env, n_trials=args.eval_n_trials, seed=args.seed,
             execution_mode="lookahead", lookahead_config=la_cfg,
         )
-    results["asymmetry"] = evaluate_asymmetry_gap(agent, env, n_pairs=args.eval_n_pairs, seed=args.seed + 1)
-    results["triangle"] = evaluate_triangle_inequality(agent, env, n_triples=args.eval_n_pairs, seed=args.seed + 2)
-    results["value_true_time"] = evaluate_value_true_time(agent, env, n_pairs=args.eval_n_pairs, seed=args.seed + 3)
-    results["ood"] = evaluate_ood_generalization(
-        agent, env, r_train=args.r_train, r_test=args.r_test, n_pairs=args.eval_n_pairs * 2, seed=args.seed + 4
-    )
+    results["triangle"] = evaluate_triangle_inequality(agent, env, n_triples=args.eval_n_pairs, seed=args.seed + 1)
+    results["value_true_time"] = evaluate_value_true_time(agent, env, n_pairs=args.eval_n_pairs, seed=args.seed + 2)
 
     out_json = os.path.join(out_algo_dir, "metrics.json")
     with open(out_json, "w", encoding="utf-8") as f:
@@ -284,9 +276,8 @@ def main():
     parser.add_argument("--lookahead-step-cost-weight", type=float, default=0.0)
     parser.add_argument("--lookahead-collision-penalty", type=float, default=0.0)
 
-    # OOD 设置
+    # 训练目标半径（用于 TD 训练时限制 goal 区域；评估不再区分 ID/OOD）
     parser.add_argument("--r-train", type=float, default=1.5)
-    parser.add_argument("--r-test", type=float, default=2.0)
 
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="auto")
@@ -329,17 +320,8 @@ def main():
     qrl_adapter = build_qrl_adapter(args, device, qrl_env)
     qrl_results = {
         "success": evaluate_success_rate(qrl_adapter, qrl_env, n_trials=args.eval_n_trials, seed=args.seed),
-        "asymmetry": evaluate_asymmetry_gap(qrl_adapter, qrl_env, n_pairs=args.eval_n_pairs, seed=args.seed + 1),
-        "triangle": evaluate_triangle_inequality(qrl_adapter, qrl_env, n_triples=args.eval_n_pairs, seed=args.seed + 2),
-        "value_true_time": evaluate_value_true_time(qrl_adapter, qrl_env, n_pairs=args.eval_n_pairs, seed=args.seed + 3),
-        "ood": evaluate_ood_generalization(
-            qrl_adapter,
-            qrl_env,
-            r_train=args.r_train,
-            r_test=args.r_test,
-            n_pairs=args.eval_n_pairs * 2,
-            seed=args.seed + 4,
-        ),
+        "triangle": evaluate_triangle_inequality(qrl_adapter, qrl_env, n_triples=args.eval_n_pairs, seed=args.seed + 1),
+        "value_true_time": evaluate_value_true_time(qrl_adapter, qrl_env, n_pairs=args.eval_n_pairs, seed=args.seed + 2),
     }
     if getattr(args, "eval_lookahead", False):
         la_cfg = DubinsLookaheadConfig(
@@ -368,17 +350,11 @@ def main():
     header = [
         "algo",
         "success_rate",
-        "asym_gap",
-        "asym_gap_normalized",
         "triangle_violation_ratio",
         "triangle_violation_mean",
         "pearson_corr",
         "spearman_corr",
         "mse",
-        "ood_id_pearson",
-        "ood_ood_pearson",
-        "ood_id_success",
-        "ood_ood_success",
     ]
     if has_lookahead:
         header.extend(["success_rate_lookahead", "avg_steps_success_lookahead"])
@@ -387,24 +363,16 @@ def main():
         writer.writerow(header)
         for algo, res in all_results.items():
             succ = res["success"]
-            asym = res["asymmetry"]
             tri = res["triangle"]
             vtt = res["value_true_time"]
-            ood = res["ood"]
             row = [
                 algo,
                 succ.get("success_rate", 0.0),
-                asym.get("asym_gap", 0.0),
-                asym.get("asym_gap_normalized", 0.0),
                 tri.get("triangle_violation_ratio", 0.0),
                 tri.get("triangle_violation_mean_magnitude", 0.0),
                 vtt.get("pearson_corr", 0.0),
                 vtt.get("spearman_corr", 0.0),
                 vtt.get("mse", 0.0),
-                ood["id"].get("pearson_corr", 0.0),
-                ood["ood"].get("pearson_corr", 0.0),
-                ood["id"].get("success_success_rate", 0.0),
-                ood["ood"].get("success_success_rate", 0.0),
             ]
             if has_lookahead:
                 sla = res.get("success_lookahead") or {}

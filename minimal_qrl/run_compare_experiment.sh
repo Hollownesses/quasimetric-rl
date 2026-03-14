@@ -37,5 +37,4 @@ python -m minimal_qrl.run_dubins_gc_experiments \
     --eval-n-trials 100 \
     --eval-n-pairs 1500 \
     --r-train 1.5 \
-    --r-test 2.0 \
     --eval-lookahead --lookahead-horizon 20 --lookahead-num-sequences 512 --lookahead-biased-sequences 96 --lookahead-bias-kp 2.0
