@@ -157,6 +157,29 @@ def test_custom_start_goal():
     print("\n✓ 自定义起点和目标测试通过\n")
 
 
+def test_reset_resamples_when_start_goal_not_fixed():
+    env = DubinsUAV2D(
+        bounds=(0.0, 0.0, 10.0, 10.0),
+        omega_max=1.0,
+        v=1.0,
+        dt=0.1,
+        max_episode_steps=100,
+        epsilon_pos=0.2,
+        epsilon_theta=0.3,
+    )
+
+    env.reset(seed=0)
+    start1 = tuple(float(v) for v in env.start)
+    goal1 = tuple(float(v) for v in env.goal)
+
+    env.reset(seed=1)
+    start2 = tuple(float(v) for v in env.start)
+    goal2 = tuple(float(v) for v in env.goal)
+
+    assert start1 != start2
+    assert goal1 != goal2
+
+
 def test_state_save_restore():
     """测试状态保存和恢复"""
     print("=" * 60)
@@ -266,6 +289,7 @@ if __name__ == '__main__':
         test_with_obstacles()
         test_circle_obstacles()
         test_custom_start_goal()
+        test_reset_resamples_when_start_goal_not_fixed()
         test_state_save_restore()
         test_reach_goal()
         

@@ -53,6 +53,7 @@ def test_reset_sets_task_entities_and_goal():
     assert env.inspection_target is not None
     assert env.ground_station is not None
     assert env.goal is not None
+    assert env.is_task_feasible(np.asarray(env.goal, dtype=np.float32))
     assert tuple(info["inspection_target"]) == tuple(env.inspection_target)
     assert tuple(info["ground_station"]) == tuple(env.ground_station)
     assert tuple(info["goal"]) == tuple(env.goal)
@@ -67,6 +68,20 @@ def test_sample_task_feasible_goal_is_valid():
     assert env.is_observation_feasible(goal)
     assert env.is_communication_feasible(goal)
     assert env.is_task_feasible(goal)
+
+
+def test_reset_resamples_start_and_goal_when_not_fixed():
+    env = make_env()
+    env.reset(seed=0)
+    start1 = tuple(float(v) for v in env.start)
+    goal1 = tuple(float(v) for v in env.goal)
+
+    env.reset(seed=1)
+    start2 = tuple(float(v) for v in env.start)
+    goal2 = tuple(float(v) for v in env.goal)
+
+    assert start1 != start2
+    assert goal1 != goal2
 
 
 def test_observation_score_direction():
@@ -85,6 +100,7 @@ def test_communication_score_direction():
         comm_bias=3.0,
         comm_threshold=1.5,
         require_ground_station_los=False,
+        goal_sampling_mode="valid",
     )
     env.reset(seed=0)
     near_station = np.array([1.4, 1.0, 0.0], dtype=np.float32)
@@ -184,6 +200,7 @@ if __name__ == "__main__":
     test_task_context_observation_matches_space()
     test_reset_sets_task_entities_and_goal()
     test_sample_task_feasible_goal_is_valid()
+    test_reset_resamples_start_and_goal_when_not_fixed()
     test_observation_score_direction()
     test_communication_score_direction()
     test_collision_penalty_is_negative()

@@ -291,6 +291,52 @@ def _add_heading_arrow(ax, state: np.ndarray, color: str, *, length: float = 0.4
     )
 
 
+def _compute_feasibility_masks(
+    env: CommInspectionDubinsUAV2D,
+    theta: float,
+    *,
+    resolution: int = 140,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    xs = np.linspace(env.x_min, env.x_max, resolution)
+    ys = np.linspace(env.y_min, env.y_max, resolution)
+    obs_mask = np.zeros((resolution, resolution), dtype=np.float32)
+    comm_mask = np.zeros((resolution, resolution), dtype=np.float32)
+    task_mask = np.zeros((resolution, resolution), dtype=np.float32)
+
+    for iy, y in enumerate(ys):
+        for ix, x in enumerate(xs):
+            state = np.array([x, y, theta], dtype=np.float32)
+            if not env.is_valid_state(state):
+                continue
+            obs_ok = env.is_observation_feasible(state)
+            comm_ok = env.is_communication_feasible(state)
+            obs_mask[iy, ix] = 1.0 if obs_ok else 0.0
+            comm_mask[iy, ix] = 1.0 if comm_ok else 0.0
+            task_mask[iy, ix] = 1.0 if (obs_ok and comm_ok) else 0.0
+
+    return xs, ys, obs_mask, comm_mask, task_mask
+
+
+def _draw_feasibility_mask(
+    ax,
+    env: CommInspectionDubinsUAV2D,
+    mask: np.ndarray,
+    *,
+    cmap: str,
+    alpha: float = 0.32,
+) -> None:
+    ax.imshow(
+        mask,
+        origin="lower",
+        extent=[env.x_min, env.x_max, env.y_min, env.y_max],
+        cmap=cmap,
+        alpha=alpha,
+        vmin=0.0,
+        vmax=1.0,
+        zorder=0,
+    )
+
+
 def _draw_environment_base(ax, env: CommInspectionDubinsUAV2D, rollout: Dict[str, Any]) -> None:
     ax.set_aspect("equal")
     ax.set_xlim(env.x_min - 0.2, env.x_max + 0.2)
@@ -400,41 +446,64 @@ def _plot_rollout_png(
     traj_x = [float(s[0]) for s in states]
     traj_y = [float(s[1]) for s in states]
 
-    fig, ax = plt.subplots(figsize=(8.5, 8.0))
-    _draw_environment_base(ax, env, rollout)
+    goal = np.asarray(rollout["goal"], dtype=np.float32)
+    theta_slice = float(goal[2])
+    _, _, obs_mask, comm_mask, task_mask = _compute_feasibility_masks(env, theta_slice)
 
-    for idx in range(1, len(states)):
-        seg_color = "darkorange" if task_flags[idx] else "black"
-        seg_label = "trajectory" if idx == 1 else None
-        ax.plot(
-            traj_x[idx - 1 : idx + 1],
-            traj_y[idx - 1 : idx + 1],
-            color=seg_color,
-            linewidth=2.0,
-            label=seg_label,
-            zorder=4,
-        )
+    fig, axes = plt.subplots(1, 3, figsize=(18.0, 6.2), sharex=True, sharey=True)
+    panel_specs = [
+        ("Observation Feasible Region", obs_mask, "Greens"),
+        ("Communication Feasible Region", comm_mask, "Blues"),
+        ("Joint Task Feasible Region", task_mask, "Oranges"),
+    ]
 
     end_state = np.asarray(states[-1], dtype=np.float32)
-    ax.scatter(end_state[0], end_state[1], c="crimson", s=70, marker="o", label="end", zorder=6)
-    _add_heading_arrow(ax, end_state, "crimson", length=0.38)
-
     first_feasible_idx = next((i for i, flag in enumerate(task_flags) if flag), None)
-    if first_feasible_idx is not None:
-        feasible_state = np.asarray(states[first_feasible_idx], dtype=np.float32)
-        ax.scatter(
-            feasible_state[0],
-            feasible_state[1],
-            c="darkorange",
-            s=75,
-            marker="o",
-            label="first task-feasible state",
-            zorder=6,
-        )
 
-    ax.set_title(_make_rollout_title(rollout, execution_mode=execution_mode, episode_index=episode_index))
-    ax.legend(loc="upper right", fontsize=8)
+    for panel_idx, (ax, (panel_title, mask, cmap)) in enumerate(zip(axes, panel_specs)):
+        _draw_feasibility_mask(ax, env, mask, cmap=cmap)
+        _draw_environment_base(ax, env, rollout)
+
+        for idx in range(1, len(states)):
+            seg_color = "darkorange" if task_flags[idx] else "black"
+            seg_label = "trajectory" if idx == 1 and panel_idx == 2 else None
+            ax.plot(
+                traj_x[idx - 1 : idx + 1],
+                traj_y[idx - 1 : idx + 1],
+                color=seg_color,
+                linewidth=2.0,
+                label=seg_label,
+                zorder=4,
+            )
+
+        end_label = "end" if panel_idx == 2 else None
+        ax.scatter(end_state[0], end_state[1], c="crimson", s=70, marker="o", label=end_label, zorder=6)
+        _add_heading_arrow(ax, end_state, "crimson", length=0.38)
+
+        if first_feasible_idx is not None:
+            feasible_state = np.asarray(states[first_feasible_idx], dtype=np.float32)
+            marker_label = "first task-feasible state" if panel_idx == 2 else None
+            ax.scatter(
+                feasible_state[0],
+                feasible_state[1],
+                c="darkorange",
+                s=75,
+                marker="o",
+                label=marker_label,
+                zorder=6,
+            )
+
+        ax.set_title(panel_title)
+
+    fig.suptitle(
+        _make_rollout_title(rollout, execution_mode=execution_mode, episode_index=episode_index)
+        + f"\nfeasible-region slice uses goal heading theta={theta_slice:.2f} rad",
+        fontsize=14,
+        y=0.98,
+    )
+    axes[-1].legend(loc="upper right", fontsize=8)
     plt.tight_layout()
+    fig.subplots_adjust(top=0.84)
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return out_path
@@ -452,8 +521,12 @@ def _plot_rollout_gif(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     states = rollout["states"]
     task_flags = rollout["task_flags"]
+    goal = np.asarray(rollout["goal"], dtype=np.float32)
+    theta_slice = float(goal[2])
+    _, _, _obs_mask, _comm_mask, task_mask = _compute_feasibility_masks(env, theta_slice)
 
     fig, ax = plt.subplots(figsize=(8.5, 8.0))
+    _draw_feasibility_mask(ax, env, task_mask, cmap="Oranges", alpha=0.28)
     _draw_environment_base(ax, env, rollout)
     ax.legend(loc="upper right", fontsize=8)
 
@@ -493,7 +566,15 @@ def _plot_rollout_gif(
         first_feasible_marker.set_visible(False)
 
     def _init():
-        ax.set_title(_make_rollout_title(rollout, execution_mode=execution_mode, episode_index=episode_index, frame_index=0))
+        ax.set_title(
+            _make_rollout_title(
+                rollout,
+                execution_mode=execution_mode,
+                episode_index=episode_index,
+                frame_index=0,
+            )
+            + f"\nJoint task feasible slice at goal theta={theta_slice:.2f} rad"
+        )
         current_point.set_offsets(np.asarray([[states[0][0], states[0][1]]], dtype=np.float32))
         current_arrow.set_offsets(np.asarray([[states[0][0], states[0][1]]], dtype=np.float32))
         current_arrow.set_UVC(
@@ -527,6 +608,7 @@ def _plot_rollout_gif(
                 episode_index=episode_index,
                 frame_index=frame_idx,
             )
+            + f"\nJoint task feasible slice at goal theta={theta_slice:.2f} rad"
         )
         artists = [*segment_artists, current_point, current_arrow]
         if first_feasible_marker is not None:

@@ -8,6 +8,7 @@ station 任务上下文下采样得到的 task-conditioned terminal state。
 import math
 from typing import Dict, List, Optional, Tuple, Union
 
+import gym
 import numpy as np
 from gymnasium import spaces
 
@@ -573,7 +574,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         seed: Optional[int] = None,
         options: Optional[dict] = None,
     ) -> Tuple[np.ndarray, dict]:
-        super().reset(seed=seed)
+        gym.Env.reset(self, seed=seed)
 
         options = options or {}
         if "inspection_target" in options:
@@ -583,19 +584,17 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
 
         self._sample_entities(seed=seed)
 
-        if "start" in options:
-            self.start = tuple(options["start"])
-        if "goal" in options:
-            self.goal = tuple(options["goal"])
+        start_override = options.get("start", self._fixed_start)
+        goal_override = options.get("goal", self._fixed_goal)
 
-        if self.start is not None:
-            start_state = np.asarray(self.start, dtype=np.float32).reshape(3)
+        if start_override is not None:
+            start_state = np.asarray(start_override, dtype=np.float32).reshape(3)
             start_state[2] = self._normalize_angle(float(start_state[2]))
         else:
             start_state = self.sample_valid_state(seed=seed)
 
-        if self.goal is not None:
-            goal_state = np.asarray(self.goal, dtype=np.float32).reshape(3)
+        if goal_override is not None:
+            goal_state = np.asarray(goal_override, dtype=np.float32).reshape(3)
             goal_state[2] = self._normalize_angle(float(goal_state[2]))
         else:
             goal_seed = None if seed is None else seed + 1000

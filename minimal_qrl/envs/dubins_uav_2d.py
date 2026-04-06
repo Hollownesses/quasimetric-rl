@@ -191,9 +191,13 @@ class DubinsUAV2D(BaseNavigationEnv):
                 dtype=np.float32
             )
         
-        # 起终点（可在 reset 时设置）
-        self.start = start
-        self.goal = goal
+        # 固定起终点配置（若为 None，则 reset 时重新采样）
+        self._fixed_start = tuple(start) if start is not None else None
+        self._fixed_goal = tuple(goal) if goal is not None else None
+
+        # 当前 episode 的起终点
+        self.start = self._fixed_start
+        self.goal = self._fixed_goal
         
         # 当前状态
         self.state: np.ndarray = np.zeros(3, dtype=np.float32)
@@ -317,24 +321,21 @@ class DubinsUAV2D(BaseNavigationEnv):
             observation, info
         """
         super().reset(seed=seed)
-        
-        # 如果提供了 start 和 goal，使用它们
-        if options is not None:
-            if 'start' in options:
-                self.start = tuple(options['start'])
-            if 'goal' in options:
-                self.goal = tuple(options['goal'])
-        
+
+        options = options or {}
+        start_override = options.get("start", self._fixed_start)
+        goal_override = options.get("goal", self._fixed_goal)
+
         # 确定起始状态
-        if self.start is not None:
-            start_state = np.array(self.start, dtype=np.float32)
+        if start_override is not None:
+            start_state = np.array(start_override, dtype=np.float32)
             start_state[2] = self._normalize_angle(start_state[2])  # 归一化角度
         else:
             start_state = self.sample_valid_state(seed=seed)
-        
+
         # 确定目标状态
-        if self.goal is not None:
-            goal_state = np.array(self.goal, dtype=np.float32)
+        if goal_override is not None:
+            goal_state = np.array(goal_override, dtype=np.float32)
             goal_state[2] = self._normalize_angle(goal_state[2])  # 归一化角度
         else:
             goal_state = self.sample_valid_state(seed=(seed + 1000) if seed is not None else None)
