@@ -109,9 +109,9 @@ def _build_biased_sequences(env: DubinsUAV2D, horizon: int, n: int, *, kp: float
             return np.stack(seqs, axis=0)
 
     # 4) 若还不够，用随机常值补齐（比完全随机序列更适合 Dubins）
-    rng = np.random.default_rng()
     while len(seqs) < n:
-        w = float(rng.uniform(-om_max, om_max))
+        # 使用 NumPy 全局 RNG，便于通过 np.random.seed 控制复现性
+        w = float(np.random.uniform(-om_max, om_max))
         seqs.append(np.full((horizon,), w, dtype=np.float32))
 
     return np.stack(seqs, axis=0)
@@ -403,4 +403,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
