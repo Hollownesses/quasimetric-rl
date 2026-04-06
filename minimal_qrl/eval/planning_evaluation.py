@@ -168,7 +168,11 @@ def sample_state_goal_pairs(
     if nav_env is not None:
         for i in range(n_pairs):
             state = nav_env.sample_valid_state(seed=seed + i if seed is not None else None)
-            goal = nav_env.sample_valid_state(seed=seed + i + n_pairs if seed is not None else None)
+            goal_seed = seed + i + n_pairs if seed is not None else None
+            if hasattr(nav_env, "sample_goal") and callable(getattr(nav_env, "sample_goal")):
+                goal = nav_env.sample_goal(seed=goal_seed)
+            else:
+                goal = nav_env.sample_valid_state(seed=goal_seed)
             states.append(state)
             goals.append(goal)
     else:
