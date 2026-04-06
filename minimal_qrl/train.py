@@ -27,7 +27,13 @@ from quasimetric_rl.modules.quasimetric_critic import QuasimetricCriticConf
 from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
-from minimal_qrl.envs import SimpleGrid2D, ContinuousObstacle2D, DubinsUAV2D, CircleObstacle
+from minimal_qrl.envs import (
+    SimpleGrid2D,
+    ContinuousObstacle2D,
+    DubinsUAV2D,
+    CircleObstacle,
+    CommInspectionDubinsUAV2D,
+)
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
 
@@ -52,7 +58,7 @@ def create_env_factory(env_type: str, **env_kwargs):
     创建环境工厂函数
     
     Args:
-        env_type: 环境类型 ('simple_grid', 'obstacle', 或 'dubins_uav')
+        env_type: 环境类型 ('simple_grid', 'obstacle', 'dubins_uav', 或 'comm_inspection_dubins_uav')
         **env_kwargs: 环境参数
     
     Returns:
@@ -69,6 +75,10 @@ def create_env_factory(env_type: str, **env_kwargs):
     elif env_type == 'dubins_uav':
         def factory():
             return DubinsUAV2D(**env_kwargs)
+        return factory
+    elif env_type == 'comm_inspection_dubins_uav':
+        def factory():
+            return CommInspectionDubinsUAV2D(**env_kwargs)
         return factory
     else:
         raise ValueError(f"未知的环境类型: {env_type}")
@@ -147,6 +157,45 @@ def get_env_kwargs(args) -> dict:
             kwargs['collision_penalty'] = args.collision_penalty
         else:
             kwargs['collision_penalty'] = getattr(args, 'collision_penalty', -10.0)
+        return kwargs
+    elif args.env_type == 'comm_inspection_dubins_uav':
+        obstacles = _dubins_obstacles_from_args(args)
+        observation_mode = getattr(args, 'observation_mode', None)
+        if not observation_mode:
+            observation_mode = 'cos_sin' if getattr(args, 'use_cos_sin_obs', True) else 'state'
+        kwargs = {
+            'max_steps': args.max_steps_per_episode,
+            'bounds': tuple(args.bounds) if (hasattr(args, 'bounds') and args.bounds) else (0.0, 0.0, 10.0, 10.0),
+            'omega_max': args.omega_max if (hasattr(args, 'omega_max') and args.omega_max is not None) else 3.0,
+            'v': args.v if (hasattr(args, 'v') and args.v is not None) else 1.0,
+            'dt': args.dt if (hasattr(args, 'dt') and args.dt is not None) else 0.1,
+            'obstacles': obstacles,
+            'observation_mode': observation_mode,
+            'inspection_target': tuple(args.inspection_target) if getattr(args, 'inspection_target', None) else None,
+            'ground_station': tuple(args.ground_station) if getattr(args, 'ground_station', None) else None,
+            'randomize_inspection_target': getattr(args, 'randomize_inspection_target', False),
+            'randomize_ground_station': getattr(args, 'randomize_ground_station', False),
+            'observation_radius': getattr(args, 'observation_radius', 1.5),
+            'fov_angle': getattr(args, 'fov_angle', np.pi / 2.0),
+            'require_target_los': getattr(args, 'require_target_los', False),
+            'comm_alpha': getattr(args, 'comm_alpha', 2.0),
+            'comm_bias': getattr(args, 'comm_bias', 5.0),
+            'comm_occlusion_penalty': getattr(args, 'comm_occlusion_penalty', 6.0),
+            'comm_threshold': getattr(args, 'comm_threshold', 0.0),
+            'require_ground_station_los': getattr(args, 'require_ground_station_los', False),
+            'goal_sampling_mode': getattr(args, 'goal_sampling_mode', 'task_feasible'),
+            'goal_position_tolerance': getattr(args, 'goal_position_tolerance', 0.15),
+            'goal_heading_tolerance': getattr(args, 'goal_heading_tolerance', 0.2),
+            'collision_penalty': getattr(args, 'collision_penalty', -10.0),
+            'out_of_bounds_penalty': getattr(args, 'out_of_bounds_penalty', -10.0),
+            'success_reward': getattr(args, 'success_reward', 1.0),
+            'communication_break_penalty': getattr(args, 'communication_break_penalty', -1.0),
+            'apply_communication_break_penalty': getattr(args, 'apply_communication_break_penalty', True),
+            'reward_obs_weight': getattr(args, 'reward_obs_weight', 1.0),
+            'reward_comm_weight': getattr(args, 'reward_comm_weight', 0.5),
+            'reward_task_feasible_bonus': getattr(args, 'reward_task_feasible_bonus', 1.0),
+            'reward_goal_success_bonus': getattr(args, 'reward_goal_success_bonus', 1.0),
+        }
         return kwargs
     else:
         raise ValueError(f"未知的环境类型: {args.env_type}")
@@ -243,6 +292,19 @@ def train(args):
     # 获取环境参数
     env_kwargs = get_env_kwargs(args)
     logger.info(f"环境参数: {env_kwargs}")
+
+    if args.env_type == 'comm_inspection_dubins_uav':
+        precheck_env = CommInspectionDubinsUAV2D(**env_kwargs)
+        try:
+            probe_goal = precheck_env.sample_goal(seed=args.seed)
+            logger.info(f"通信巡检环境预检查通过，示例任务可行目标: {probe_goal}")
+        except RuntimeError as e:
+            raise ValueError(
+                "当前通信巡检环境配置下不存在可采样的任务可行目标。"
+                "请检查 inspection_target / ground_station / obstacle_config / "
+                "observation_radius / fov_angle / require_target_los / "
+                "comm_threshold 等参数是否过于严格。"
+            ) from e
     
     # 创建环境工厂函数
     create_env_fn = create_env_factory(args.env_type, **env_kwargs)
@@ -281,7 +343,7 @@ def train(args):
     # 创建 QRL Agent 和 Losses（Dubins 用 step_cost=1.0 使约束与网络输出尺度一致，评估时再乘 dt 得时间）
     logger.info("创建 QRL Agent 和 Losses...")
     step_cost = 1.0
-    if args.env_type == 'dubins_uav':
+    if args.env_type in {'dubins_uav', 'comm_inspection_dubins_uav'}:
         # 约束为 d(s,s') 不超过 step_cost；网络输出多为 O(1)，故用 1.0 易满足，评估时 pred*dt 得时间
         step_cost = 1.0
         agent_conf = QRLConf(
@@ -557,8 +619,8 @@ def main():
     
     # 环境参数
     parser.add_argument('--env-type', type=str, default='simple_grid',
-                        choices=['simple_grid', 'obstacle', 'dubins_uav'],
-                        help='环境类型: simple_grid (简单网格), obstacle (障碍物环境), 或 dubins_uav (Dubins UAV)')
+                        choices=['simple_grid', 'obstacle', 'dubins_uav', 'comm_inspection_dubins_uav'],
+                        help='环境类型: simple_grid, obstacle, dubins_uav, 或 comm_inspection_dubins_uav')
     parser.add_argument('--grid-size', type=int, nargs=2, default=[10, 10],
                         help='网格大小 (height, width)，仅用于 simple_grid 环境')
     parser.add_argument('--grid-resolution', type=int, default=50,
@@ -589,6 +651,60 @@ def main():
                         help='Dubins 使用 (x,y,cosθ,sinθ) 作为观测（默认 True）')
     parser.add_argument('--no-use-cos-sin-obs', action='store_false', dest='use_cos_sin_obs',
                         help='禁用 cos/sin 观测，使用 (x,y,θ)')
+
+    # 通信感知巡检 Dubins 环境特定参数
+    parser.add_argument('--inspection-target', type=float, nargs=2, default=None,
+                        metavar=('X_T', 'Y_T'),
+                        help='巡检目标位置，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--ground-station', type=float, nargs=2, default=None,
+                        metavar=('X_BS', 'Y_BS'),
+                        help='地面站位置，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--randomize-inspection-target', action='store_true',
+                        help='每次 reset 随机采样巡检目标位置')
+    parser.add_argument('--randomize-ground-station', action='store_true',
+                        help='每次 reset 随机采样地面站位置')
+    parser.add_argument('--observation-radius', type=float, default=1.5,
+                        help='观测半径，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--fov-angle', type=float, default=float(np.pi / 2.0),
+                        help='视场角全角（弧度），仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--require-target-los', action='store_true',
+                        help='要求到巡检目标具有 LOS，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--comm-alpha', type=float, default=2.0,
+                        help='通信对数路径损耗系数 alpha，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--comm-bias', type=float, default=5.0,
+                        help='通信质量偏置项，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--comm-occlusion-penalty', type=float, default=6.0,
+                        help='通信 LOS 被遮挡时的额外惩罚，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--comm-threshold', type=float, default=0.0,
+                        help='通信可行性阈值，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--require-ground-station-los', action='store_true',
+                        help='要求到地面站具有 LOS，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--observation-mode', type=str, default='task_context',
+                        choices=['task_context', 'cos_sin', 'state'],
+                        help='通信巡检 Dubins 的观测模式，默认 task_context')
+    parser.add_argument('--goal-sampling-mode', type=str, default='task_feasible',
+                        choices=['task_feasible', 'valid'],
+                        help='目标采样方式，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--goal-position-tolerance', type=float, default=0.15,
+                        help='目标位置容差，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--goal-heading-tolerance', type=float, default=0.2,
+                        help='目标朝向容差，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--out-of-bounds-penalty', type=float, default=-10.0,
+                        help='越界惩罚，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--success-reward', type=float, default=1.0,
+                        help='成功奖励，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--communication-break-penalty', type=float, default=-1.0,
+                        help='通信中断惩罚，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--apply-communication-break-penalty', action='store_true',
+                        help='启用通信中断惩罚，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--reward-obs-weight', type=float, default=1.0,
+                        help='观测几何 reward 权重，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--reward-comm-weight', type=float, default=0.5,
+                        help='通信 reward 权重，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--reward-task-feasible-bonus', type=float, default=1.0,
+                        help='进入联合任务可行状态时的 reward，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--reward-goal-success-bonus', type=float, default=1.0,
+                        help='精确到达 task terminal goal 时的额外 reward，仅用于 comm_inspection_dubins_uav')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')
@@ -638,4 +754,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
