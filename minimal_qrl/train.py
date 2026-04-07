@@ -186,14 +186,12 @@ def get_env_kwargs(args) -> dict:
             'goal_sampling_mode': getattr(args, 'goal_sampling_mode', 'task_feasible'),
             'goal_position_tolerance': getattr(args, 'goal_position_tolerance', 0.15),
             'goal_heading_tolerance': getattr(args, 'goal_heading_tolerance', 0.2),
-            'collision_penalty': getattr(args, 'collision_penalty', -10.0),
-            'out_of_bounds_penalty': getattr(args, 'out_of_bounds_penalty', -10.0),
-            'communication_break_penalty': getattr(args, 'communication_break_penalty', -1.0),
-            'apply_communication_break_penalty': getattr(args, 'apply_communication_break_penalty', True),
-            'reward_obs_weight': getattr(args, 'reward_obs_weight', 1.0),
-            'reward_comm_weight': getattr(args, 'reward_comm_weight', 0.5),
-            'reward_task_feasible_bonus': getattr(args, 'reward_task_feasible_bonus', 1.0),
-            'reward_goal_success_bonus': getattr(args, 'reward_goal_success_bonus', 1.0),
+            'collision_cost': abs(getattr(args, 'collision_cost', 10.0)),
+            'out_of_bounds_cost': abs(getattr(args, 'out_of_bounds_cost', 10.0)),
+            'communication_break_cost': abs(getattr(args, 'communication_break_cost', 1.0)),
+            'observation_violation_cost_weight': getattr(args, 'observation_violation_cost_weight', 1.0),
+            'communication_violation_cost_weight': getattr(args, 'communication_violation_cost_weight', 0.5),
+            'observation_failure_cost': abs(getattr(args, 'observation_failure_cost', 0.25)),
         }
         return kwargs
     else:
@@ -688,24 +686,18 @@ def main():
                         help='目标位置容差，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--goal-heading-tolerance', type=float, default=0.2,
                         help='目标朝向容差，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--out-of-bounds-penalty', type=float, default=-10.0,
-                        help='越界惩罚，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--communication-break-penalty', type=float, default=-1.0,
-                        help='通信中断惩罚，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--apply-communication-break-penalty', dest='apply_communication_break_penalty',
-                        action='store_true', default=True,
-                        help='启用通信中断惩罚，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--no-apply-communication-break-penalty', dest='apply_communication_break_penalty',
-                        action='store_false',
-                        help='禁用通信中断惩罚，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--reward-obs-weight', type=float, default=1.0,
-                        help='观测几何 reward 权重，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--reward-comm-weight', type=float, default=0.5,
-                        help='通信 reward 权重，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--reward-task-feasible-bonus', type=float, default=1.0,
-                        help='进入联合任务可行状态时的 reward，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--reward-goal-success-bonus', type=float, default=1.0,
-                        help='精确到达 task terminal goal 时的额外 reward，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--collision-cost', type=float, default=10.0,
+                        help='碰撞阶段代价，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--out-of-bounds-cost', type=float, default=10.0,
+                        help='越界阶段代价，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--communication-break-cost', type=float, default=1.0,
+                        help='通信不可行时的固定阶段代价，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--observation-violation-cost-weight', type=float, default=1.0,
+                        help='观测约束短缺的软代价权重，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--communication-violation-cost-weight', type=float, default=0.5,
+                        help='通信约束短缺的软代价权重，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--observation-failure-cost', type=float, default=0.25,
+                        help='观测不可行时的固定阶段代价，仅用于 comm_inspection_dubins_uav')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')

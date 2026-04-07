@@ -118,7 +118,7 @@ def test_collision_penalty_is_negative():
     env.reset(seed=0)
     _, reward, _, _, info = env.step(np.array([0.0], dtype=np.float32))
     assert info["collision"]
-    assert info["reward_collision"] <= -10.0
+    assert info["cost_collision"] >= 10.0
     assert reward < -1.0
 
 
@@ -133,7 +133,7 @@ def test_out_of_bounds_penalty_is_negative():
     env.reset(seed=0)
     _, reward, _, _, info = env.step(np.array([0.0], dtype=np.float32))
     assert info["out_of_bounds"]
-    assert info["reward_oob"] <= -10.0
+    assert info["cost_oob"] >= 10.0
     assert reward < -1.0
 
 
@@ -182,31 +182,42 @@ def test_task_feasible_not_equal_success():
     assert info["first_task_feasible_step"] == 1
 
 
-def test_apply_communication_break_penalty_flag_controls_reward():
+def test_zero_communication_break_cost_disables_fixed_penalty():
     env = make_env(
         goal_sampling_mode="valid",
         comm_threshold=4.0,
-        apply_communication_break_penalty=False,
+        communication_break_cost=0.0,
     )
     env.reset(seed=0)
-    reward_terms = env.compute_reward_terms(
-        prev_state=env.state,
+    step_terms = env.compute_step_terms(
         new_state=env.state,
-        success=False,
         collision=False,
         out_of_bounds=False,
     )
-    assert reward_terms["reward_comm_break"] == 0.0
+    assert step_terms["cost_comm_break"] == 0.0
 
-    env.apply_communication_break_penalty = True
-    reward_terms = env.compute_reward_terms(
-        prev_state=env.state,
+    env.communication_break_cost = 1.25
+    step_terms = env.compute_step_terms(
         new_state=env.state,
-        success=False,
         collision=False,
         out_of_bounds=False,
     )
-    assert reward_terms["reward_comm_break"] == env.communication_break_penalty
+    assert step_terms["cost_comm_break"] == 1.25
+
+
+def test_feasible_state_has_zero_violation_costs():
+    env = make_env()
+    feasible_state = np.array([4.0, 5.0, 0.0], dtype=np.float32)
+    env.reset(seed=0, options={"start": feasible_state, "goal": feasible_state})
+    step_terms = env.compute_step_terms(
+        new_state=env.state,
+        collision=False,
+        out_of_bounds=False,
+    )
+    assert step_terms["cost_obs_violation"] == 0.0
+    assert step_terms["cost_comm_violation"] == 0.0
+    assert step_terms["cost_obs_fail"] == 0.0
+    assert step_terms["cost_comm_break"] == 0.0
 
 
 def test_legacy_modes_reset_and_step():
@@ -253,7 +264,8 @@ if __name__ == "__main__":
     test_success_trigger_near_exact_goal()
     test_goal_reached_but_not_task_feasible_is_not_success()
     test_task_feasible_not_equal_success()
-    test_apply_communication_break_penalty_flag_controls_reward()
+    test_zero_communication_break_cost_disables_fixed_penalty()
+    test_feasible_state_has_zero_violation_costs()
     test_legacy_modes_reset_and_step()
     test_visualize_script_smoke()
     print("All comm inspection Dubins UAV tests passed.")

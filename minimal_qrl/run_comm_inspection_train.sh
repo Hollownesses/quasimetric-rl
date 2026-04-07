@@ -35,7 +35,6 @@ RANDOMIZE_INSPECTION_TARGET_FLAG=""
 RANDOMIZE_GROUND_STATION_FLAG=""
 REQUIRE_TARGET_LOS_FLAG=""
 REQUIRE_GROUND_STATION_LOS_FLAG=""
-APPLY_COMM_BREAK_PENALTY_FLAG="--apply-communication-break-penalty"
 
 if [[ "${RANDOMIZE_INSPECTION_TARGET:-0}" == "1" ]]; then
   RANDOMIZE_INSPECTION_TARGET_FLAG="--randomize-inspection-target"
@@ -49,11 +48,6 @@ fi
 if [[ "${REQUIRE_GROUND_STATION_LOS:-0}" == "1" ]]; then
   REQUIRE_GROUND_STATION_LOS_FLAG="--require-ground-station-los"
 fi
-if [[ "${APPLY_COMM_BREAK_PENALTY:-1}" == "0" ]]; then
-  APPLY_COMM_BREAK_PENALTY_FLAG=""
-elif [[ "${APPLY_COMM_BREAK_PENALTY:-1}" == "1" ]]; then
-  APPLY_COMM_BREAK_PENALTY_FLAG="--apply-communication-break-penalty"
-fi
 
 "$PYTHON_BIN" minimal_qrl/train.py \
   --device auto \
@@ -65,7 +59,6 @@ fi
   --dt "${DT:-0.1}" \
   --observation-mode task_context \
   --obstacle-config "$OBSTACLE_CONFIG" \
-  --collision-penalty "${COLLISION_PENALTY:--10.0}" \
   --num-episodes "${NUM_EPISODES:-180}" \
   --max-steps-per-episode "${MAX_STEPS_PER_EPISODE:-180}" \
   --batch-size "${BATCH_SIZE:-256}" \
@@ -92,13 +85,12 @@ fi
   --goal-sampling-mode "${GOAL_SAMPLING_MODE:-task_feasible}" \
   --goal-position-tolerance "${GOAL_POS_TOL:-0.15}" \
   --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.2}" \
-  --out-of-bounds-penalty "${OUT_OF_BOUNDS_PENALTY:--10.0}" \
-  --communication-break-penalty "${COMM_BREAK_PENALTY:--1.0}" \
-  --reward-obs-weight "${REWARD_OBS_WEIGHT:-1.0}" \
-  --reward-comm-weight "${REWARD_COMM_WEIGHT:-0.5}" \
-  --reward-task-feasible-bonus "${REWARD_TASK_FEASIBLE_BONUS:-1.0}" \
-  --reward-goal-success-bonus "${REWARD_GOAL_SUCCESS_BONUS:-1.0}" \
-  ${APPLY_COMM_BREAK_PENALTY_FLAG}
+  --collision-cost "${COLLISION_COST:-10.0}" \
+  --out-of-bounds-cost "${OUT_OF_BOUNDS_COST:-10.0}" \
+  --communication-break-cost "${COMM_BREAK_COST:-1.0}" \
+  --observation-violation-cost-weight "${OBS_VIOLATION_COST_WEIGHT:-1.0}" \
+  --communication-violation-cost-weight "${COMM_VIOLATION_COST_WEIGHT:-0.5}" \
+  --observation-failure-cost "${OBSERVATION_FAILURE_COST:-0.25}"
 
 echo "训练完成。结果目录: $OUTPUT_DIR"
 echo "TensorBoard:"

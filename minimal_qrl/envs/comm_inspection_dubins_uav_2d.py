@@ -23,7 +23,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
     - 状态仍为 (x, y, theta)
     - goal 仍为单个终态 (x_g, y_g, theta_g)
     - 但 goal 来自当前任务上下文中的 joint task feasible region
-    - reward 显式包含观测几何、通信质量与 task feasibility shaping
+    - 环境返回 reward = - stage_cost，使问题保持为路径累积 cost 的 goal reaching
 
     Legacy 模式：
     - observation_mode="state" 或 "cos_sin" 时，行为与普通 Dubins 更接近
@@ -59,15 +59,12 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         goal_sampling_mode: str = "task_feasible",
         goal_position_tolerance: float = 0.15,
         goal_heading_tolerance: float = 0.2,
-        collision_penalty: float = -10.0,
-        out_of_bounds_penalty: float = -10.0,
-        communication_break_penalty: float = -1.0,
-        apply_communication_break_penalty: bool = True,
-        reward_obs_weight: float = 1.0,
-        reward_comm_weight: float = 0.5,
-        reward_task_feasible_bonus: float = 1.0,
-        reward_goal_success_bonus: float = 1.0,
-        reward_observation_fail_penalty: float = -0.25,
+        collision_cost: float = 10.0,
+        out_of_bounds_cost: float = 10.0,
+        communication_break_cost: float = 1.0,
+        observation_violation_cost_weight: float = 1.0,
+        communication_violation_cost_weight: float = 0.5,
+        observation_failure_cost: float = 0.25,
         render_mode: Optional[str] = None,
         sample_max_attempts: int = 2000,
     ):
@@ -85,7 +82,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             epsilon_pos=goal_position_tolerance,
             epsilon_theta=goal_heading_tolerance,
             obstacles=obstacles,
-            collision_penalty=collision_penalty,
+            collision_penalty=-abs(float(collision_cost)),
             start=start,
             goal=goal,
             render_mode=render_mode,
@@ -112,15 +109,13 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         self.goal_sampling_mode = str(goal_sampling_mode)
         self.goal_position_tolerance = float(goal_position_tolerance)
         self.goal_heading_tolerance = float(goal_heading_tolerance)
-        self.out_of_bounds_penalty = float(out_of_bounds_penalty)
-        self.communication_break_penalty = float(communication_break_penalty)
-        self.apply_communication_break_penalty = bool(apply_communication_break_penalty)
+        self.collision_cost = abs(float(collision_cost))
+        self.out_of_bounds_cost = abs(float(out_of_bounds_cost))
+        self.communication_break_cost = abs(float(communication_break_cost))
 
-        self.reward_obs_weight = float(reward_obs_weight)
-        self.reward_comm_weight = float(reward_comm_weight)
-        self.reward_task_feasible_bonus = float(reward_task_feasible_bonus)
-        self.reward_goal_success_bonus = float(reward_goal_success_bonus)
-        self.reward_observation_fail_penalty = float(reward_observation_fail_penalty)
+        self.observation_violation_cost_weight = float(observation_violation_cost_weight)
+        self.communication_violation_cost_weight = float(communication_violation_cost_weight)
+        self.observation_failure_cost = abs(float(observation_failure_cost))
 
         self.sample_max_attempts = int(sample_max_attempts)
         self._ever_task_feasible = False
@@ -500,7 +495,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         success: bool,
         collision: bool,
         out_of_bounds: bool,
-        reward_terms: Optional[Dict[str, float]] = None,
+        step_terms: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Union[bool, float, int, None]]:
         state = np.asarray(state, dtype=np.float32).reshape(3)
         comm = self.compute_comm_quality(state)
@@ -534,42 +529,39 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             "pos_dist": float(distance_to_goal),
             "theta_diff": float(heading_error),
         }
-        if reward_terms is not None:
-            info.update({k: float(v) for k, v in reward_terms.items()})
+        if step_terms is not None:
+            info.update({k: float(v) for k, v in step_terms.items()})
         return info
 
-    def compute_reward_terms(
+    def compute_step_terms(
         self,
-        prev_state: np.ndarray,
         new_state: np.ndarray,
-        success: bool,
         collision: bool,
         out_of_bounds: bool,
     ) -> Dict[str, float]:
-        _ = prev_state
-        obs_score = self.compute_observation_score(new_state)
-        comm_score = self.compute_communication_score(new_state)
-        task_feasible = self.is_task_feasible(new_state)
-        comm_margin = self.compute_comm_quality(new_state)["margin"]
+        obs_margin = self.compute_observation_margin(new_state)
+        comm = self.compute_comm_quality(new_state)
+        comm_margin = float(comm["margin"])
         observation_feasible = self.is_observation_feasible(new_state)
+        communication_feasible = self.is_communication_feasible(new_state)
 
-        reward_terms = {
-            "reward_time": -self.dt,
-            "reward_obs": self.reward_obs_weight * obs_score,
-            "reward_comm": self.reward_comm_weight * comm_score,
-            "reward_task_feasible": self.reward_task_feasible_bonus if task_feasible else 0.0,
-            "reward_goal_success": self.reward_goal_success_bonus if success else 0.0,
-            "reward_comm_break": (
-                self.communication_break_penalty
-                if self.apply_communication_break_penalty and comm_margin < 0.0
-                else 0.0
-            ),
-            "reward_obs_fail": self.reward_observation_fail_penalty if not observation_feasible else 0.0,
-            "reward_collision": self.collision_penalty if collision else 0.0,
-            "reward_oob": self.out_of_bounds_penalty if out_of_bounds else 0.0,
+        obs_scale = max(self.observation_radius, 1e-6)
+        comm_scale = max(abs(self.comm_threshold) + 1.0, 1.0)
+        obs_shortfall = max(0.0, -float(obs_margin)) / obs_scale
+        comm_shortfall = max(0.0, -float(comm_margin)) / comm_scale
+
+        step_terms = {
+            "cost_time": float(self.dt),
+            "cost_obs_violation": float(self.observation_violation_cost_weight) * float(obs_shortfall),
+            "cost_comm_violation": float(self.communication_violation_cost_weight) * float(comm_shortfall),
+            "cost_obs_fail": self.observation_failure_cost if not observation_feasible else 0.0,
+            "cost_comm_break": self.communication_break_cost if not communication_feasible else 0.0,
+            "cost_collision": self.collision_cost if collision else 0.0,
+            "cost_oob": self.out_of_bounds_cost if out_of_bounds else 0.0,
         }
-        reward_terms["reward_total"] = float(sum(reward_terms.values()))
-        return reward_terms
+        step_terms["cost_total"] = float(sum(step_terms.values()))
+        step_terms["reward_total"] = -float(step_terms["cost_total"])
+        return step_terms
 
     def reset(
         self,
@@ -628,7 +620,6 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
 
         omega = np.clip(omega, -self.omega_max, self.omega_max)
 
-        prev_state = self.state.copy()
         x, y, theta = float(self.state[0]), float(self.state[1]), float(self.state[2])
         theta_new = self._normalize_angle(theta + omega * self.dt)
         x_new = x + self.v * np.cos(theta_new) * self.dt
@@ -664,21 +655,19 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             if self._first_task_feasible_step is None:
                 self._first_task_feasible_step = self._t
 
-        reward_terms = self.compute_reward_terms(
-            prev_state=prev_state,
+        step_terms = self.compute_step_terms(
             new_state=self.state,
-            success=success,
             collision=collision,
             out_of_bounds=out_of_bounds,
         )
-        reward = reward_terms["reward_total"]
+        reward = step_terms["reward_total"]
 
         info = self._build_info(
             self.state,
             success=success,
             collision=collision,
             out_of_bounds=out_of_bounds,
-            reward_terms=reward_terms,
+            step_terms=step_terms,
         )
         return self._get_obs(), float(reward), bool(success), bool(truncated), info
 

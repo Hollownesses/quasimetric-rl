@@ -31,7 +31,6 @@ RANDOMIZE_INSPECTION_TARGET_FLAG=""
 RANDOMIZE_GROUND_STATION_FLAG=""
 REQUIRE_TARGET_LOS_FLAG="--require-target-los"
 REQUIRE_GROUND_STATION_LOS_FLAG=""
-APPLY_COMM_BREAK_PENALTY_FLAG="--apply-communication-break-penalty"
 SAVE_VISUALIZATIONS_FLAG=""
 VIZ_SAVE_FAILURES_FLAG="--viz-save-failures"
 VIZ_SAVE_GIF_FLAG=""
@@ -49,11 +48,6 @@ else
 fi
 if [[ "${REQUIRE_GROUND_STATION_LOS:-0}" == "1" ]]; then
   REQUIRE_GROUND_STATION_LOS_FLAG="--require-ground-station-los"
-fi
-if [[ "${APPLY_COMM_BREAK_PENALTY:-1}" == "1" ]]; then
-  APPLY_COMM_BREAK_PENALTY_FLAG="--apply-communication-break-penalty"
-else
-  APPLY_COMM_BREAK_PENALTY_FLAG="--no-apply-communication-break-penalty"
 fi
 if [[ "${SAVE_VISUALIZATIONS:-0}" == "1" ]]; then
   SAVE_VISUALIZATIONS_FLAG="--save-visualizations"
@@ -94,14 +88,12 @@ echo "评估通信巡检 Dubins UAV 执行成功率..."
   --goal-sampling-mode "${GOAL_SAMPLING_MODE:-task_feasible}" \
   --goal-position-tolerance "${GOAL_POS_TOL:-0.15}" \
   --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.2}" \
-  --collision-penalty "${COLLISION_PENALTY:--10.0}" \
-  --out-of-bounds-penalty "${OUT_OF_BOUNDS_PENALTY:--10.0}" \
-  --communication-break-penalty "${COMM_BREAK_PENALTY:--1.0}" \
-  ${APPLY_COMM_BREAK_PENALTY_FLAG} \
-  --reward-obs-weight "${REWARD_OBS_WEIGHT:-1.0}" \
-  --reward-comm-weight "${REWARD_COMM_WEIGHT:-0.5}" \
-  --reward-task-feasible-bonus "${REWARD_TASK_FEASIBLE_BONUS:-1.0}" \
-  --reward-goal-success-bonus "${REWARD_GOAL_SUCCESS_BONUS:-1.0}" \
+  --collision-cost "${COLLISION_COST:-10.0}" \
+  --out-of-bounds-cost "${OUT_OF_BOUNDS_COST:-10.0}" \
+  --communication-break-cost "${COMM_BREAK_COST:-1.0}" \
+  --observation-violation-cost-weight "${OBS_VIOLATION_COST_WEIGHT:-1.0}" \
+  --communication-violation-cost-weight "${COMM_VIOLATION_COST_WEIGHT:-0.5}" \
+  --observation-failure-cost "${OBSERVATION_FAILURE_COST:-0.25}" \
   --num-critics "${NUM_CRITICS:-2}" \
   --n-trials "${N_TRIALS:-100}" \
   --seed "${SEED:-0}" \

@@ -119,14 +119,12 @@ def make_comm_inspection_env(args) -> CommInspectionDubinsUAV2D:
         goal_sampling_mode=str(args.goal_sampling_mode),
         goal_position_tolerance=float(args.goal_position_tolerance),
         goal_heading_tolerance=float(args.goal_heading_tolerance),
-        collision_penalty=float(args.collision_penalty),
-        out_of_bounds_penalty=float(args.out_of_bounds_penalty),
-        communication_break_penalty=float(args.communication_break_penalty),
-        apply_communication_break_penalty=bool(args.apply_communication_break_penalty),
-        reward_obs_weight=float(args.reward_obs_weight),
-        reward_comm_weight=float(args.reward_comm_weight),
-        reward_task_feasible_bonus=float(args.reward_task_feasible_bonus),
-        reward_goal_success_bonus=float(args.reward_goal_success_bonus),
+        collision_cost=abs(float(args.collision_cost)),
+        out_of_bounds_cost=abs(float(args.out_of_bounds_cost)),
+        communication_break_cost=abs(float(args.communication_break_cost)),
+        observation_violation_cost_weight=float(args.observation_violation_cost_weight),
+        communication_violation_cost_weight=float(args.communication_violation_cost_weight),
+        observation_failure_cost=abs(float(args.observation_failure_cost)),
     )
     try:
         env.sample_goal(seed=int(args.seed))
@@ -867,24 +865,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--goal-sampling-mode", type=str, default="task_feasible", choices=["task_feasible", "valid"])
     parser.add_argument("--goal-position-tolerance", type=float, default=0.15)
     parser.add_argument("--goal-heading-tolerance", type=float, default=0.2)
-    parser.add_argument("--collision-penalty", type=float, default=-10.0)
-    parser.add_argument("--out-of-bounds-penalty", type=float, default=-10.0)
-    parser.add_argument("--communication-break-penalty", type=float, default=-1.0)
-    parser.add_argument(
-        "--apply-communication-break-penalty",
-        dest="apply_communication_break_penalty",
-        action="store_true",
-        default=True,
-    )
-    parser.add_argument(
-        "--no-apply-communication-break-penalty",
-        dest="apply_communication_break_penalty",
-        action="store_false",
-    )
-    parser.add_argument("--reward-obs-weight", type=float, default=1.0)
-    parser.add_argument("--reward-comm-weight", type=float, default=0.5)
-    parser.add_argument("--reward-task-feasible-bonus", type=float, default=1.0)
-    parser.add_argument("--reward-goal-success-bonus", type=float, default=1.0)
+    parser.add_argument("--collision-cost", type=float, default=10.0)
+    parser.add_argument("--out-of-bounds-cost", type=float, default=10.0)
+    parser.add_argument("--communication-break-cost", type=float, default=1.0)
+    parser.add_argument("--observation-violation-cost-weight", type=float, default=1.0)
+    parser.add_argument("--communication-violation-cost-weight", type=float, default=0.5)
+    parser.add_argument("--observation-failure-cost", type=float, default=0.25)
 
     parser.add_argument("--n-trials", type=int, default=200)
     parser.add_argument("--seed", type=int, default=0)
