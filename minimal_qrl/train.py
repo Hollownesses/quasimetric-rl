@@ -188,7 +188,6 @@ def get_env_kwargs(args) -> dict:
             'goal_heading_tolerance': getattr(args, 'goal_heading_tolerance', 0.2),
             'collision_penalty': getattr(args, 'collision_penalty', -10.0),
             'out_of_bounds_penalty': getattr(args, 'out_of_bounds_penalty', -10.0),
-            'success_reward': getattr(args, 'success_reward', 1.0),
             'communication_break_penalty': getattr(args, 'communication_break_penalty', -1.0),
             'apply_communication_break_penalty': getattr(args, 'apply_communication_break_penalty', True),
             'reward_obs_weight': getattr(args, 'reward_obs_weight', 1.0),
@@ -691,12 +690,14 @@ def main():
                         help='目标朝向容差，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--out-of-bounds-penalty', type=float, default=-10.0,
                         help='越界惩罚，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--success-reward', type=float, default=1.0,
-                        help='成功奖励，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--communication-break-penalty', type=float, default=-1.0,
                         help='通信中断惩罚，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--apply-communication-break-penalty', action='store_true',
+    parser.add_argument('--apply-communication-break-penalty', dest='apply_communication_break_penalty',
+                        action='store_true', default=True,
                         help='启用通信中断惩罚，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--no-apply-communication-break-penalty', dest='apply_communication_break_penalty',
+                        action='store_false',
+                        help='禁用通信中断惩罚，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--reward-obs-weight', type=float, default=1.0,
                         help='观测几何 reward 权重，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--reward-comm-weight', type=float, default=0.5,

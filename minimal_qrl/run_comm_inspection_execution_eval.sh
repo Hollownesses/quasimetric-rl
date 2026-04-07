@@ -96,7 +96,6 @@ echo "评估通信巡检 Dubins UAV 执行成功率..."
   --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.2}" \
   --collision-penalty "${COLLISION_PENALTY:--10.0}" \
   --out-of-bounds-penalty "${OUT_OF_BOUNDS_PENALTY:--10.0}" \
-  --success-reward "${SUCCESS_REWARD:-1.0}" \
   --communication-break-penalty "${COMM_BREAK_PENALTY:--1.0}" \
   ${APPLY_COMM_BREAK_PENALTY_FLAG} \
   --reward-obs-weight "${REWARD_OBS_WEIGHT:-1.0}" \

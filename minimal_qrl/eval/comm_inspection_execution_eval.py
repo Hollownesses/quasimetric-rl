@@ -121,7 +121,6 @@ def make_comm_inspection_env(args) -> CommInspectionDubinsUAV2D:
         goal_heading_tolerance=float(args.goal_heading_tolerance),
         collision_penalty=float(args.collision_penalty),
         out_of_bounds_penalty=float(args.out_of_bounds_penalty),
-        success_reward=float(args.success_reward),
         communication_break_penalty=float(args.communication_break_penalty),
         apply_communication_break_penalty=bool(args.apply_communication_break_penalty),
         reward_obs_weight=float(args.reward_obs_weight),
@@ -870,7 +869,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--goal-heading-tolerance", type=float, default=0.2)
     parser.add_argument("--collision-penalty", type=float, default=-10.0)
     parser.add_argument("--out-of-bounds-penalty", type=float, default=-10.0)
-    parser.add_argument("--success-reward", type=float, default=1.0)
     parser.add_argument("--communication-break-penalty", type=float, default=-1.0)
     parser.add_argument(
         "--apply-communication-break-penalty",

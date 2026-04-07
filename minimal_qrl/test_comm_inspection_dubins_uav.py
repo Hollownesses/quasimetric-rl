@@ -152,6 +152,24 @@ def test_success_trigger_near_exact_goal():
     assert info["heading_error"] <= env.goal_heading_tolerance
 
 
+def test_goal_reached_but_not_task_feasible_is_not_success():
+    env = make_env(
+        goal_position_tolerance=0.15,
+        goal_heading_tolerance=0.1,
+        observation_radius=1.0,
+    )
+    goal = (4.0, 5.0, 0.0)
+    start = (3.9, 5.0, 0.0)
+    env.reset(seed=0, options={"start": start, "goal": goal})
+    env.inspection_target = (9.0, 9.0)
+    _, _, terminated, _, info = env.step(np.array([0.0], dtype=np.float32))
+    assert not env.is_task_feasible(env.state)
+    assert not terminated
+    assert not info["success"]
+    assert info["distance_to_goal"] <= env.goal_position_tolerance
+    assert info["heading_error"] <= env.goal_heading_tolerance
+
+
 def test_task_feasible_not_equal_success():
     env = make_env()
     goal = (8.0, 8.0, 0.0)
@@ -162,6 +180,33 @@ def test_task_feasible_not_equal_success():
     assert not terminated
     assert info["ever_task_feasible"]
     assert info["first_task_feasible_step"] == 1
+
+
+def test_apply_communication_break_penalty_flag_controls_reward():
+    env = make_env(
+        goal_sampling_mode="valid",
+        comm_threshold=4.0,
+        apply_communication_break_penalty=False,
+    )
+    env.reset(seed=0)
+    reward_terms = env.compute_reward_terms(
+        prev_state=env.state,
+        new_state=env.state,
+        success=False,
+        collision=False,
+        out_of_bounds=False,
+    )
+    assert reward_terms["reward_comm_break"] == 0.0
+
+    env.apply_communication_break_penalty = True
+    reward_terms = env.compute_reward_terms(
+        prev_state=env.state,
+        new_state=env.state,
+        success=False,
+        collision=False,
+        out_of_bounds=False,
+    )
+    assert reward_terms["reward_comm_break"] == env.communication_break_penalty
 
 
 def test_legacy_modes_reset_and_step():
@@ -206,7 +251,9 @@ if __name__ == "__main__":
     test_collision_penalty_is_negative()
     test_out_of_bounds_penalty_is_negative()
     test_success_trigger_near_exact_goal()
+    test_goal_reached_but_not_task_feasible_is_not_success()
     test_task_feasible_not_equal_success()
+    test_apply_communication_break_penalty_flag_controls_reward()
     test_legacy_modes_reset_and_step()
     test_visualize_script_smoke()
     print("All comm inspection Dubins UAV tests passed.")

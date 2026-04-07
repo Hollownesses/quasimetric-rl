@@ -93,7 +93,6 @@ fi
   --goal-position-tolerance "${GOAL_POS_TOL:-0.15}" \
   --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.2}" \
   --out-of-bounds-penalty "${OUT_OF_BOUNDS_PENALTY:--10.0}" \
-  --success-reward "${SUCCESS_REWARD:-1.0}" \
   --communication-break-penalty "${COMM_BREAK_PENALTY:--1.0}" \
   --reward-obs-weight "${REWARD_OBS_WEIGHT:-1.0}" \
   --reward-comm-weight "${REWARD_COMM_WEIGHT:-0.5}" \

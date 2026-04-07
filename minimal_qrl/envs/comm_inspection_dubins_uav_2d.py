@@ -61,7 +61,6 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         goal_heading_tolerance: float = 0.2,
         collision_penalty: float = -10.0,
         out_of_bounds_penalty: float = -10.0,
-        success_reward: float = 1.0,
         communication_break_penalty: float = -1.0,
         apply_communication_break_penalty: bool = True,
         reward_obs_weight: float = 1.0,
@@ -114,7 +113,6 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         self.goal_position_tolerance = float(goal_position_tolerance)
         self.goal_heading_tolerance = float(goal_heading_tolerance)
         self.out_of_bounds_penalty = float(out_of_bounds_penalty)
-        self.success_reward = float(success_reward)
         self.communication_break_penalty = float(communication_break_penalty)
         self.apply_communication_break_penalty = bool(apply_communication_break_penalty)
 
@@ -561,7 +559,11 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             "reward_comm": self.reward_comm_weight * comm_score,
             "reward_task_feasible": self.reward_task_feasible_bonus if task_feasible else 0.0,
             "reward_goal_success": self.reward_goal_success_bonus if success else 0.0,
-            "reward_comm_break": self.communication_break_penalty if comm_margin < 0.0 else 0.0,
+            "reward_comm_break": (
+                self.communication_break_penalty
+                if self.apply_communication_break_penalty and comm_margin < 0.0
+                else 0.0
+            ),
             "reward_obs_fail": self.reward_observation_fail_penalty if not observation_feasible else 0.0,
             "reward_collision": self.collision_penalty if collision else 0.0,
             "reward_oob": self.out_of_bounds_penalty if out_of_bounds else 0.0,
@@ -650,10 +652,11 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
 
         distance_to_goal = self._distance_to_point(self.state, self.goal[:2])
         heading_error = abs(self._normalize_angle(float(self.state[2]) - float(self.goal[2])))
-        success = (
+        reached_goal = (
             distance_to_goal <= self.goal_position_tolerance
             and heading_error <= self.goal_heading_tolerance
         )
+        success = reached_goal and self.is_task_feasible(self.state)
         truncated = self._t >= self.max_episode_steps
 
         if self.is_task_feasible(self.state):
