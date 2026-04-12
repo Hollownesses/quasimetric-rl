@@ -60,8 +60,7 @@ def test_execution_eval_visualization_smoke(tmp_path: Path):
     agent = ZeroTurnAgent()
     viz_cfg = VisualizationConfig(
         save_visualizations=True,
-        num_samples=1,
-        save_failures=True,
+        max_successes=1,
         max_failures=1,
         save_gif=False,
         gif_fps=8,
@@ -79,11 +78,13 @@ def test_execution_eval_visualization_smoke(tmp_path: Path):
     )
 
     assert "success_rate" in metrics
-    assert len(visualizations["samples"]) == 1
-    assert len(visualizations["failures"]) <= 1
+    assert len(visualizations["success"]) <= 1
+    assert len(visualizations["failure"]) <= 1
 
-    sample_png = tmp_path / visualizations["samples"][0]["png"]
-    assert sample_png.exists()
+    saved_entries = visualizations["success"] + visualizations["failure"]
+    assert saved_entries
+    saved_png = tmp_path / saved_entries[0]["png"]
+    assert saved_png.exists()
 
 
 if __name__ == "__main__":

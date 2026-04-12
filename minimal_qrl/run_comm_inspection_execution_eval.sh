@@ -32,7 +32,6 @@ RANDOMIZE_GROUND_STATION_FLAG=""
 REQUIRE_TARGET_LOS_FLAG="--require-target-los"
 REQUIRE_GROUND_STATION_LOS_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
-VIZ_SAVE_FAILURES_FLAG="--viz-save-failures"
 VIZ_SAVE_GIF_FLAG=""
 
 if [[ "${RANDOMIZE_INSPECTION_TARGET:-0}" == "1" ]]; then
@@ -51,11 +50,6 @@ if [[ "${REQUIRE_GROUND_STATION_LOS:-0}" == "1" ]]; then
 fi
 if [[ "${SAVE_VISUALIZATIONS:-0}" == "1" ]]; then
   SAVE_VISUALIZATIONS_FLAG="--save-visualizations"
-fi
-if [[ "${VIZ_SAVE_FAILURES:-1}" == "1" ]]; then
-  VIZ_SAVE_FAILURES_FLAG="--viz-save-failures"
-else
-  VIZ_SAVE_FAILURES_FLAG="--no-viz-save-failures"
 fi
 if [[ "${VIZ_SAVE_GIF:-0}" == "1" ]]; then
   VIZ_SAVE_GIF_FLAG="--viz-save-gif"
@@ -106,8 +100,7 @@ echo "评估通信巡检 Dubins UAV 执行成功率..."
   --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-24}" \
   --lookahead-bias-kp "${LOOKAHEAD_BIAS_KP:-2.0}" \
   ${SAVE_VISUALIZATIONS_FLAG} \
-  --viz-num-samples "${VIZ_NUM_SAMPLES:-3}" \
-  ${VIZ_SAVE_FAILURES_FLAG} \
+  --viz-max-successes "${VIZ_MAX_SUCCESSES:-10}" \
   --viz-max-failures "${VIZ_MAX_FAILURES:-10}" \
   ${VIZ_SAVE_GIF_FLAG} \
   --viz-gif-fps "${VIZ_GIF_FPS:-8}"

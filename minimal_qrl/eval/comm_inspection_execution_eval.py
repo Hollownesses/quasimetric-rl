@@ -50,8 +50,7 @@ from minimal_qrl.gc_agents import GoalConditionedAgentBase, QRLGoalValueAdapter
 @dataclass
 class VisualizationConfig:
     save_visualizations: bool = False
-    num_samples: int = 3
-    save_failures: bool = True
+    max_successes: int = 10
     max_failures: int = 10
     save_gif: bool = False
     gif_fps: int = 8
@@ -722,13 +721,16 @@ def evaluate_execution_mode(
     out_of_bounds_episodes = 0
 
     visualization_index: Dict[str, List[Dict[str, Any]]] = {
-        "samples": [],
-        "failures": [],
+        "success": [],
+        "failure": [],
     }
 
     vis_root = output_dir / "visualizations" / execution_mode
-    samples_dir = vis_root / "samples"
-    failures_dir = vis_root / "failures"
+    success_dir = vis_root / "success"
+    failure_dir = vis_root / "failure"
+    if viz_cfg.save_visualizations:
+        success_dir.mkdir(parents=True, exist_ok=True)
+        failure_dir.mkdir(parents=True, exist_ok=True)
 
     for i in tqdm(range(n_trials), desc=f"{execution_mode}_success_rate", leave=False):
         rollout = rollout_execution_episode(
@@ -759,15 +761,19 @@ def evaluate_execution_mode(
         if rollout["out_of_bounds"]:
             out_of_bounds_episodes += 1
 
-        if viz_cfg.save_visualizations and len(visualization_index["samples"]) < int(viz_cfg.num_samples):
-            visualization_index["samples"].append(
+        if (
+            viz_cfg.save_visualizations
+            and rollout["success"]
+            and len(visualization_index["success"]) < int(viz_cfg.max_successes)
+        ):
+            visualization_index["success"].append(
                 _save_rollout_visualization(
                     env,
                     rollout,
                     execution_mode=execution_mode,
                     episode_index=i,
-                    category="sample",
-                    category_dir=samples_dir,
+                    category="success",
+                    category_dir=success_dir,
                     base_output_dir=output_dir,
                     viz_cfg=viz_cfg,
                 )
@@ -775,18 +781,17 @@ def evaluate_execution_mode(
 
         if (
             viz_cfg.save_visualizations
-            and viz_cfg.save_failures
             and not rollout["success"]
-            and len(visualization_index["failures"]) < int(viz_cfg.max_failures)
+            and len(visualization_index["failure"]) < int(viz_cfg.max_failures)
         ):
-            visualization_index["failures"].append(
+            visualization_index["failure"].append(
                 _save_rollout_visualization(
                     env,
                     rollout,
                     execution_mode=execution_mode,
                     episode_index=i,
                     category="failure",
-                    category_dir=failures_dir,
+                    category_dir=failure_dir,
                     base_output_dir=output_dir,
                     viz_cfg=viz_cfg,
                 )
@@ -890,9 +895,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lookahead-cem-std-init-frac", type=float, default=0.5)
 
     parser.add_argument("--save-visualizations", action="store_true")
-    parser.add_argument("--viz-num-samples", type=int, default=3)
-    parser.add_argument("--viz-save-failures", dest="viz_save_failures", action="store_true", default=True)
-    parser.add_argument("--no-viz-save-failures", dest="viz_save_failures", action="store_false")
+    parser.add_argument("--viz-max-successes", type=int, default=10)
     parser.add_argument("--viz-max-failures", type=int, default=10)
     parser.add_argument("--viz-save-gif", action="store_true")
     parser.add_argument("--viz-gif-fps", type=int, default=8)
@@ -931,8 +934,7 @@ def main():
     )
     viz_cfg = VisualizationConfig(
         save_visualizations=bool(args.save_visualizations),
-        num_samples=int(args.viz_num_samples),
-        save_failures=bool(args.viz_save_failures),
+        max_successes=int(args.viz_max_successes),
         max_failures=int(args.viz_max_failures),
         save_gif=bool(args.viz_save_gif),
         gif_fps=int(args.viz_gif_fps),
@@ -999,8 +1001,8 @@ def main():
         if viz_cfg.save_visualizations:
             vis = visualization_index[mode]
             print(
-                f"    visualizations: samples={len(vis['samples'])}, "
-                f"failures={len(vis['failures'])}"
+                f"    visualizations: success={len(vis['success'])}, "
+                f"failure={len(vis['failure'])}"
             )
 
 
