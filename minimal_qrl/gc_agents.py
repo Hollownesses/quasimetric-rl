@@ -57,6 +57,12 @@ class GoalConditionedAgentBase(nn.Module):
     def value(self, obs: np.ndarray, goal_obs: np.ndarray) -> float:  # pragma: no cover - 接口
         raise NotImplementedError
 
+    def batch_value(self, obs_batch: np.ndarray, goal_obs_batch: np.ndarray) -> np.ndarray:  # pragma: no cover - 默认回退
+        obs_batch = np.asarray(obs_batch, dtype=np.float32)
+        goal_obs_batch = np.asarray(goal_obs_batch, dtype=np.float32)
+        vals = [self.value(obs_batch[i], goal_obs_batch[i]) for i in range(len(obs_batch))]
+        return np.asarray(vals, dtype=np.float32)
+
 
 class QRLGoalValueAdapter(GoalConditionedAgentBase):
     """
@@ -85,6 +91,18 @@ class QRLGoalValueAdapter(GoalConditionedAgentBase):
         z_g = critic.encoder(g)
         d = critic.quasimetric_model(z_o, z_g).cpu().item()
         return float(d * self._scale)
+
+    @torch.no_grad()
+    def batch_value(self, obs_batch: np.ndarray, goal_obs_batch: np.ndarray) -> np.ndarray:
+        critic = self.qrl_agent.critics[0]
+        obs_batch = np.asarray(obs_batch, dtype=np.float32)
+        goal_obs_batch = np.asarray(goal_obs_batch, dtype=np.float32)
+        o = torch.as_tensor(obs_batch, device=self.device, dtype=torch.float32)
+        g = torch.as_tensor(goal_obs_batch, device=self.device, dtype=torch.float32)
+        z_o = critic.encoder(o)
+        z_g = critic.encoder(g)
+        d = critic.quasimetric_model(z_o, z_g).detach().cpu().numpy().astype(np.float32)
+        return d * float(self._scale)
 
     @torch.no_grad()
     def act(self, obs: np.ndarray, goal_obs: np.ndarray, eval_mode: bool = True) -> np.ndarray:
@@ -745,5 +763,4 @@ def train_td_agent(
 
     pbar.close()
     return agent
-
 

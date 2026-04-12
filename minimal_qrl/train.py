@@ -36,6 +36,13 @@ from minimal_qrl.envs import (
 )
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
+from minimal_qrl.gc_agents import QRLGoalValueAdapter
+from minimal_qrl.subgoal_actor import (
+    SubgoalActor,
+    SubgoalActorTrainConfig,
+    save_subgoal_actor_checkpoint,
+    train_subgoal_actor,
+)
 
 
 def setup_logging(output_dir: str):
@@ -192,6 +199,10 @@ def get_env_kwargs(args) -> dict:
             'observation_violation_cost_weight': getattr(args, 'observation_violation_cost_weight', 1.0),
             'communication_violation_cost_weight': getattr(args, 'communication_violation_cost_weight', 0.5),
             'observation_failure_cost': abs(getattr(args, 'observation_failure_cost', 0.25)),
+            'taskscore_beta_obs': getattr(args, 'taskscore_beta_obs', 1.0),
+            'taskscore_beta_comm': getattr(args, 'taskscore_beta_comm', 1.0),
+            'taskscore_beta_feas': getattr(args, 'taskscore_beta_feas', 0.5),
+            'taskscore_margin_clip': getattr(args, 'taskscore_margin_clip', 2.0),
         }
         return kwargs
     else:
@@ -361,12 +372,29 @@ def train(args):
         )
     agent, losses = agent_conf.make(
         env_spec=dataset.env_spec,
-        total_optim_steps=args.total_steps,
+        total_optim_steps=max(1, int(args.total_steps)),
     )
     agent.to(device)
     losses.to(device)
     logger.info(f"Agent: {agent}")
     logger.info(f"Losses: {losses}")
+
+    loaded_optim_steps = 0
+    if getattr(args, 'init_checkpoint', None):
+        ckpt = torch.load(args.init_checkpoint, map_location=device)
+        state_dict = ckpt
+        losses_state = None
+        if isinstance(ckpt, dict) and 'agent' in ckpt:
+            state_dict = ckpt['agent']
+            losses_state = ckpt.get('losses')
+            loaded_optim_steps = int(ckpt.get('optim_steps', 0))
+        agent.load_state_dict(state_dict)
+        if losses_state is not None:
+            try:
+                losses.load_state_dict(losses_state)
+            except Exception as exc:
+                logger.warning(f"加载 losses 状态失败，将仅加载 critic 参数: {exc}")
+        logger.info(f"已加载初始 checkpoint: {args.init_checkpoint} (optim_steps={loaded_optim_steps})")
     
     # 创建数据加载器
     # MPS 不支持 pin_memory，只在 CUDA 时启用
@@ -391,21 +419,27 @@ def train(args):
     
     # 初始化训练状态
     logger.info("开始训练...")
-    optim_steps = 0
-    pbar = tqdm(total=args.total_steps, desc="训练进度")
-    
-    # 保存初始检查点
-    checkpoint_path = os.path.join(output_dir, 'checkpoint_00000.pth')
-    torch.save({
-        'optim_steps': optim_steps,
-        'agent': agent.state_dict(),
-        'losses': losses.state_dict(),
-    }, checkpoint_path)
-    logger.info(f"保存初始检查点: {checkpoint_path}")
+    optim_steps = loaded_optim_steps
+    critic_training_enabled = not bool(getattr(args, 'skip_critic_training', False))
+    critic_steps_remaining = max(0, int(args.total_steps) - int(optim_steps))
+    pbar = tqdm(total=critic_steps_remaining, desc="训练进度")
+
+    if not getattr(args, 'init_checkpoint', None):
+        checkpoint_path = os.path.join(output_dir, 'checkpoint_00000.pth')
+        torch.save({
+            'optim_steps': optim_steps,
+            'agent': agent.state_dict(),
+            'losses': losses.state_dict(),
+        }, checkpoint_path)
+        logger.info(f"保存初始检查点: {checkpoint_path}")
+    elif critic_training_enabled and critic_steps_remaining > 0:
+        logger.info(f"将从已加载 checkpoint 继续训练 QRL critic，剩余步数: {critic_steps_remaining}")
+    elif not critic_training_enabled:
+        logger.info("已启用 --skip-critic-training，跳过前半段 QRL critic 训练")
     
     # 训练循环
     epoch = 0
-    while optim_steps < args.total_steps:
+    while critic_training_enabled and optim_steps < args.total_steps:
         for batch_data in dataloader:
             if optim_steps >= args.total_steps:
                 break
@@ -590,7 +624,6 @@ def train(args):
     
     pbar.close()
     
-    # 保存最终模型
     final_path = os.path.join(output_dir, 'checkpoint_final.pth')
     torch.save({
         'optim_steps': optim_steps,
@@ -598,6 +631,112 @@ def train(args):
         'losses': losses.state_dict(),
     }, final_path)
     logger.info(f"保存最终模型: {final_path}")
+
+    if (
+        args.env_type == 'comm_inspection_dubins_uav'
+        and getattr(args, 'hierarchical_mode', 'none') == 'subgoal_actor'
+        and int(getattr(args, 'subgoal_train_steps', 0)) > 0
+    ):
+        logger.info("开始第二阶段：冻结 critic，监督训练 SubgoalActor...")
+        subgoal_actor = SubgoalActor(
+            obs_dim=int(eval_env.observation_space.shape[0]),
+            hidden_dim=int(args.subgoal_actor_hidden_dim),
+        ).to(device)
+        subgoal_ckpt_init = os.path.join(output_dir, 'subgoal_actor_checkpoint_00000.pth')
+        save_subgoal_actor_checkpoint(
+            subgoal_ckpt_init,
+            subgoal_actor,
+            train_step=0,
+            metadata={
+                'hierarchical_mode': args.hierarchical_mode,
+                'subgoal_candidates': int(args.subgoal_candidates),
+                'subgoal_lambda_final': float(args.subgoal_lambda_final),
+                'subgoal_lambda_task': float(args.subgoal_lambda_task),
+                'taskscore_beta_obs': float(args.taskscore_beta_obs),
+                'taskscore_beta_comm': float(args.taskscore_beta_comm),
+                'taskscore_beta_feas': float(args.taskscore_beta_feas),
+                'taskscore_margin_clip': float(args.taskscore_margin_clip),
+            },
+        )
+        logger.info(f"保存初始 SubgoalActor 检查点: {subgoal_ckpt_init}")
+
+        agent.eval()
+        qrl_value_agent = QRLGoalValueAdapter(agent, env=eval_env, device=device)
+
+        def _log_subgoal_metrics(step: int, metrics: dict):
+            global_step = optim_steps + step
+            for key, value in metrics.items():
+                writer.add_scalar(f'subgoal_actor/{key}', value, global_step)
+            if step == 1 or step % max(1, args.log_interval) == 0:
+                logger.info(
+                    "SubgoalActor step %d: loss=%.4f pos=%.4f heading=%.4f raw_valid=%.3f repair=%.3f",
+                    step,
+                    float(metrics.get('loss', 0.0)),
+                    float(metrics.get('pos_loss', 0.0)),
+                    float(metrics.get('heading_loss', 0.0)),
+                    float(metrics.get('raw_actor_output_valid_rate', 0.0)),
+                    float(metrics.get('mean_repair_distance', 0.0)),
+                )
+
+        def _save_subgoal_checkpoint(step: int, metrics: dict):
+            ckpt_path = os.path.join(output_dir, f'subgoal_actor_checkpoint_{step:05d}.pth')
+            save_subgoal_actor_checkpoint(
+                ckpt_path,
+                subgoal_actor,
+                train_step=step,
+                metadata={
+                    'metrics': metrics,
+                    'hierarchical_mode': args.hierarchical_mode,
+                    'subgoal_candidates': int(args.subgoal_candidates),
+                    'subgoal_lambda_final': float(args.subgoal_lambda_final),
+                    'subgoal_lambda_task': float(args.subgoal_lambda_task),
+                    'high_level_period': int(args.high_level_period),
+                    'taskscore_beta_obs': float(args.taskscore_beta_obs),
+                    'taskscore_beta_comm': float(args.taskscore_beta_comm),
+                    'taskscore_beta_feas': float(args.taskscore_beta_feas),
+                    'taskscore_margin_clip': float(args.taskscore_margin_clip),
+                },
+            )
+            logger.info(f"保存 SubgoalActor 检查点: {ckpt_path}")
+
+        final_subgoal_metrics = train_subgoal_actor(
+            actor=subgoal_actor,
+            agent=qrl_value_agent,
+            env_factory=create_env_fn,
+            device=device,
+            cfg=SubgoalActorTrainConfig(
+                train_steps=int(args.subgoal_train_steps),
+                batch_size=int(args.subgoal_batch_size),
+                lr=float(args.subgoal_actor_lr),
+                hidden_dim=int(args.subgoal_actor_hidden_dim),
+                num_candidates=int(args.subgoal_candidates),
+                lambda_final=float(args.subgoal_lambda_final),
+                lambda_task=float(args.subgoal_lambda_task),
+                seed=int(args.seed),
+                save_interval=int(args.subgoal_save_interval),
+            ),
+            log_fn=_log_subgoal_metrics,
+            checkpoint_fn=_save_subgoal_checkpoint,
+        )
+        subgoal_ckpt_final = os.path.join(output_dir, 'subgoal_actor_checkpoint_final.pth')
+        save_subgoal_actor_checkpoint(
+            subgoal_ckpt_final,
+            subgoal_actor,
+            train_step=int(args.subgoal_train_steps),
+            metadata={
+                'final_metrics': final_subgoal_metrics,
+                'hierarchical_mode': args.hierarchical_mode,
+                'subgoal_candidates': int(args.subgoal_candidates),
+                'subgoal_lambda_final': float(args.subgoal_lambda_final),
+                'subgoal_lambda_task': float(args.subgoal_lambda_task),
+                'high_level_period': int(args.high_level_period),
+                'taskscore_beta_obs': float(args.taskscore_beta_obs),
+                'taskscore_beta_comm': float(args.taskscore_beta_comm),
+                'taskscore_beta_feas': float(args.taskscore_beta_feas),
+                'taskscore_margin_clip': float(args.taskscore_margin_clip),
+            },
+        )
+        logger.info(f"保存最终 SubgoalActor 检查点: {subgoal_ckpt_final}")
     
     # 标记完成
     with open(os.path.join(output_dir, 'COMPLETE'), 'w') as f:
@@ -613,6 +752,10 @@ def main():
     parser.add_argument('--device', type=str, default='auto', 
                         help='设备 (auto/cpu/cuda/mps)，auto 会自动选择最佳设备')
     parser.add_argument('--output-dir', type=str, default='./results/minimal_qrl', help='输出目录')
+    parser.add_argument('--init-checkpoint', type=str, default=None,
+                        help='可选：加载已有 QRL checkpoint 作为初始化，再继续训练或仅训练 SubgoalActor')
+    parser.add_argument('--skip-critic-training', action='store_true',
+                        help='跳过前半段 QRL critic 训练；通常与 --init-checkpoint 配合，只训练 SubgoalActor')
     
     # 环境参数
     parser.add_argument('--env-type', type=str, default='simple_grid',
@@ -698,6 +841,14 @@ def main():
                         help='通信约束短缺的软代价权重，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--observation-failure-cost', type=float, default=0.25,
                         help='观测不可行时的固定阶段代价，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--taskscore-beta-obs', type=float, default=1.0,
+                        help='TaskScore 中 observation margin 的权重')
+    parser.add_argument('--taskscore-beta-comm', type=float, default=1.0,
+                        help='TaskScore 中 communication margin 的权重')
+    parser.add_argument('--taskscore-beta-feas', type=float, default=0.5,
+                        help='TaskScore 中 task feasible bonus 的权重')
+    parser.add_argument('--taskscore-margin-clip', type=float, default=2.0,
+                        help='TaskScore 对 obs/comm margin 的对称裁剪阈值')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')
@@ -740,6 +891,27 @@ def main():
                         help='是否可视化失败案例')
     parser.add_argument('--planning-visualize-interval', type=int, default=2000,
                         help='Failure mode 可视化间隔（步数）')
+    parser.add_argument('--hierarchical-mode', type=str, default='none',
+                        choices=['none', 'subgoal_actor'],
+                        help='是否在 critic 训练后追加高层 SubgoalActor 训练')
+    parser.add_argument('--subgoal-train-steps', type=int, default=0,
+                        help='SubgoalActor 监督训练步数')
+    parser.add_argument('--subgoal-batch-size', type=int, default=32,
+                        help='SubgoalActor 训练批大小')
+    parser.add_argument('--subgoal-actor-lr', type=float, default=3e-4,
+                        help='SubgoalActor 学习率')
+    parser.add_argument('--subgoal-actor-hidden-dim', type=int, default=256,
+                        help='SubgoalActor 隐层宽度')
+    parser.add_argument('--subgoal-save-interval', type=int, default=1000,
+                        help='SubgoalActor checkpoint 保存间隔；设为0表示只保存首尾')
+    parser.add_argument('--subgoal-candidates', type=int, default=64,
+                        help='每个 teacher 打分时的 subgoal 候选数')
+    parser.add_argument('--high-level-period', type=int, default=5,
+                        help='hierarchical 执行时的高层重规划周期')
+    parser.add_argument('--subgoal-lambda-final', type=float, default=0.3,
+                        help='高层 teacher 中 final goal critic 项系数')
+    parser.add_argument('--subgoal-lambda-task', type=float, default=1.0,
+                        help='高层 teacher 中 TaskScore 奖励项系数')
     
     args = parser.parse_args()
     train(args)

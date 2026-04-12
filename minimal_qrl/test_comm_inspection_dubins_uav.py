@@ -220,6 +220,29 @@ def test_feasible_state_has_zero_violation_costs():
     assert step_terms["cost_comm_break"] == 0.0
 
 
+def test_taskscore_clips_and_normalizes_margins():
+    env = make_env(goal_sampling_mode="valid")
+    env.reset(seed=0)
+    assert env.normalize_task_margin(3.0) == 1.0
+    assert env.normalize_task_margin(-3.0) == -1.0
+    assert np.isclose(env.normalize_task_margin(1.0), 0.5)
+
+
+def test_repair_state_keeps_geometric_validity_without_forcing_task_feasible():
+    env = make_env(
+        bounds=(0.0, 0.0, 10.0, 10.0),
+        observation_radius=0.5,
+        goal_sampling_mode="valid",
+        obstacles=[CircleObstacle(x=5.0, y=5.0, radius=0.7)],
+    )
+    env.reset(seed=0)
+    raw = np.array([5.0, 5.0, 4.0], dtype=np.float32)
+    repaired = env.repair_state(raw)
+    assert env.is_valid_state(repaired)
+    assert -np.pi <= float(repaired[2]) <= np.pi
+    assert not env.is_task_feasible(repaired)
+
+
 def test_legacy_modes_reset_and_step():
     for mode in ("cos_sin", "state"):
         env = make_env(observation_mode=mode)
@@ -266,6 +289,8 @@ if __name__ == "__main__":
     test_task_feasible_not_equal_success()
     test_zero_communication_break_cost_disables_fixed_penalty()
     test_feasible_state_has_zero_violation_costs()
+    test_taskscore_clips_and_normalizes_margins()
+    test_repair_state_keeps_geometric_validity_without_forcing_task_feasible()
     test_legacy_modes_reset_and_step()
     test_visualize_script_smoke()
     print("All comm inspection Dubins UAV tests passed.")

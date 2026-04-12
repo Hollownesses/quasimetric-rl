@@ -65,6 +65,10 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         observation_violation_cost_weight: float = 1.0,
         communication_violation_cost_weight: float = 0.5,
         observation_failure_cost: float = 0.25,
+        taskscore_beta_obs: float = 1.0,
+        taskscore_beta_comm: float = 1.0,
+        taskscore_beta_feas: float = 0.5,
+        taskscore_margin_clip: float = 2.0,
         render_mode: Optional[str] = None,
         sample_max_attempts: int = 2000,
     ):
@@ -116,6 +120,10 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         self.observation_violation_cost_weight = float(observation_violation_cost_weight)
         self.communication_violation_cost_weight = float(communication_violation_cost_weight)
         self.observation_failure_cost = abs(float(observation_failure_cost))
+        self.taskscore_beta_obs = float(taskscore_beta_obs)
+        self.taskscore_beta_comm = float(taskscore_beta_comm)
+        self.taskscore_beta_feas = float(taskscore_beta_feas)
+        self.taskscore_margin_clip = max(float(taskscore_margin_clip), 1e-6)
 
         self.sample_max_attempts = int(sample_max_attempts)
         self._ever_task_feasible = False
@@ -396,6 +404,104 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         state = np.asarray(state, dtype=np.float32).reshape(3)
         return self.is_valid_state(state) and self.is_observation_feasible(state) and self.is_communication_feasible(state)
 
+    def clip_task_margin(self, margin: float) -> float:
+        clip = float(self.taskscore_margin_clip)
+        return float(np.clip(float(margin), -clip, clip))
+
+    def normalize_task_margin(self, margin: float) -> float:
+        return float(self.clip_task_margin(margin) / float(self.taskscore_margin_clip))
+
+    def compute_task_score(self, state: np.ndarray) -> float:
+        state = np.asarray(state, dtype=np.float32).reshape(3)
+        obs_norm = self.normalize_task_margin(self.compute_observation_margin(state))
+        comm_norm = self.normalize_task_margin(self.compute_comm_quality(state)["margin"])
+        feasible = 1.0 if self.is_task_feasible(state) else 0.0
+        return float(
+            self.taskscore_beta_obs * obs_norm
+            + self.taskscore_beta_comm * comm_norm
+            + self.taskscore_beta_feas * feasible
+        )
+
+    def is_subgoal_reached(
+        self,
+        state: np.ndarray,
+        subgoal: np.ndarray,
+        *,
+        pos_tolerance: float = 0.35,
+        theta_tolerance: float = 0.35,
+    ) -> bool:
+        state = np.asarray(state, dtype=np.float32).reshape(3)
+        subgoal = np.asarray(subgoal, dtype=np.float32).reshape(3)
+        pos_dist = float(np.linalg.norm(state[:2] - subgoal[:2]))
+        theta_diff = abs(self._normalize_angle(float(state[2]) - float(subgoal[2])))
+        return bool(pos_dist <= float(pos_tolerance) and theta_diff <= float(theta_tolerance))
+
+    def compute_repair_metrics(
+        self,
+        raw_state: np.ndarray,
+        repaired_state: np.ndarray,
+    ) -> Dict[str, float]:
+        raw = np.asarray(raw_state, dtype=np.float32).reshape(3)
+        repaired = np.asarray(repaired_state, dtype=np.float32).reshape(3)
+        pos_dist = float(np.linalg.norm(raw[:2] - repaired[:2]))
+        theta_diff = abs(self._normalize_angle(float(raw[2]) - float(repaired[2])))
+        return {
+            "repair_distance": pos_dist,
+            "repair_dtheta": theta_diff,
+        }
+
+    def repair_state_with_info(self, state: np.ndarray) -> Dict[str, Union[np.ndarray, bool, float]]:
+        raw = np.asarray(state, dtype=np.float32).reshape(3).copy()
+        repaired = raw.copy()
+        repaired[0] = np.clip(repaired[0], self.x_min, self.x_max)
+        repaired[1] = np.clip(repaired[1], self.y_min, self.y_max)
+        repaired[2] = self._normalize_angle(float(repaired[2]))
+        info: Dict[str, Union[np.ndarray, bool, float]] = {
+            "raw_state": raw.astype(np.float32),
+            "used_nearby_repair": False,
+            "used_global_fallback": False,
+        }
+        if self.is_valid_state(repaired):
+            info["repaired_state"] = repaired.astype(np.float32)
+            return info
+
+        base_xy = repaired[:2].copy()
+        search_radius = max(self.x_max - self.x_min, self.y_max - self.y_min) * 0.25
+        best_state: Optional[np.ndarray] = None
+        best_dist = float("inf")
+
+        if self._is_valid_position(float(base_xy[0]), float(base_xy[1])):
+            best_state = np.array([base_xy[0], base_xy[1], repaired[2]], dtype=np.float32)
+            best_dist = float(np.linalg.norm(best_state[:2] - raw[:2]))
+
+        for radius in np.linspace(0.05, max(search_radius, 0.05), 20):
+            for angle in np.linspace(0.0, 2.0 * np.pi, 48, endpoint=False):
+                cand_x = float(np.clip(base_xy[0] + radius * np.cos(angle), self.x_min, self.x_max))
+                cand_y = float(np.clip(base_xy[1] + radius * np.sin(angle), self.y_min, self.y_max))
+                if not self._is_valid_position(cand_x, cand_y):
+                    continue
+                cand = np.array([cand_x, cand_y, repaired[2]], dtype=np.float32)
+                dist = float(np.linalg.norm(cand[:2] - raw[:2]))
+                if dist < best_dist:
+                    best_state = cand
+                    best_dist = dist
+            if best_state is not None:
+                break
+
+        if best_state is not None:
+            info["repaired_state"] = best_state.astype(np.float32)
+            info["used_nearby_repair"] = True
+            return info
+        fallback = self.sample_valid_state()
+        fallback[2] = repaired[2]
+        info["repaired_state"] = fallback.astype(np.float32)
+        info["used_global_fallback"] = True
+        return info
+
+    def repair_state(self, state: np.ndarray) -> np.ndarray:
+        repair_info = self.repair_state_with_info(state)
+        return np.asarray(repair_info["repaired_state"], dtype=np.float32)
+
     def sample_task_feasible_goal(self, seed: Optional[int] = None) -> np.ndarray:
         rng = self._get_rng(seed)
         for _ in range(self.sample_max_attempts):
@@ -526,6 +632,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             "distance_to_target": float(self._distance_to_point(state, self.inspection_target)),
             "distance_to_ground_station": float(comm["distance"]),
             "obs_margin": float(self.compute_observation_margin(state)),
+            "task_score": float(self.compute_task_score(state)),
             "pos_dist": float(distance_to_goal),
             "theta_diff": float(heading_error),
         }
@@ -686,6 +793,10 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                 "ground_station": list(self.ground_station) if self.ground_station else None,
                 "observation_mode": self.observation_mode,
                 "goal_sampling_mode": self.goal_sampling_mode,
+                "taskscore_beta_obs": self.taskscore_beta_obs,
+                "taskscore_beta_comm": self.taskscore_beta_comm,
+                "taskscore_beta_feas": self.taskscore_beta_feas,
+                "taskscore_margin_clip": self.taskscore_margin_clip,
                 "ever_task_feasible": self._ever_task_feasible,
                 "first_task_feasible_step": self._first_task_feasible_step,
             }
@@ -701,6 +812,10 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         if state.get("observation_mode") is not None:
             self.observation_mode = str(state["observation_mode"])
             self._configure_observation_space()
+        self.taskscore_beta_obs = float(state.get("taskscore_beta_obs", self.taskscore_beta_obs))
+        self.taskscore_beta_comm = float(state.get("taskscore_beta_comm", self.taskscore_beta_comm))
+        self.taskscore_beta_feas = float(state.get("taskscore_beta_feas", self.taskscore_beta_feas))
+        self.taskscore_margin_clip = max(float(state.get("taskscore_margin_clip", self.taskscore_margin_clip)), 1e-6)
         self._ever_task_feasible = bool(state.get("ever_task_feasible", False))
         self._first_task_feasible_step = state.get("first_task_feasible_step")
 

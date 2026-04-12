@@ -70,6 +70,12 @@ class DubinsLookaheadConfig:
     cem_iters: int = 3
     cem_elite_frac: float = 0.1
     cem_std_init_frac: float = 0.5  # 初始 std 占动作范围的比例
+    alpha_subgoal: float = 1.0
+    alpha_final: float = 0.3
+    alpha_task_terminal: float = 0.5
+    use_env_stage_cost: bool = False
+    subgoal_reached_pos_tolerance: float = 0.35
+    subgoal_reached_theta_tolerance: float = 0.35
 
 
 def _build_biased_sequences(env: DubinsUAV2D, horizon: int, n: int, *, kp: float) -> np.ndarray:

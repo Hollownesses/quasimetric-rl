@@ -41,10 +41,14 @@ from minimal_qrl.dataset import create_dataset
 from minimal_qrl.envs import CircleObstacle, CommInspectionDubinsUAV2D
 from minimal_qrl.eval.dubins_execution_mode_eval import (
     DubinsLookaheadConfig,
-    dubins_lookahead_action,
 )
 from minimal_qrl.eval.utils import auto_device, ensure_registered_env
 from minimal_qrl.gc_agents import GoalConditionedAgentBase, QRLGoalValueAdapter
+from minimal_qrl.subgoal_actor import (
+    SubgoalActor,
+    load_subgoal_actor_checkpoint,
+    select_teacher_subgoal,
+)
 
 
 @dataclass
@@ -124,6 +128,10 @@ def make_comm_inspection_env(args) -> CommInspectionDubinsUAV2D:
         observation_violation_cost_weight=float(args.observation_violation_cost_weight),
         communication_violation_cost_weight=float(args.communication_violation_cost_weight),
         observation_failure_cost=abs(float(args.observation_failure_cost)),
+        taskscore_beta_obs=float(args.taskscore_beta_obs),
+        taskscore_beta_comm=float(args.taskscore_beta_comm),
+        taskscore_beta_feas=float(args.taskscore_beta_feas),
+        taskscore_margin_clip=float(args.taskscore_margin_clip),
     )
     try:
         env.sample_goal(seed=int(args.seed))
@@ -200,6 +208,189 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _evaluate_comm_lookahead_sequences(
+    agent: GoalConditionedAgentBase,
+    env: CommInspectionDubinsUAV2D,
+    goal_obs: np.ndarray,
+    cfg: DubinsLookaheadConfig,
+    omegas: np.ndarray,
+    base_state: dict,
+    *,
+    subgoal_state: Optional[np.ndarray] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    n = int(omegas.shape[0])
+    costs = np.zeros((n,), dtype=np.float32)
+    first_actions = omegas[:, 0].astype(np.float32).copy()
+    subgoal_obs = env.state_to_observation(subgoal_state) if subgoal_state is not None else None
+
+    for i in range(n):
+        env.set_state(base_state)
+        total_cost = 0.0
+        reached_subgoal = False
+        success = False
+
+        for t in range(int(omegas.shape[1])):
+            w = float(omegas[i, t])
+            action = np.array([w], dtype=np.float32)
+            _obs, _reward, terminated, truncated, info = env.step(action)
+
+            if bool(cfg.use_env_stage_cost):
+                total_cost += _safe_float(info.get("cost_total"))
+            else:
+                if cfg.step_cost_weight > 0.0:
+                    total_cost += float(cfg.step_cost_weight) * abs(w)
+                if cfg.collision_penalty > 0.0 and bool(info.get("collision", False)):
+                    total_cost += float(cfg.collision_penalty)
+
+            if subgoal_state is not None and env.is_subgoal_reached(
+                env.state,
+                subgoal_state,
+                pos_tolerance=float(cfg.subgoal_reached_pos_tolerance),
+                theta_tolerance=float(cfg.subgoal_reached_theta_tolerance),
+            ):
+                reached_subgoal = True
+
+            if terminated:
+                success = True
+                break
+            if truncated:
+                break
+
+        terminal_obs = env.state_to_observation(env.state)
+        terminal_task_score = env.compute_task_score(env.state)
+        terminal_cost = 0.0
+        if not success:
+            terminal_cost += float(cfg.alpha_final) * float(agent.value(terminal_obs, goal_obs))
+            terminal_cost -= float(cfg.alpha_task_terminal) * float(terminal_task_score)
+            if subgoal_obs is not None and not reached_subgoal:
+                terminal_cost += float(cfg.alpha_subgoal) * float(agent.value(terminal_obs, subgoal_obs))
+
+        costs[i] = float(total_cost + terminal_cost)
+
+    env.set_state(base_state)
+    return costs, first_actions
+
+
+def _comm_inspection_lookahead_action(
+    agent: GoalConditionedAgentBase,
+    env: CommInspectionDubinsUAV2D,
+    goal_obs: np.ndarray,
+    cfg: DubinsLookaheadConfig,
+    *,
+    subgoal_state: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    horizon = max(1, int(cfg.horizon))
+    num_sequences = max(1, int(cfg.num_sequences))
+    base_state = env.get_state()
+
+    low = float(env.action_space.low[0])
+    high = float(env.action_space.high[0])
+    n_bias = int(min(max(0, cfg.biased_sequences), num_sequences))
+    n_rand = int(max(0, num_sequences - n_bias))
+    rand = (
+        np.random.uniform(low, high, size=(n_rand, horizon)).astype(np.float32)
+        if n_rand > 0
+        else np.zeros((0, horizon), dtype=np.float32)
+    )
+    if n_bias > 0:
+        bias = np.zeros((n_bias, horizon), dtype=np.float32)
+        desired = subgoal_state if subgoal_state is not None else np.asarray(env.goal, dtype=np.float32)
+        dx = float(desired[0] - env.state[0])
+        dy = float(desired[1] - env.state[1])
+        err = env._normalize_angle(float(np.arctan2(dy, dx) - env.state[2]))
+        w0 = float(np.clip(float(cfg.bias_kp) * err, low, high))
+        bias[0, :] = w0
+        for idx in range(1, n_bias):
+            scale = max(0.0, 1.0 - 0.15 * float(idx))
+            bias[idx, :] = float(np.clip(w0 * scale, low, high))
+    else:
+        bias = np.zeros((0, horizon), dtype=np.float32)
+    omegas0 = np.concatenate([bias, rand], axis=0) if (n_bias + n_rand) > 0 else np.zeros((1, horizon), dtype=np.float32)
+
+    if cfg.use_cem:
+        om_range = float(high - low)
+        std = np.full((horizon,), float(cfg.cem_std_init_frac) * 0.5 * om_range, dtype=np.float32)
+        mean = np.mean(omegas0, axis=0).astype(np.float32) if omegas0.shape[0] > 0 else np.zeros((horizon,), dtype=np.float32)
+        n_elite = max(1, int(float(cfg.cem_elite_frac) * float(num_sequences)))
+        best_first = np.array([0.0], dtype=np.float32)
+        best_cost = float("inf")
+
+        for _ in range(max(1, int(cfg.cem_iters))):
+            samples = np.random.normal(loc=mean[None, :], scale=std[None, :], size=(num_sequences, horizon)).astype(np.float32)
+            samples = np.clip(samples, low, high)
+            if n_bias > 0:
+                samples[: min(n_bias, samples.shape[0])] = bias[: min(n_bias, samples.shape[0])]
+            costs, firsts = _evaluate_comm_lookahead_sequences(
+                agent,
+                env,
+                goal_obs,
+                cfg,
+                samples,
+                base_state,
+                subgoal_state=subgoal_state,
+            )
+            idx = int(np.argmin(costs))
+            if float(costs[idx]) < best_cost:
+                best_cost = float(costs[idx])
+                best_first = np.array([float(firsts[idx])], dtype=np.float32)
+            elite = samples[np.argsort(costs)[:n_elite]]
+            mean = np.mean(elite, axis=0).astype(np.float32)
+            std = (np.std(elite, axis=0) + 1e-4).astype(np.float32)
+
+        env.set_state(base_state)
+        return best_first
+
+    costs, firsts = _evaluate_comm_lookahead_sequences(
+        agent,
+        env,
+        goal_obs,
+        cfg,
+        omegas0,
+        base_state,
+        subgoal_state=subgoal_state,
+    )
+    best_idx = int(np.argmin(costs))
+    env.set_state(base_state)
+    return np.array([float(firsts[best_idx])], dtype=np.float32)
+
+
+def _choose_hierarchical_subgoal(
+    actor: SubgoalActor,
+    agent: GoalConditionedAgentBase,
+    env: CommInspectionDubinsUAV2D,
+    obs: np.ndarray,
+    goal_obs: np.ndarray,
+    *,
+    device: torch.device,
+    num_candidates: int,
+    lambda_final: float,
+    lambda_task: float,
+    rng: np.random.Generator,
+) -> Dict[str, Any]:
+    choice = select_teacher_subgoal(
+        actor,
+        agent,
+        env,
+        obs,
+        goal_obs,
+        device=device,
+        num_candidates=num_candidates,
+        lambda_final=lambda_final,
+        lambda_task=lambda_task,
+        rng=rng,
+    )
+    repaired_state = np.asarray(choice["repaired_subgoal"], dtype=np.float32)
+    teacher_state = np.asarray(choice["teacher_subgoal"], dtype=np.float32)
+    use_teacher_fallback = bool(choice.get("used_global_repair_fallback", False))
+    executed_subgoal = teacher_state if use_teacher_fallback else repaired_state
+    return {
+        **choice,
+        "executed_subgoal": executed_subgoal,
+        "used_teacher_fallback": bool(use_teacher_fallback),
+        "executed_task_score": float(env.compute_task_score(executed_subgoal)),
+    }
+
+
 def rollout_execution_episode(
     agent: GoalConditionedAgentBase,
     env: CommInspectionDubinsUAV2D,
@@ -207,37 +398,109 @@ def rollout_execution_episode(
     *,
     episode_seed: int,
     lookahead_cfg: Optional[DubinsLookaheadConfig],
+    subgoal_actor: Optional[SubgoalActor] = None,
+    actor_device: Optional[torch.device] = None,
+    high_level_period: int = 5,
+    subgoal_candidates: int = 64,
+    subgoal_lambda_final: float = 0.3,
+    subgoal_lambda_task: float = 1.0,
 ) -> Dict[str, Any]:
-    if execution_mode not in {"greedy", "lookahead"}:
+    if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
     if execution_mode == "lookahead" and lookahead_cfg is None:
         raise ValueError("lookahead 模式需要 lookahead_cfg")
+    if execution_mode == "hierarchical" and (lookahead_cfg is None or subgoal_actor is None or actor_device is None):
+        raise ValueError("hierarchical 模式需要 lookahead_cfg、subgoal_actor 和 actor_device")
 
     np.random.seed(int(episode_seed))
     obs, reset_info = env.reset(seed=int(episode_seed))
     goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
+    rng = np.random.default_rng(int(episode_seed))
 
     states: List[np.ndarray] = [env.state.copy()]
     actions: List[np.ndarray] = []
     rewards: List[float] = []
     step_infos: List[Dict[str, Any]] = []
     task_flags: List[bool] = [bool(reset_info.get("task_feasible", False))]
+    high_level_events: List[Dict[str, Any]] = []
 
     done = False
     truncated = False
     collided = False
     out_of_bounds = False
     final_info: Dict[str, Any] = dict(reset_info)
+    current_subgoal: Optional[np.ndarray] = None
 
     while not (done or truncated):
         if execution_mode == "lookahead":
-            action = dubins_lookahead_action(agent, env, goal_obs, lookahead_cfg)
+            action = _comm_inspection_lookahead_action(agent, env, goal_obs, lookahead_cfg)
+        elif execution_mode == "hierarchical":
+            need_replan = current_subgoal is None or (
+                len(actions) % max(1, int(high_level_period)) == 0
+            )
+            if current_subgoal is not None and env.is_subgoal_reached(
+                env.state,
+                current_subgoal,
+                pos_tolerance=float(lookahead_cfg.subgoal_reached_pos_tolerance),
+                theta_tolerance=float(lookahead_cfg.subgoal_reached_theta_tolerance),
+            ):
+                need_replan = True
+
+            if need_replan:
+                subgoal_choice = _choose_hierarchical_subgoal(
+                    subgoal_actor,
+                    agent,
+                    env,
+                    obs,
+                    goal_obs,
+                    device=actor_device,
+                    num_candidates=int(subgoal_candidates),
+                    lambda_final=float(subgoal_lambda_final),
+                    lambda_task=float(subgoal_lambda_task),
+                    rng=rng,
+                )
+                current_subgoal = np.asarray(subgoal_choice["executed_subgoal"], dtype=np.float32)
+                high_level_events.append(
+                    {
+                        "step": int(len(actions)),
+                        "raw_subgoal": [float(v) for v in np.asarray(subgoal_choice["raw_subgoal"], dtype=np.float32)],
+                        "repaired_subgoal": [float(v) for v in np.asarray(subgoal_choice["repaired_subgoal"], dtype=np.float32)],
+                        "executed_subgoal": [float(v) for v in np.asarray(current_subgoal, dtype=np.float32)],
+                        "raw_valid": bool(subgoal_choice["raw_valid"]),
+                        "used_nearby_repair": bool(subgoal_choice.get("used_nearby_repair", False)),
+                        "used_global_repair_fallback": bool(subgoal_choice.get("used_global_repair_fallback", False)),
+                        "repair_distance": float(subgoal_choice["repair_distance"]),
+                        "repair_dtheta": float(subgoal_choice["repair_dtheta"]),
+                        "raw_task_score": float(subgoal_choice["raw_task_score"]),
+                        "repaired_task_score": float(subgoal_choice["repaired_task_score"]),
+                        "executed_task_score": float(subgoal_choice["executed_task_score"]),
+                        "used_teacher_fallback": bool(subgoal_choice["used_teacher_fallback"]),
+                    }
+                )
+
+            action = _comm_inspection_lookahead_action(
+                agent,
+                env,
+                goal_obs,
+                lookahead_cfg,
+                subgoal_state=current_subgoal,
+            )
         else:
             action = agent.act(obs, goal_obs, eval_mode=True)
 
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         obs, reward, done, truncated, step_info = env.step(action)
         step_info = dict(step_info)
+        if current_subgoal is not None:
+            step_info["active_subgoal"] = [float(v) for v in np.asarray(current_subgoal, dtype=np.float32)]
+            step_info["subgoal_reached"] = bool(
+                env.is_subgoal_reached(
+                    env.state,
+                    current_subgoal,
+                    pos_tolerance=float(lookahead_cfg.subgoal_reached_pos_tolerance),
+                    theta_tolerance=float(lookahead_cfg.subgoal_reached_theta_tolerance),
+                )
+            )
 
         actions.append(action.copy())
         rewards.append(float(reward))
@@ -268,6 +531,7 @@ def rollout_execution_episode(
         "goal": np.asarray(env.goal, dtype=np.float32).copy(),
         "inspection_target": np.asarray(env.inspection_target, dtype=np.float32).copy(),
         "ground_station": np.asarray(env.ground_station, dtype=np.float32).copy(),
+        "high_level_events": high_level_events,
     }
 
 
@@ -489,6 +753,55 @@ def _plot_rollout_png(
                 zorder=6,
             )
 
+        if rollout.get("high_level_events"):
+            for ev_idx, event in enumerate(rollout["high_level_events"]):
+                raw = np.asarray(event["raw_subgoal"], dtype=np.float32)
+                repaired = np.asarray(event["repaired_subgoal"], dtype=np.float32)
+                executed = np.asarray(event["executed_subgoal"], dtype=np.float32)
+                if panel_idx == 2:
+                    raw_label = "raw subgoal" if ev_idx == 0 else None
+                    repaired_label = "repaired subgoal" if ev_idx == 0 else None
+                    executed_label = "executed subgoal" if ev_idx == 0 else None
+                else:
+                    raw_label = None
+                    repaired_label = None
+                    executed_label = None
+                ax.plot(
+                    [raw[0], repaired[0]],
+                    [raw[1], repaired[1]],
+                    color="mediumpurple",
+                    linewidth=1.0,
+                    linestyle=":",
+                    zorder=5,
+                )
+                ax.scatter(
+                    raw[0],
+                    raw[1],
+                    c="violet",
+                    s=35,
+                    marker="x",
+                    label=raw_label,
+                    zorder=6,
+                )
+                ax.scatter(
+                    repaired[0],
+                    repaired[1],
+                    c="purple",
+                    s=45,
+                    marker="s",
+                    label=repaired_label,
+                    zorder=6,
+                )
+                ax.scatter(
+                    executed[0],
+                    executed[1],
+                    c="indigo",
+                    s=50,
+                    marker="D",
+                    label=executed_label,
+                    zorder=6,
+                )
+
         ax.set_title(panel_title)
 
     fig.suptitle(
@@ -561,6 +874,25 @@ def _plot_rollout_gif(
         )
         first_feasible_marker.set_visible(False)
 
+    event_artists = []
+    if rollout.get("high_level_events"):
+        for event in rollout["high_level_events"]:
+            raw = np.asarray(event["raw_subgoal"], dtype=np.float32)
+            repaired = np.asarray(event["repaired_subgoal"], dtype=np.float32)
+            executed = np.asarray(event["executed_subgoal"], dtype=np.float32)
+            (repair_line,) = ax.plot(
+                [raw[0], repaired[0]],
+                [raw[1], repaired[1]],
+                color="mediumpurple",
+                linewidth=1.0,
+                linestyle=":",
+                zorder=5,
+            )
+            raw_artist = ax.scatter([raw[0]], [raw[1]], c="violet", s=35, marker="x", zorder=6)
+            repaired_artist = ax.scatter([repaired[0]], [repaired[1]], c="purple", s=45, marker="s", zorder=6)
+            executed_artist = ax.scatter([executed[0]], [executed[1]], c="indigo", s=50, marker="D", zorder=6)
+            event_artists.extend([repair_line, raw_artist, repaired_artist, executed_artist])
+
     def _init():
         ax.set_title(
             _make_rollout_title(
@@ -577,7 +909,7 @@ def _plot_rollout_gif(
             [0.35 * np.cos(float(states[0][2]))],
             [0.35 * np.sin(float(states[0][2]))],
         )
-        return [*segment_artists, current_point, current_arrow]
+        return [*segment_artists, current_point, current_arrow, *event_artists]
 
     def _update(frame_idx: int):
         for idx, artist in enumerate(segment_artists, start=1):
@@ -606,7 +938,7 @@ def _plot_rollout_gif(
             )
             + f"\nJoint task feasible slice at goal theta={theta_slice:.2f} rad"
         )
-        artists = [*segment_artists, current_point, current_arrow]
+        artists = [*segment_artists, current_point, current_arrow, *event_artists]
         if first_feasible_marker is not None:
             artists.append(first_feasible_marker)
         return artists
@@ -691,6 +1023,8 @@ def _save_rollout_visualization(
         "final_comm_margin": _safe_float(final_info.get("comm_margin")),
         "final_obs_margin": _safe_float(final_info.get("obs_margin")),
         "final_task_feasible": bool(final_info.get("task_feasible", False)),
+        "num_high_level_events": int(len(rollout.get("high_level_events", []))),
+        "high_level_events": list(rollout.get("high_level_events", [])),
     }
 
 
@@ -704,11 +1038,19 @@ def evaluate_execution_mode(
     lookahead_cfg: Optional[DubinsLookaheadConfig],
     output_dir: Path,
     viz_cfg: VisualizationConfig,
+    subgoal_actor: Optional[SubgoalActor] = None,
+    actor_device: Optional[torch.device] = None,
+    high_level_period: int = 5,
+    subgoal_candidates: int = 64,
+    subgoal_lambda_final: float = 0.3,
+    subgoal_lambda_task: float = 1.0,
 ) -> tuple[Dict[str, float], Dict[str, List[Dict[str, Any]]]]:
-    if execution_mode not in {"greedy", "lookahead"}:
+    if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
     if execution_mode == "lookahead" and lookahead_cfg is None:
         raise ValueError("lookahead 模式需要 lookahead_cfg")
+    if execution_mode == "hierarchical" and (lookahead_cfg is None or subgoal_actor is None or actor_device is None):
+        raise ValueError("hierarchical 模式需要 lookahead_cfg、subgoal_actor 和 actor_device")
 
     np.random.seed(int(seed))
 
@@ -719,6 +1061,11 @@ def evaluate_execution_mode(
     first_task_feasible_steps: List[int] = []
     collision_episodes = 0
     out_of_bounds_episodes = 0
+    raw_valid_rates: List[float] = []
+    repair_distances: List[float] = []
+    repair_dthetas: List[float] = []
+    raw_task_scores: List[float] = []
+    repaired_task_scores: List[float] = []
 
     visualization_index: Dict[str, List[Dict[str, Any]]] = {
         "success": [],
@@ -739,6 +1086,12 @@ def evaluate_execution_mode(
             execution_mode,
             episode_seed=int(seed + i),
             lookahead_cfg=lookahead_cfg,
+            subgoal_actor=subgoal_actor,
+            actor_device=actor_device,
+            high_level_period=int(high_level_period),
+            subgoal_candidates=int(subgoal_candidates),
+            subgoal_lambda_final=float(subgoal_lambda_final),
+            subgoal_lambda_task=float(subgoal_lambda_task),
         )
 
         step_count = int(rollout["num_steps"])
@@ -760,6 +1113,14 @@ def evaluate_execution_mode(
             collision_episodes += 1
         if rollout["out_of_bounds"]:
             out_of_bounds_episodes += 1
+        if execution_mode == "hierarchical":
+            events = rollout.get("high_level_events", [])
+            if events:
+                raw_valid_rates.extend(float(ev["raw_valid"]) for ev in events)
+                repair_distances.extend(float(ev["repair_distance"]) for ev in events)
+                repair_dthetas.extend(float(ev["repair_dtheta"]) for ev in events)
+                raw_task_scores.extend(float(ev["raw_task_score"]) for ev in events)
+                repaired_task_scores.extend(float(ev["repaired_task_score"]) for ev in events)
 
         if (
             viz_cfg.save_visualizations
@@ -810,6 +1171,11 @@ def evaluate_execution_mode(
         ),
         "collision_rate": collision_episodes / float(n_trials) if n_trials > 0 else 0.0,
         "out_of_bounds_rate": out_of_bounds_episodes / float(n_trials) if n_trials > 0 else 0.0,
+        "raw_actor_output_valid_rate": float(np.mean(raw_valid_rates)) if raw_valid_rates else 0.0,
+        "mean_repair_distance": float(np.mean(repair_distances)) if repair_distances else 0.0,
+        "mean_repair_dtheta": float(np.mean(repair_dthetas)) if repair_dthetas else 0.0,
+        "mean_taskscore_raw_subgoal": float(np.mean(raw_task_scores)) if raw_task_scores else 0.0,
+        "mean_taskscore_repaired_subgoal": float(np.mean(repaired_task_scores)) if repaired_task_scores else 0.0,
     }
     return metrics, visualization_index
 
@@ -819,7 +1185,7 @@ def _parse_execution_modes(raw: str) -> List[str]:
     if not modes:
         modes = ["greedy", "lookahead"]
     for mode in modes:
-        if mode not in {"greedy", "lookahead"}:
+        if mode not in {"greedy", "lookahead", "hierarchical"}:
             raise ValueError(f"不支持的 execution mode: {mode}")
     return modes
 
@@ -882,6 +1248,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--num-critics", type=int, default=2)
     parser.add_argument("--execution-modes", type=str, default="greedy,lookahead")
+    parser.add_argument("--subgoal-actor-checkpoint", type=str, default=None)
+    parser.add_argument("--high-level-period", type=int, default=5)
+    parser.add_argument("--subgoal-candidates", type=int, default=64)
+    parser.add_argument("--subgoal-lambda-final", type=float, default=0.3)
+    parser.add_argument("--subgoal-lambda-task", type=float, default=1.0)
 
     parser.add_argument("--lookahead-horizon", type=int, default=20)
     parser.add_argument("--lookahead-num-sequences", type=int, default=256)
@@ -893,6 +1264,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lookahead-cem-iters", type=int, default=3)
     parser.add_argument("--lookahead-cem-elite-frac", type=float, default=0.1)
     parser.add_argument("--lookahead-cem-std-init-frac", type=float, default=0.5)
+    parser.add_argument("--planner-alpha-subgoal", type=float, default=1.0)
+    parser.add_argument("--planner-alpha-final", type=float, default=0.3)
+    parser.add_argument("--planner-alpha-task-terminal", type=float, default=0.5)
+    parser.add_argument("--planner-use-env-stage-cost", dest="planner_use_env_stage_cost", action="store_true", default=True)
+    parser.add_argument("--no-planner-use-env-stage-cost", dest="planner_use_env_stage_cost", action="store_false")
+    parser.add_argument("--taskscore-beta-obs", type=float, default=1.0)
+    parser.add_argument("--taskscore-beta-comm", type=float, default=1.0)
+    parser.add_argument("--taskscore-beta-feas", type=float, default=0.5)
+    parser.add_argument("--taskscore-margin-clip", type=float, default=2.0)
 
     parser.add_argument("--save-visualizations", action="store_true")
     parser.add_argument("--viz-max-successes", type=int, default=10)
@@ -920,6 +1300,20 @@ def main():
     agent, ckpt_step = build_qrl_adapter(args, device, env)
 
     execution_modes = _parse_execution_modes(args.execution_modes)
+    subgoal_actor = None
+    subgoal_actor_meta: Dict[str, Any] = {}
+    subgoal_ckpt: Optional[str] = None
+    if "hierarchical" in execution_modes:
+        subgoal_ckpt = args.subgoal_actor_checkpoint
+        if not subgoal_ckpt:
+            candidate = Path(args.checkpoint).with_name("subgoal_actor_checkpoint_final.pth")
+            subgoal_ckpt = str(candidate)
+        if not os.path.exists(subgoal_ckpt):
+            raise FileNotFoundError(
+                f"hierarchical 模式需要 subgoal actor checkpoint，但未找到: {subgoal_ckpt}"
+            )
+        subgoal_actor, subgoal_actor_meta = load_subgoal_actor_checkpoint(subgoal_ckpt, device=device)
+
     lookahead_cfg = DubinsLookaheadConfig(
         horizon=int(args.lookahead_horizon),
         num_sequences=int(args.lookahead_num_sequences),
@@ -931,6 +1325,10 @@ def main():
         cem_iters=int(args.lookahead_cem_iters),
         cem_elite_frac=float(args.lookahead_cem_elite_frac),
         cem_std_init_frac=float(args.lookahead_cem_std_init_frac),
+        alpha_subgoal=float(args.planner_alpha_subgoal),
+        alpha_final=float(args.planner_alpha_final),
+        alpha_task_terminal=float(args.planner_alpha_task_terminal),
+        use_env_stage_cost=bool(args.planner_use_env_stage_cost),
     )
     viz_cfg = VisualizationConfig(
         save_visualizations=bool(args.save_visualizations),
@@ -944,6 +1342,8 @@ def main():
     visualization_index: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     for mode in execution_modes:
         cfg = lookahead_cfg if mode == "lookahead" else None
+        if mode == "hierarchical":
+            cfg = lookahead_cfg
         metrics, vis_index = evaluate_execution_mode(
             agent,
             env,
@@ -953,6 +1353,12 @@ def main():
             lookahead_cfg=cfg,
             output_dir=output_dir,
             viz_cfg=viz_cfg,
+            subgoal_actor=subgoal_actor,
+            actor_device=device,
+            high_level_period=int(args.high_level_period),
+            subgoal_candidates=int(args.subgoal_candidates),
+            subgoal_lambda_final=float(args.subgoal_lambda_final),
+            subgoal_lambda_task=float(args.subgoal_lambda_task),
         )
         results[mode] = metrics
         visualization_index[mode] = vis_index
@@ -966,6 +1372,8 @@ def main():
         "results": results,
         "visualizations": visualization_index,
         "lookahead_config": asdict(lookahead_cfg),
+        "subgoal_actor_checkpoint": os.path.abspath(subgoal_ckpt) if subgoal_ckpt else None,
+        "subgoal_actor_metadata": subgoal_actor_meta,
         "visualization_config": asdict(viz_cfg),
         "env_config": {
             "bounds": [float(v) for v in args.bounds],
@@ -981,6 +1389,10 @@ def main():
             "require_target_los": bool(args.require_target_los),
             "require_ground_station_los": bool(args.require_ground_station_los),
             "comm_threshold": float(args.comm_threshold),
+            "taskscore_beta_obs": float(args.taskscore_beta_obs),
+            "taskscore_beta_comm": float(args.taskscore_beta_comm),
+            "taskscore_beta_feas": float(args.taskscore_beta_feas),
+            "taskscore_margin_clip": float(args.taskscore_margin_clip),
         },
     }
 
@@ -991,13 +1403,19 @@ def main():
     print(f"[comm_inspection_execution_eval] 已保存评估结果到 {out_json}")
     for mode in execution_modes:
         metrics = results[mode]
-        print(
+        line = (
             f"  {mode}: success_rate={metrics['success_rate']:.3f}, "
             f"avg_steps_success={metrics['avg_steps_success']:.1f}, "
             f"ever_task_feasible_rate={metrics['ever_task_feasible_rate']:.3f}, "
             f"collision_rate={metrics['collision_rate']:.3f}, "
             f"out_of_bounds_rate={metrics['out_of_bounds_rate']:.3f}"
         )
+        if mode == "hierarchical":
+            line += (
+                f", raw_valid={metrics['raw_actor_output_valid_rate']:.3f}, "
+                f"repair={metrics['mean_repair_distance']:.3f}"
+            )
+        print(line)
         if viz_cfg.save_visualizations:
             vis = visualization_index[mode]
             print(
