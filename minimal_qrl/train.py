@@ -36,12 +36,21 @@ from minimal_qrl.envs import (
 )
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
+from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
 from minimal_qrl.gc_agents import QRLGoalValueAdapter
 from minimal_qrl.subgoal_actor import (
     SubgoalActor,
     SubgoalActorTrainConfig,
     save_subgoal_actor_checkpoint,
     train_subgoal_actor,
+)
+from minimal_qrl.cost_aware_subgoal_scorer import (
+    CostAwareSubgoalScorer,
+    CostAwareSubgoalScorerTrainConfig,
+    TOP_MODEL_COST_CONTEXT_KEYS,
+    build_top_model_cost_context,
+    save_cost_aware_subgoal_scorer_checkpoint,
+    train_cost_aware_subgoal_scorer,
 )
 
 
@@ -632,6 +641,8 @@ def train(args):
     }, final_path)
     logger.info(f"保存最终模型: {final_path}")
 
+    qrl_value_agent = None
+    subgoal_actor = None
     if (
         args.env_type == 'comm_inspection_dubins_uav'
         and getattr(args, 'hierarchical_mode', 'none') == 'subgoal_actor'
@@ -737,6 +748,121 @@ def train(args):
             },
         )
         logger.info(f"保存最终 SubgoalActor 检查点: {subgoal_ckpt_final}")
+
+    if (
+        args.env_type == 'comm_inspection_dubins_uav'
+        and getattr(args, 'subgoal_selector_mode', 'heuristic') == 'cost_aware'
+        and int(getattr(args, 'top_model_train_steps', 0)) > 0
+    ):
+        if subgoal_actor is None or qrl_value_agent is None:
+            raise ValueError(
+                "训练 cost-aware 顶层模型前，需要先完成 SubgoalActor 训练。"
+                "请确保 hierarchical_mode=subgoal_actor 且 subgoal_train_steps > 0。"
+            )
+        logger.info("开始第三阶段：冻结 QRL critic + SubgoalActor，训练 CostAwareSubgoalScorer...")
+        top_model_rollout_steps = (
+            int(args.top_model_rollout_steps)
+            if getattr(args, 'top_model_rollout_steps', None) is not None
+            else int(args.high_level_period)
+        )
+        top_model = CostAwareSubgoalScorer(
+            obs_dim=int(eval_env.observation_space.shape[0]),
+            hidden_dim=int(args.top_model_hidden_dim),
+        ).to(device)
+        top_model_ckpt_init = os.path.join(output_dir, 'cost_aware_subgoal_scorer_checkpoint_00000.pth')
+        lookahead_cfg = DubinsLookaheadConfig(
+            horizon=int(args.lookahead_horizon),
+            num_sequences=int(args.lookahead_num_sequences),
+            step_cost_weight=float(args.lookahead_step_cost_weight),
+            collision_penalty=float(args.lookahead_collision_penalty),
+            alpha_subgoal=float(args.planner_alpha_subgoal),
+            alpha_final=float(args.planner_alpha_final),
+            alpha_task_terminal=float(args.planner_alpha_task_terminal),
+            use_env_stage_cost=bool(args.planner_use_env_stage_cost),
+        )
+        top_model_metadata = {
+            'subgoal_selector_mode': args.subgoal_selector_mode,
+            'top_model_rollout_steps': int(top_model_rollout_steps),
+            'planner_alpha_subgoal': float(args.planner_alpha_subgoal),
+            'planner_alpha_final': float(args.planner_alpha_final),
+            'planner_alpha_task_terminal': float(args.planner_alpha_task_terminal),
+            'planner_use_env_stage_cost': bool(args.planner_use_env_stage_cost),
+            'cost_context_keys': list(TOP_MODEL_COST_CONTEXT_KEYS),
+            'taskscore_beta_obs': float(args.taskscore_beta_obs),
+            'taskscore_beta_comm': float(args.taskscore_beta_comm),
+            'taskscore_beta_feas': float(args.taskscore_beta_feas),
+            'taskscore_margin_clip': float(args.taskscore_margin_clip),
+            'cost_context_default': build_top_model_cost_context(eval_env, lookahead_cfg).tolist(),
+        }
+        save_cost_aware_subgoal_scorer_checkpoint(
+            top_model_ckpt_init,
+            top_model,
+            train_step=0,
+            metadata=top_model_metadata,
+        )
+        logger.info(f"保存初始 CostAwareSubgoalScorer 检查点: {top_model_ckpt_init}")
+
+        def _log_top_model_metrics(step: int, metrics: dict):
+            global_step = optim_steps + int(args.subgoal_train_steps) + step
+            for key, value in metrics.items():
+                writer.add_scalar(f'cost_aware_top_model/{key}', value, global_step)
+            if step == 1 or step % max(1, args.log_interval) == 0:
+                logger.info(
+                    "CostAwareTopModel step %d: loss=%.4f top1=%.3f pred=%.3f label=%.3f",
+                    step,
+                    float(metrics.get('loss', 0.0)),
+                    float(metrics.get('top1_match_rate', 0.0)),
+                    float(metrics.get('mean_selected_pred_cost', 0.0)),
+                    float(metrics.get('mean_selected_rollout_cost_label', 0.0)),
+                )
+
+        def _save_top_model_checkpoint(step: int, metrics: dict):
+            ckpt_path = os.path.join(output_dir, f'cost_aware_subgoal_scorer_checkpoint_{step:05d}.pth')
+            save_cost_aware_subgoal_scorer_checkpoint(
+                ckpt_path,
+                top_model,
+                train_step=step,
+                metadata={
+                    **top_model_metadata,
+                    'metrics': metrics,
+                    'high_level_period': int(args.high_level_period),
+                },
+            )
+            logger.info(f"保存 CostAwareSubgoalScorer 检查点: {ckpt_path}")
+
+        final_top_model_metrics = train_cost_aware_subgoal_scorer(
+            scorer=top_model,
+            actor=subgoal_actor,
+            agent=qrl_value_agent,
+            env_factory=create_env_fn,
+            actor_device=device,
+            scorer_device=device,
+            lookahead_cfg=lookahead_cfg,
+            cfg=CostAwareSubgoalScorerTrainConfig(
+                train_steps=int(args.top_model_train_steps),
+                batch_size=int(args.top_model_batch_size),
+                lr=float(args.top_model_lr),
+                hidden_dim=int(args.top_model_hidden_dim),
+                num_candidates=int(args.subgoal_candidates),
+                rollout_steps=int(top_model_rollout_steps),
+                seed=int(args.seed),
+                save_interval=int(args.top_model_save_interval),
+            ),
+            log_fn=_log_top_model_metrics,
+            checkpoint_fn=_save_top_model_checkpoint,
+        )
+        top_model_ckpt_final = os.path.join(output_dir, 'cost_aware_subgoal_scorer_checkpoint_final.pth')
+        save_cost_aware_subgoal_scorer_checkpoint(
+            top_model_ckpt_final,
+            top_model,
+            train_step=int(args.top_model_train_steps),
+            metadata={
+                **top_model_metadata,
+                'final_metrics': final_top_model_metrics,
+                'high_level_period': int(args.high_level_period),
+            },
+        )
+        logger.info(f"保存最终 CostAwareSubgoalScorer 检查点: {top_model_ckpt_final}")
     
     # 标记完成
     with open(os.path.join(output_dir, 'COMPLETE'), 'w') as f:
@@ -885,6 +1011,16 @@ def main():
                         help='lookahead 步长惩罚权重（抑制抖动/绕圈，默认 0）')
     parser.add_argument('--lookahead-collision-penalty', type=float, default=0.0,
                         help='lookahead 碰撞惩罚（默认 0；ContinuousObstacle2D 碰撞 reward=-0.1）')
+    parser.add_argument('--planner-alpha-subgoal', type=float, default=1.0,
+                        help='cost-aware 顶层训练中 low-level planner 的 subgoal 终端项系数')
+    parser.add_argument('--planner-alpha-final', type=float, default=0.3,
+                        help='cost-aware 顶层训练中 low-level planner 的 final goal 终端项系数')
+    parser.add_argument('--planner-alpha-task-terminal', type=float, default=0.5,
+                        help='cost-aware 顶层训练中 low-level planner 的 terminal task score 系数')
+    parser.add_argument('--planner-use-env-stage-cost', dest='planner_use_env_stage_cost', action='store_true', default=True,
+                        help='cost-aware 顶层训练标签是否累计环境真实 stage cost（默认开启）')
+    parser.add_argument('--no-planner-use-env-stage-cost', dest='planner_use_env_stage_cost', action='store_false',
+                        help='关闭环境真实 stage cost，退回 lookahead 的动作/碰撞代价近似')
     parser.add_argument('--lookahead-distance-types', type=str, default='qrl',
                         help='lookahead 终端代价的 distance 类型，逗号分隔："qrl" 或 "euclidean"；默认仅使用 QRL')
     parser.add_argument('--planning-visualize-failures', action='store_true',
@@ -912,6 +1048,21 @@ def main():
                         help='高层 teacher 中 final goal critic 项系数')
     parser.add_argument('--subgoal-lambda-task', type=float, default=1.0,
                         help='高层 teacher 中 TaskScore 奖励项系数')
+    parser.add_argument('--subgoal-selector-mode', type=str, default='heuristic',
+                        choices=['heuristic', 'cost_aware'],
+                        help='高层 subgoal 选择器模式；heuristic 使用旧 teacher 目标，cost_aware 训练额外顶层 scorer')
+    parser.add_argument('--top-model-train-steps', type=int, default=0,
+                        help='CostAwareSubgoalScorer 训练步数；0 表示不训练')
+    parser.add_argument('--top-model-batch-size', type=int, default=16,
+                        help='CostAwareSubgoalScorer 训练批大小（按状态-目标组计）')
+    parser.add_argument('--top-model-lr', type=float, default=3e-4,
+                        help='CostAwareSubgoalScorer 学习率')
+    parser.add_argument('--top-model-hidden-dim', type=int, default=256,
+                        help='CostAwareSubgoalScorer 隐层宽度')
+    parser.add_argument('--top-model-save-interval', type=int, default=1000,
+                        help='CostAwareSubgoalScorer checkpoint 保存间隔；设为0表示只保存首尾')
+    parser.add_argument('--top-model-rollout-steps', type=int, default=None,
+                        help='CostAwareSubgoalScorer 标签 rollout 步数；默认等于 high_level_period')
     
     args = parser.parse_args()
     train(args)

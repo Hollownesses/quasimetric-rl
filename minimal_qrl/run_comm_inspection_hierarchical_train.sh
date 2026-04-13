@@ -38,6 +38,7 @@ REQUIRE_TARGET_LOS_FLAG=""
 REQUIRE_GROUND_STATION_LOS_FLAG=""
 INIT_CHECKPOINT_FLAG=""
 SKIP_CRITIC_TRAINING_FLAG=""
+TOP_MODEL_ROLLOUT_STEPS_FLAG=""
 
 if [[ "${RANDOMIZE_INSPECTION_TARGET:-0}" == "1" ]]; then
   RANDOMIZE_INSPECTION_TARGET_FLAG="--randomize-inspection-target"
@@ -57,6 +58,9 @@ if [[ "${ONLY_SUBGOAL_ACTOR:-0}" == "1" ]]; then
 fi
 if [[ -n "${CRITIC_CHECKPOINT:-}" ]]; then
   INIT_CHECKPOINT_FLAG="--init-checkpoint ${CRITIC_CHECKPOINT}"
+fi
+if [[ -n "${TOP_MODEL_ROLLOUT_STEPS:-}" ]]; then
+  TOP_MODEL_ROLLOUT_STEPS_FLAG="--top-model-rollout-steps ${TOP_MODEL_ROLLOUT_STEPS}"
 fi
 
 "$PYTHON_BIN" minimal_qrl/train.py \
@@ -116,7 +120,17 @@ fi
   --subgoal-candidates "${SUBGOAL_CANDIDATES:-64}" \
   --high-level-period "${HIGH_LEVEL_PERIOD:-5}" \
   --subgoal-lambda-final "${SUBGOAL_LAMBDA_FINAL:-0.3}" \
-  --subgoal-lambda-task "${SUBGOAL_LAMBDA_TASK:-1.0}"
+  --subgoal-lambda-task "${SUBGOAL_LAMBDA_TASK:-1.0}" \
+  --subgoal-selector-mode "${SUBGOAL_SELECTOR_MODE:-heuristic}" \
+  --top-model-train-steps "${TOP_MODEL_TRAIN_STEPS:-0}" \
+  --top-model-batch-size "${TOP_MODEL_BATCH_SIZE:-16}" \
+  --top-model-lr "${TOP_MODEL_LR:-3e-4}" \
+  --top-model-hidden-dim "${TOP_MODEL_HIDDEN_DIM:-256}" \
+  --top-model-save-interval "${TOP_MODEL_SAVE_INTERVAL:-1000}" \
+  --planner-alpha-subgoal "${PLANNER_ALPHA_SUBGOAL:-1.0}" \
+  --planner-alpha-final "${PLANNER_ALPHA_FINAL:-0.3}" \
+  --planner-alpha-task-terminal "${PLANNER_ALPHA_TASK_TERMINAL:-0.5}" \
+  ${TOP_MODEL_ROLLOUT_STEPS_FLAG}
 
 echo "分层训练完成。结果目录: $OUTPUT_DIR"
 echo "Critic checkpoint:"

@@ -200,6 +200,7 @@ def select_teacher_subgoal(
         "raw_subgoal": np.asarray(raw_subgoal, dtype=np.float32),
         "repaired_subgoal": np.asarray(repaired_subgoal, dtype=np.float32),
         "teacher_subgoal": np.asarray(best_candidate, dtype=np.float32),
+        "candidate_count": int(len(candidates)),
         "raw_valid": bool(env.is_valid_state(raw_subgoal)),
         "used_nearby_repair": bool(repair_info["used_nearby_repair"]),
         "used_global_repair_fallback": bool(repair_info["used_global_fallback"]),

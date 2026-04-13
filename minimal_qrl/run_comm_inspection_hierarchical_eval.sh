@@ -26,6 +26,7 @@ fi
 OUTPUT_DIR="${OUTPUT_DIR:-./results/minimal_qrl_inspection_dubins_hier}"
 CHECKPOINT="${CHECKPOINT:-$OUTPUT_DIR/checkpoint_final.pth}"
 SUBGOAL_ACTOR_CHECKPOINT="${SUBGOAL_ACTOR_CHECKPOINT:-$OUTPUT_DIR/subgoal_actor_checkpoint_final.pth}"
+TOP_MODEL_CHECKPOINT="${TOP_MODEL_CHECKPOINT:-$OUTPUT_DIR/cost_aware_subgoal_scorer_checkpoint_final.pth}"
 
 BOUNDS="${BOUNDS:-0 0 10 10}"
 INSPECTION_TARGET="${INSPECTION_TARGET:-3.0 7.5}"
@@ -39,6 +40,8 @@ REQUIRE_GROUND_STATION_LOS_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
 VIZ_SAVE_GIF_FLAG=""
 NO_PLANNER_USE_ENV_STAGE_COST_FLAG=""
+TOP_MODEL_CHECKPOINT_FLAG=""
+TOP_MODEL_ROLLOUT_STEPS_FLAG=""
 
 if [[ "${RANDOMIZE_INSPECTION_TARGET:-0}" == "1" ]]; then
   RANDOMIZE_INSPECTION_TARGET_FLAG="--randomize-inspection-target"
@@ -62,6 +65,12 @@ if [[ "${VIZ_SAVE_GIF:-0}" == "1" ]]; then
 fi
 if [[ "${PLANNER_USE_ENV_STAGE_COST:-1}" != "1" ]]; then
   NO_PLANNER_USE_ENV_STAGE_COST_FLAG="--no-planner-use-env-stage-cost"
+fi
+if [[ -n "${TOP_MODEL_CHECKPOINT:-}" ]]; then
+  TOP_MODEL_CHECKPOINT_FLAG="--top-model-checkpoint ${TOP_MODEL_CHECKPOINT}"
+fi
+if [[ -n "${TOP_MODEL_ROLLOUT_STEPS:-}" ]]; then
+  TOP_MODEL_ROLLOUT_STEPS_FLAG="--top-model-rollout-steps ${TOP_MODEL_ROLLOUT_STEPS}"
 fi
 
 echo "评估通信巡检 Dubins UAV 分层 QRL..."
@@ -107,10 +116,13 @@ echo "评估通信巡检 Dubins UAV 分层 QRL..."
   --seed "${SEED:-0}" \
   --device "${DEVICE:-auto}" \
   --execution-modes "${EXECUTION_MODES:-greedy,lookahead,hierarchical}" \
+  --subgoal-selector "${SUBGOAL_SELECTOR:-heuristic}" \
   --high-level-period "${HIGH_LEVEL_PERIOD:-5}" \
   --subgoal-candidates "${SUBGOAL_CANDIDATES:-64}" \
   --subgoal-lambda-final "${SUBGOAL_LAMBDA_FINAL:-0.3}" \
   --subgoal-lambda-task "${SUBGOAL_LAMBDA_TASK:-1.0}" \
+  ${TOP_MODEL_CHECKPOINT_FLAG} \
+  ${TOP_MODEL_ROLLOUT_STEPS_FLAG} \
   --lookahead-horizon "${LOOKAHEAD_HORIZON:-10}" \
   --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-128}" \
   --lookahead-step-cost-weight "${LOOKAHEAD_STEP_COST_WEIGHT:-0.0}" \

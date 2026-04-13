@@ -44,6 +44,11 @@ from minimal_qrl.eval.dubins_execution_mode_eval import (
 )
 from minimal_qrl.eval.utils import auto_device, ensure_registered_env
 from minimal_qrl.gc_agents import GoalConditionedAgentBase, QRLGoalValueAdapter
+from minimal_qrl.cost_aware_subgoal_scorer import (
+    CostAwareSubgoalScorer,
+    load_cost_aware_subgoal_scorer_checkpoint,
+    select_cost_aware_subgoal,
+)
 from minimal_qrl.subgoal_actor import (
     SubgoalActor,
     load_subgoal_actor_checkpoint,
@@ -388,6 +393,11 @@ def _choose_hierarchical_subgoal(
         "executed_subgoal": executed_subgoal,
         "used_teacher_fallback": bool(use_teacher_fallback),
         "executed_task_score": float(env.compute_task_score(executed_subgoal)),
+        "selected_by": "heuristic",
+        "selected_pred_cost": None,
+        "selected_rollout_label": None,
+        "top1_match": None,
+        "eval_mse": None,
     }
 
 
@@ -399,11 +409,14 @@ def rollout_execution_episode(
     episode_seed: int,
     lookahead_cfg: Optional[DubinsLookaheadConfig],
     subgoal_actor: Optional[SubgoalActor] = None,
+    top_model: Optional[CostAwareSubgoalScorer] = None,
     actor_device: Optional[torch.device] = None,
     high_level_period: int = 5,
     subgoal_candidates: int = 64,
     subgoal_lambda_final: float = 0.3,
     subgoal_lambda_task: float = 1.0,
+    subgoal_selector: str = "heuristic",
+    top_model_rollout_steps: Optional[int] = None,
 ) -> Dict[str, Any]:
     if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
@@ -411,6 +424,10 @@ def rollout_execution_episode(
         raise ValueError("lookahead 模式需要 lookahead_cfg")
     if execution_mode == "hierarchical" and (lookahead_cfg is None or subgoal_actor is None or actor_device is None):
         raise ValueError("hierarchical 模式需要 lookahead_cfg、subgoal_actor 和 actor_device")
+    if subgoal_selector not in {"heuristic", "cost_aware"}:
+        raise ValueError(f"未知 subgoal_selector: {subgoal_selector}")
+    if execution_mode == "hierarchical" and subgoal_selector == "cost_aware" and top_model is None:
+        raise ValueError("hierarchical + cost_aware 需要 top_model")
 
     np.random.seed(int(episode_seed))
     obs, reset_info = env.reset(seed=int(episode_seed))
@@ -447,18 +464,39 @@ def rollout_execution_episode(
                 need_replan = True
 
             if need_replan:
-                subgoal_choice = _choose_hierarchical_subgoal(
-                    subgoal_actor,
-                    agent,
-                    env,
-                    obs,
-                    goal_obs,
-                    device=actor_device,
-                    num_candidates=int(subgoal_candidates),
-                    lambda_final=float(subgoal_lambda_final),
-                    lambda_task=float(subgoal_lambda_task),
-                    rng=rng,
-                )
+                if subgoal_selector == "cost_aware":
+                    subgoal_choice = select_cost_aware_subgoal(
+                        subgoal_actor,
+                        top_model,
+                        agent,
+                        env,
+                        obs,
+                        goal_obs,
+                        actor_device=actor_device,
+                        scorer_device=actor_device,
+                        lookahead_cfg=lookahead_cfg,
+                        num_candidates=int(subgoal_candidates),
+                        rollout_steps=(
+                            int(top_model_rollout_steps)
+                            if top_model_rollout_steps is not None
+                            else int(high_level_period)
+                        ),
+                        rng=rng,
+                        evaluate_rollout_labels=True,
+                    )
+                else:
+                    subgoal_choice = _choose_hierarchical_subgoal(
+                        subgoal_actor,
+                        agent,
+                        env,
+                        obs,
+                        goal_obs,
+                        device=actor_device,
+                        num_candidates=int(subgoal_candidates),
+                        lambda_final=float(subgoal_lambda_final),
+                        lambda_task=float(subgoal_lambda_task),
+                        rng=rng,
+                    )
                 current_subgoal = np.asarray(subgoal_choice["executed_subgoal"], dtype=np.float32)
                 high_level_events.append(
                     {
@@ -475,6 +513,28 @@ def rollout_execution_episode(
                         "repaired_task_score": float(subgoal_choice["repaired_task_score"]),
                         "executed_task_score": float(subgoal_choice["executed_task_score"]),
                         "used_teacher_fallback": bool(subgoal_choice["used_teacher_fallback"]),
+                        "candidate_count": int(subgoal_choice.get("candidate_count", subgoal_candidates)),
+                        "selected_by": str(subgoal_choice.get("selected_by", subgoal_selector)),
+                        "selected_pred_cost": (
+                            None
+                            if subgoal_choice.get("selected_pred_cost") is None
+                            else float(subgoal_choice["selected_pred_cost"])
+                        ),
+                        "selected_rollout_label": (
+                            None
+                            if subgoal_choice.get("selected_rollout_label") is None
+                            else float(subgoal_choice["selected_rollout_label"])
+                        ),
+                        "top_model_top1_match": (
+                            None
+                            if subgoal_choice.get("top1_match") is None
+                            else float(subgoal_choice["top1_match"])
+                        ),
+                        "top_model_eval_mse": (
+                            None
+                            if subgoal_choice.get("eval_mse") is None
+                            else float(subgoal_choice["eval_mse"])
+                        ),
                     }
                 )
 
@@ -1039,11 +1099,14 @@ def evaluate_execution_mode(
     output_dir: Path,
     viz_cfg: VisualizationConfig,
     subgoal_actor: Optional[SubgoalActor] = None,
+    top_model: Optional[CostAwareSubgoalScorer] = None,
     actor_device: Optional[torch.device] = None,
     high_level_period: int = 5,
     subgoal_candidates: int = 64,
     subgoal_lambda_final: float = 0.3,
     subgoal_lambda_task: float = 1.0,
+    subgoal_selector: str = "heuristic",
+    top_model_rollout_steps: Optional[int] = None,
 ) -> tuple[Dict[str, float], Dict[str, List[Dict[str, Any]]]]:
     if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
@@ -1066,6 +1129,10 @@ def evaluate_execution_mode(
     repair_dthetas: List[float] = []
     raw_task_scores: List[float] = []
     repaired_task_scores: List[float] = []
+    top_model_top1_matches: List[float] = []
+    top_model_eval_mses: List[float] = []
+    selected_pred_costs: List[float] = []
+    selected_rollout_labels: List[float] = []
 
     visualization_index: Dict[str, List[Dict[str, Any]]] = {
         "success": [],
@@ -1087,11 +1154,14 @@ def evaluate_execution_mode(
             episode_seed=int(seed + i),
             lookahead_cfg=lookahead_cfg,
             subgoal_actor=subgoal_actor,
+            top_model=top_model,
             actor_device=actor_device,
             high_level_period=int(high_level_period),
             subgoal_candidates=int(subgoal_candidates),
             subgoal_lambda_final=float(subgoal_lambda_final),
             subgoal_lambda_task=float(subgoal_lambda_task),
+            subgoal_selector=str(subgoal_selector),
+            top_model_rollout_steps=top_model_rollout_steps,
         )
 
         step_count = int(rollout["num_steps"])
@@ -1121,6 +1191,26 @@ def evaluate_execution_mode(
                 repair_dthetas.extend(float(ev["repair_dtheta"]) for ev in events)
                 raw_task_scores.extend(float(ev["raw_task_score"]) for ev in events)
                 repaired_task_scores.extend(float(ev["repaired_task_score"]) for ev in events)
+                top_model_top1_matches.extend(
+                    float(ev["top_model_top1_match"])
+                    for ev in events
+                    if ev.get("top_model_top1_match") is not None
+                )
+                top_model_eval_mses.extend(
+                    float(ev["top_model_eval_mse"])
+                    for ev in events
+                    if ev.get("top_model_eval_mse") is not None
+                )
+                selected_pred_costs.extend(
+                    float(ev["selected_pred_cost"])
+                    for ev in events
+                    if ev.get("selected_pred_cost") is not None
+                )
+                selected_rollout_labels.extend(
+                    float(ev["selected_rollout_label"])
+                    for ev in events
+                    if ev.get("selected_rollout_label") is not None
+                )
 
         if (
             viz_cfg.save_visualizations
@@ -1176,6 +1266,10 @@ def evaluate_execution_mode(
         "mean_repair_dtheta": float(np.mean(repair_dthetas)) if repair_dthetas else 0.0,
         "mean_taskscore_raw_subgoal": float(np.mean(raw_task_scores)) if raw_task_scores else 0.0,
         "mean_taskscore_repaired_subgoal": float(np.mean(repaired_task_scores)) if repaired_task_scores else 0.0,
+        "top_model_top1_match_rate": float(np.mean(top_model_top1_matches)) if top_model_top1_matches else 0.0,
+        "top_model_val_mse": float(np.mean(top_model_eval_mses)) if top_model_eval_mses else 0.0,
+        "mean_selected_pred_cost": float(np.mean(selected_pred_costs)) if selected_pred_costs else 0.0,
+        "mean_selected_rollout_cost_label": float(np.mean(selected_rollout_labels)) if selected_rollout_labels else 0.0,
     }
     return metrics, visualization_index
 
@@ -1249,10 +1343,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-critics", type=int, default=2)
     parser.add_argument("--execution-modes", type=str, default="greedy,lookahead")
     parser.add_argument("--subgoal-actor-checkpoint", type=str, default=None)
+    parser.add_argument("--subgoal-selector", type=str, default="heuristic", choices=["heuristic", "cost_aware"])
+    parser.add_argument("--top-model-checkpoint", type=str, default=None)
     parser.add_argument("--high-level-period", type=int, default=5)
     parser.add_argument("--subgoal-candidates", type=int, default=64)
     parser.add_argument("--subgoal-lambda-final", type=float, default=0.3)
     parser.add_argument("--subgoal-lambda-task", type=float, default=1.0)
+    parser.add_argument("--top-model-rollout-steps", type=int, default=None)
 
     parser.add_argument("--lookahead-horizon", type=int, default=20)
     parser.add_argument("--lookahead-num-sequences", type=int, default=256)
@@ -1303,6 +1400,9 @@ def main():
     subgoal_actor = None
     subgoal_actor_meta: Dict[str, Any] = {}
     subgoal_ckpt: Optional[str] = None
+    top_model = None
+    top_model_meta: Dict[str, Any] = {}
+    top_model_ckpt: Optional[str] = None
     if "hierarchical" in execution_modes:
         subgoal_ckpt = args.subgoal_actor_checkpoint
         if not subgoal_ckpt:
@@ -1313,6 +1413,16 @@ def main():
                 f"hierarchical 模式需要 subgoal actor checkpoint，但未找到: {subgoal_ckpt}"
             )
         subgoal_actor, subgoal_actor_meta = load_subgoal_actor_checkpoint(subgoal_ckpt, device=device)
+        if str(args.subgoal_selector) == "cost_aware":
+            top_model_ckpt = args.top_model_checkpoint
+            if not top_model_ckpt:
+                candidate = Path(args.checkpoint).with_name("cost_aware_subgoal_scorer_checkpoint_final.pth")
+                top_model_ckpt = str(candidate)
+            if not os.path.exists(top_model_ckpt):
+                raise FileNotFoundError(
+                    f"subgoal_selector=cost_aware 需要顶层 scorer checkpoint，但未找到: {top_model_ckpt}"
+                )
+            top_model, top_model_meta = load_cost_aware_subgoal_scorer_checkpoint(top_model_ckpt, device=device)
 
     lookahead_cfg = DubinsLookaheadConfig(
         horizon=int(args.lookahead_horizon),
@@ -1354,11 +1464,14 @@ def main():
             output_dir=output_dir,
             viz_cfg=viz_cfg,
             subgoal_actor=subgoal_actor,
+            top_model=top_model,
             actor_device=device,
             high_level_period=int(args.high_level_period),
             subgoal_candidates=int(args.subgoal_candidates),
             subgoal_lambda_final=float(args.subgoal_lambda_final),
             subgoal_lambda_task=float(args.subgoal_lambda_task),
+            subgoal_selector=str(args.subgoal_selector),
+            top_model_rollout_steps=args.top_model_rollout_steps,
         )
         results[mode] = metrics
         visualization_index[mode] = vis_index
@@ -1374,6 +1487,9 @@ def main():
         "lookahead_config": asdict(lookahead_cfg),
         "subgoal_actor_checkpoint": os.path.abspath(subgoal_ckpt) if subgoal_ckpt else None,
         "subgoal_actor_metadata": subgoal_actor_meta,
+        "subgoal_selector": str(args.subgoal_selector),
+        "top_model_checkpoint": os.path.abspath(top_model_ckpt) if top_model_ckpt else None,
+        "top_model_metadata": top_model_meta,
         "visualization_config": asdict(viz_cfg),
         "env_config": {
             "bounds": [float(v) for v in args.bounds],

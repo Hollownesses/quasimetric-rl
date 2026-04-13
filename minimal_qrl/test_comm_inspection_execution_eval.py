@@ -23,6 +23,7 @@ from minimal_qrl.eval.comm_inspection_execution_eval import (
     rollout_execution_episode,
 )
 from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
+from minimal_qrl.cost_aware_subgoal_scorer import CostAwareSubgoalScorer
 from minimal_qrl.gc_agents import GoalConditionedAgentBase
 from minimal_qrl.subgoal_actor import SubgoalActor
 from minimal_qrl.envs import CircleObstacle
@@ -148,6 +149,53 @@ def test_hierarchical_execution_eval_smoke(tmp_path: Path):
 
     assert "raw_actor_output_valid_rate" in metrics
     assert "mean_repair_distance" in metrics
+    assert visualizations == {"success": [], "failure": []}
+
+
+def test_cost_aware_hierarchical_execution_eval_smoke(tmp_path: Path):
+    env = make_env()
+    agent = ZeroTurnAgent()
+    actor = SubgoalActor(obs_dim=int(env.observation_space.shape[0]), hidden_dim=32)
+    top_model = CostAwareSubgoalScorer(obs_dim=int(env.observation_space.shape[0]), hidden_dim=32)
+    viz_cfg = VisualizationConfig(
+        save_visualizations=False,
+        max_successes=0,
+        max_failures=0,
+        save_gif=False,
+        gif_fps=8,
+    )
+    lookahead_cfg = DubinsLookaheadConfig(
+        horizon=3,
+        num_sequences=8,
+        biased_sequences=2,
+        alpha_subgoal=1.0,
+        alpha_final=0.3,
+        alpha_task_terminal=0.5,
+        use_env_stage_cost=True,
+    )
+
+    metrics, visualizations = evaluate_execution_mode(
+        agent,
+        env,
+        "hierarchical",
+        n_trials=1,
+        seed=3,
+        lookahead_cfg=lookahead_cfg,
+        output_dir=tmp_path,
+        viz_cfg=viz_cfg,
+        subgoal_actor=actor,
+        top_model=top_model,
+        actor_device=torch.device("cpu"),
+        high_level_period=2,
+        subgoal_candidates=8,
+        subgoal_lambda_final=0.3,
+        subgoal_lambda_task=1.0,
+        subgoal_selector="cost_aware",
+        top_model_rollout_steps=2,
+    )
+
+    assert "top_model_top1_match_rate" in metrics
+    assert "mean_selected_pred_cost" in metrics
     assert visualizations == {"success": [], "failure": []}
 
 
