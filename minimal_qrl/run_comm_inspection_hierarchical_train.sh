@@ -3,7 +3,7 @@
 #
 # 功能：
 # 1. 先训练 QRL critic
-# 2. 冻结 critic，再训练 SubgoalActor
+# 2. 冻结 critic，再训练高层 CostAwareSubgoalPolicy (goal-conditioned SAC)
 #
 # 直接运行：
 #   bash minimal_qrl/run_comm_inspection_hierarchical_train.sh
@@ -11,7 +11,7 @@
 # 常见覆盖方式：
 #   OUTPUT_DIR=./results/minimal_qrl_inspection_dubins_hier \
 #   TOTAL_STEPS=30000 \
-#   SUBGOAL_TRAIN_STEPS=8000 \
+#   HIGH_LEVEL_TRAIN_STEPS=8000 \
 #   bash minimal_qrl/run_comm_inspection_hierarchical_train.sh
 
 set -euo pipefail
@@ -51,7 +51,7 @@ fi
 if [[ "${REQUIRE_GROUND_STATION_LOS:-0}" == "1" ]]; then
   REQUIRE_GROUND_STATION_LOS_FLAG="--require-ground-station-los"
 fi
-if [[ "${ONLY_SUBGOAL_ACTOR:-0}" == "1" ]]; then
+if [[ "${ONLY_HIGH_LEVEL_POLICY:-${ONLY_SUBGOAL_ACTOR:-0}}" == "1" ]]; then
   SKIP_CRITIC_TRAINING_FLAG="--skip-critic-training"
   CRITIC_CHECKPOINT="${CRITIC_CHECKPOINT:-$DEFAULT_CRITIC_CHECKPOINT}"
 fi
@@ -107,21 +107,36 @@ fi
   --taskscore-beta-comm "${TASKSCORE_BETA_COMM:-1.0}" \
   --taskscore-beta-feas "${TASKSCORE_BETA_FEAS:-0.5}" \
   --taskscore-margin-clip "${TASKSCORE_MARGIN_CLIP:-2.0}" \
-  --hierarchical-mode subgoal_actor \
-  --subgoal-train-steps "${SUBGOAL_TRAIN_STEPS:-5000}" \
-  --subgoal-batch-size "${SUBGOAL_BATCH_SIZE:-32}" \
-  --subgoal-actor-lr "${SUBGOAL_ACTOR_LR:-3e-4}" \
-  --subgoal-actor-hidden-dim "${SUBGOAL_ACTOR_HIDDEN_DIM:-256}" \
-  --subgoal-save-interval "${SUBGOAL_SAVE_INTERVAL:-1000}" \
-  --subgoal-candidates "${SUBGOAL_CANDIDATES:-64}" \
+  --hierarchical-mode "${HIERARCHICAL_MODE:-sac_subgoal}" \
   --high-level-period "${HIGH_LEVEL_PERIOD:-5}" \
-  --subgoal-lambda-final "${SUBGOAL_LAMBDA_FINAL:-0.3}" \
-  --subgoal-lambda-task "${SUBGOAL_LAMBDA_TASK:-1.0}"
+  --lookahead-horizon "${LOOKAHEAD_HORIZON:-10}" \
+  --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-128}" \
+  --lookahead-step-cost-weight "${LOOKAHEAD_STEP_COST_WEIGHT:-0.0}" \
+  --lookahead-collision-penalty "${LOOKAHEAD_COLLISION_PENALTY:-0.0}" \
+  --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-24}" \
+  --lookahead-bias-kp "${LOOKAHEAD_BIAS_KP:-2.0}" \
+  --planner-alpha-subgoal "${PLANNER_ALPHA_SUBGOAL:-1.0}" \
+  --planner-alpha-final "${PLANNER_ALPHA_FINAL:-0.0}" \
+  --planner-alpha-task-terminal "${PLANNER_ALPHA_TASK_TERMINAL:-0.0}" \
+  --high-level-train-steps "${HIGH_LEVEL_TRAIN_STEPS:-5000}" \
+  --high-level-batch-size "${HIGH_LEVEL_BATCH_SIZE:-128}" \
+  --high-level-actor-lr "${HIGH_LEVEL_ACTOR_LR:-3e-4}" \
+  --high-level-critic-lr "${HIGH_LEVEL_CRITIC_LR:-3e-4}" \
+  --high-level-gamma "${HIGH_LEVEL_GAMMA:-0.99}" \
+  --high-level-tau "${HIGH_LEVEL_TAU:-0.005}" \
+  --high-level-init-alpha "${HIGH_LEVEL_INIT_ALPHA:-0.2}" \
+  --high-level-replay-size "${HIGH_LEVEL_REPLAY_SIZE:-200000}" \
+  --high-level-start-random-steps "${HIGH_LEVEL_START_RANDOM_STEPS:-1000}" \
+  --high-level-updates-per-step "${HIGH_LEVEL_UPDATES_PER_STEP:-1}" \
+  --high-level-hidden-dim "${HIGH_LEVEL_HIDDEN_DIM:-256}" \
+  --high-level-save-interval "${HIGH_LEVEL_SAVE_INTERVAL:-1000}" \
+  --subgoal-max-radius "${SUBGOAL_MAX_RADIUS:-1.5}" \
+  --subgoal-relative-param "${SUBGOAL_RELATIVE_PARAM:-polar_local}"
 
 echo "分层训练完成。结果目录: $OUTPUT_DIR"
 echo "Critic checkpoint:"
 echo "  $OUTPUT_DIR/checkpoint_final.pth"
-echo "Subgoal actor checkpoint:"
-echo "  $OUTPUT_DIR/subgoal_actor_checkpoint_final.pth"
+echo "High-level policy checkpoint:"
+echo "  $OUTPUT_DIR/high_level_policy_checkpoint_final.pth"
 echo "TensorBoard:"
 echo "  $PYTHON_BIN -m tensorboard.main --logdir=$OUTPUT_DIR/tensorboard"

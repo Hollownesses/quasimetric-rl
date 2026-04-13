@@ -15,7 +15,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -44,10 +44,11 @@ from minimal_qrl.eval.dubins_execution_mode_eval import (
 )
 from minimal_qrl.eval.utils import auto_device, ensure_registered_env
 from minimal_qrl.gc_agents import GoalConditionedAgentBase, QRLGoalValueAdapter
-from minimal_qrl.subgoal_actor import (
-    SubgoalActor,
-    load_subgoal_actor_checkpoint,
-    select_teacher_subgoal,
+from minimal_qrl.high_level_policy import (
+    CostAwareSubgoalPolicy,
+    FrozenQRLNavigationFeatures,
+    load_high_level_policy_checkpoint,
+    select_high_level_subgoal,
 )
 
 
@@ -208,6 +209,14 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _hierarchical_low_level_lookahead_cfg(cfg: DubinsLookaheadConfig) -> DubinsLookaheadConfig:
+    return replace(
+        cfg,
+        alpha_final=0.0,
+        alpha_task_terminal=0.0,
+    )
+
+
 def _evaluate_comm_lookahead_sequences(
     agent: GoalConditionedAgentBase,
     env: CommInspectionDubinsUAV2D,
@@ -355,39 +364,25 @@ def _comm_inspection_lookahead_action(
 
 
 def _choose_hierarchical_subgoal(
-    actor: SubgoalActor,
-    agent: GoalConditionedAgentBase,
+    policy: CostAwareSubgoalPolicy,
+    nav_features: FrozenQRLNavigationFeatures,
     env: CommInspectionDubinsUAV2D,
     obs: np.ndarray,
     goal_obs: np.ndarray,
-    *,
-    device: torch.device,
-    num_candidates: int,
-    lambda_final: float,
-    lambda_task: float,
-    rng: np.random.Generator,
 ) -> Dict[str, Any]:
-    choice = select_teacher_subgoal(
-        actor,
-        agent,
+    choice = select_high_level_subgoal(
+        policy,
+        nav_features,
         env,
         obs,
         goal_obs,
-        device=device,
-        num_candidates=num_candidates,
-        lambda_final=lambda_final,
-        lambda_task=lambda_task,
-        rng=rng,
+        eval_mode=True,
     )
-    repaired_state = np.asarray(choice["repaired_subgoal"], dtype=np.float32)
-    teacher_state = np.asarray(choice["teacher_subgoal"], dtype=np.float32)
-    use_teacher_fallback = bool(choice.get("used_global_repair_fallback", False))
-    executed_subgoal = teacher_state if use_teacher_fallback else repaired_state
     return {
         **choice,
-        "executed_subgoal": executed_subgoal,
-        "used_teacher_fallback": bool(use_teacher_fallback),
-        "executed_task_score": float(env.compute_task_score(executed_subgoal)),
+        "executed_subgoal": np.asarray(choice["executed_subgoal"], dtype=np.float32),
+        "used_teacher_fallback": False,
+        "executed_task_score": float(env.compute_task_score(choice["executed_subgoal"])),
     }
 
 
@@ -398,24 +393,21 @@ def rollout_execution_episode(
     *,
     episode_seed: int,
     lookahead_cfg: Optional[DubinsLookaheadConfig],
-    subgoal_actor: Optional[SubgoalActor] = None,
-    actor_device: Optional[torch.device] = None,
+    high_level_policy: Optional[CostAwareSubgoalPolicy] = None,
+    nav_features: Optional[FrozenQRLNavigationFeatures] = None,
     high_level_period: int = 5,
-    subgoal_candidates: int = 64,
-    subgoal_lambda_final: float = 0.3,
-    subgoal_lambda_task: float = 1.0,
 ) -> Dict[str, Any]:
     if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
     if execution_mode == "lookahead" and lookahead_cfg is None:
         raise ValueError("lookahead 模式需要 lookahead_cfg")
-    if execution_mode == "hierarchical" and (lookahead_cfg is None or subgoal_actor is None or actor_device is None):
-        raise ValueError("hierarchical 模式需要 lookahead_cfg、subgoal_actor 和 actor_device")
+    if execution_mode == "hierarchical" and (lookahead_cfg is None or high_level_policy is None or nav_features is None):
+        raise ValueError("hierarchical 模式需要 lookahead_cfg、high_level_policy 和 nav_features")
 
     np.random.seed(int(episode_seed))
     obs, reset_info = env.reset(seed=int(episode_seed))
     goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
-    rng = np.random.default_rng(int(episode_seed))
+    hier_cfg = _hierarchical_low_level_lookahead_cfg(lookahead_cfg) if lookahead_cfg is not None else None
 
     states: List[np.ndarray] = [env.state.copy()]
     actions: List[np.ndarray] = []
@@ -441,28 +433,27 @@ def rollout_execution_episode(
             if current_subgoal is not None and env.is_subgoal_reached(
                 env.state,
                 current_subgoal,
-                pos_tolerance=float(lookahead_cfg.subgoal_reached_pos_tolerance),
-                theta_tolerance=float(lookahead_cfg.subgoal_reached_theta_tolerance),
+                pos_tolerance=float(hier_cfg.subgoal_reached_pos_tolerance),
+                theta_tolerance=float(hier_cfg.subgoal_reached_theta_tolerance),
             ):
                 need_replan = True
 
             if need_replan:
                 subgoal_choice = _choose_hierarchical_subgoal(
-                    subgoal_actor,
-                    agent,
+                    high_level_policy,
+                    nav_features,
                     env,
                     obs,
                     goal_obs,
-                    device=actor_device,
-                    num_candidates=int(subgoal_candidates),
-                    lambda_final=float(subgoal_lambda_final),
-                    lambda_task=float(subgoal_lambda_task),
-                    rng=rng,
                 )
                 current_subgoal = np.asarray(subgoal_choice["executed_subgoal"], dtype=np.float32)
                 high_level_events.append(
                     {
                         "step": int(len(actions)),
+                        "raw_action": [float(v) for v in np.asarray(subgoal_choice["raw_action"], dtype=np.float32)],
+                        "radius": float(subgoal_choice["radius"]),
+                        "bearing_offset": float(subgoal_choice["bearing_offset"]),
+                        "heading_offset": float(subgoal_choice["heading_offset"]),
                         "raw_subgoal": [float(v) for v in np.asarray(subgoal_choice["raw_subgoal"], dtype=np.float32)],
                         "repaired_subgoal": [float(v) for v in np.asarray(subgoal_choice["repaired_subgoal"], dtype=np.float32)],
                         "executed_subgoal": [float(v) for v in np.asarray(current_subgoal, dtype=np.float32)],
@@ -474,6 +465,7 @@ def rollout_execution_episode(
                         "raw_task_score": float(subgoal_choice["raw_task_score"]),
                         "repaired_task_score": float(subgoal_choice["repaired_task_score"]),
                         "executed_task_score": float(subgoal_choice["executed_task_score"]),
+                        "qrl_distance_to_final": float(subgoal_choice["qrl_distance_to_final"]),
                         "used_teacher_fallback": bool(subgoal_choice["used_teacher_fallback"]),
                     }
                 )
@@ -482,7 +474,7 @@ def rollout_execution_episode(
                 agent,
                 env,
                 goal_obs,
-                lookahead_cfg,
+                hier_cfg,
                 subgoal_state=current_subgoal,
             )
         else:
@@ -497,8 +489,8 @@ def rollout_execution_episode(
                 env.is_subgoal_reached(
                     env.state,
                     current_subgoal,
-                    pos_tolerance=float(lookahead_cfg.subgoal_reached_pos_tolerance),
-                    theta_tolerance=float(lookahead_cfg.subgoal_reached_theta_tolerance),
+                    pos_tolerance=float(hier_cfg.subgoal_reached_pos_tolerance),
+                    theta_tolerance=float(hier_cfg.subgoal_reached_theta_tolerance),
                 )
             )
 
@@ -1038,19 +1030,16 @@ def evaluate_execution_mode(
     lookahead_cfg: Optional[DubinsLookaheadConfig],
     output_dir: Path,
     viz_cfg: VisualizationConfig,
-    subgoal_actor: Optional[SubgoalActor] = None,
-    actor_device: Optional[torch.device] = None,
+    high_level_policy: Optional[CostAwareSubgoalPolicy] = None,
+    nav_features: Optional[FrozenQRLNavigationFeatures] = None,
     high_level_period: int = 5,
-    subgoal_candidates: int = 64,
-    subgoal_lambda_final: float = 0.3,
-    subgoal_lambda_task: float = 1.0,
 ) -> tuple[Dict[str, float], Dict[str, List[Dict[str, Any]]]]:
     if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
     if execution_mode == "lookahead" and lookahead_cfg is None:
         raise ValueError("lookahead 模式需要 lookahead_cfg")
-    if execution_mode == "hierarchical" and (lookahead_cfg is None or subgoal_actor is None or actor_device is None):
-        raise ValueError("hierarchical 模式需要 lookahead_cfg、subgoal_actor 和 actor_device")
+    if execution_mode == "hierarchical" and (lookahead_cfg is None or high_level_policy is None or nav_features is None):
+        raise ValueError("hierarchical 模式需要 lookahead_cfg、high_level_policy 和 nav_features")
 
     np.random.seed(int(seed))
 
@@ -1086,12 +1075,9 @@ def evaluate_execution_mode(
             execution_mode,
             episode_seed=int(seed + i),
             lookahead_cfg=lookahead_cfg,
-            subgoal_actor=subgoal_actor,
-            actor_device=actor_device,
+            high_level_policy=high_level_policy,
+            nav_features=nav_features,
             high_level_period=int(high_level_period),
-            subgoal_candidates=int(subgoal_candidates),
-            subgoal_lambda_final=float(subgoal_lambda_final),
-            subgoal_lambda_task=float(subgoal_lambda_task),
         )
 
         step_count = int(rollout["num_steps"])
@@ -1248,11 +1234,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--num-critics", type=int, default=2)
     parser.add_argument("--execution-modes", type=str, default="greedy,lookahead")
-    parser.add_argument("--subgoal-actor-checkpoint", type=str, default=None)
+    parser.add_argument("--high-level-policy-checkpoint", type=str, default=None)
+    parser.add_argument("--subgoal-actor-checkpoint", type=str, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--high-level-period", type=int, default=5)
-    parser.add_argument("--subgoal-candidates", type=int, default=64)
-    parser.add_argument("--subgoal-lambda-final", type=float, default=0.3)
-    parser.add_argument("--subgoal-lambda-task", type=float, default=1.0)
+    parser.add_argument("--high-level-use-qrl-distance", dest="high_level_use_qrl_distance", action="store_true", default=True)
+    parser.add_argument("--no-high-level-use-qrl-distance", dest="high_level_use_qrl_distance", action="store_false")
+    parser.add_argument("--high-level-use-qrl-latent", dest="high_level_use_qrl_latent", action="store_true", default=True)
+    parser.add_argument("--no-high-level-use-qrl-latent", dest="high_level_use_qrl_latent", action="store_false")
+    parser.add_argument("--high-level-qrl-critic-index", type=int, default=0)
 
     parser.add_argument("--lookahead-horizon", type=int, default=20)
     parser.add_argument("--lookahead-num-sequences", type=int, default=256)
@@ -1300,19 +1289,40 @@ def main():
     agent, ckpt_step = build_qrl_adapter(args, device, env)
 
     execution_modes = _parse_execution_modes(args.execution_modes)
-    subgoal_actor = None
-    subgoal_actor_meta: Dict[str, Any] = {}
-    subgoal_ckpt: Optional[str] = None
+    high_level_policy = None
+    high_level_policy_meta: Dict[str, Any] = {}
+    high_level_policy_ckpt: Optional[str] = None
+    nav_features = None
     if "hierarchical" in execution_modes:
-        subgoal_ckpt = args.subgoal_actor_checkpoint
-        if not subgoal_ckpt:
-            candidate = Path(args.checkpoint).with_name("subgoal_actor_checkpoint_final.pth")
-            subgoal_ckpt = str(candidate)
-        if not os.path.exists(subgoal_ckpt):
+        high_level_policy_ckpt = args.high_level_policy_checkpoint or args.subgoal_actor_checkpoint
+        if not high_level_policy_ckpt:
+            candidate = Path(args.checkpoint).with_name("high_level_policy_checkpoint_final.pth")
+            high_level_policy_ckpt = str(candidate)
+        if not os.path.exists(high_level_policy_ckpt):
             raise FileNotFoundError(
-                f"hierarchical 模式需要 subgoal actor checkpoint，但未找到: {subgoal_ckpt}"
+                f"hierarchical 模式需要 high-level policy checkpoint，但未找到: {high_level_policy_ckpt}"
             )
-        subgoal_actor, subgoal_actor_meta = load_subgoal_actor_checkpoint(subgoal_ckpt, device=device)
+        high_level_policy, high_level_policy_meta = load_high_level_policy_checkpoint(
+            high_level_policy_ckpt,
+            device=device,
+        )
+        use_qrl_distance = bool(high_level_policy_meta.get("use_qrl_distance", args.high_level_use_qrl_distance))
+        use_qrl_latent = bool(high_level_policy_meta.get("use_qrl_latent", args.high_level_use_qrl_latent))
+        qrl_critic_index = int(high_level_policy_meta.get("qrl_critic_index", args.high_level_qrl_critic_index))
+        nav_features = FrozenQRLNavigationFeatures(
+            agent.qrl_agent,
+            obs_dim=int(env.observation_space.shape[0]),
+            device=device,
+            critic_index=qrl_critic_index,
+            use_distance=use_qrl_distance,
+            use_latent=use_qrl_latent,
+        )
+        expected_state_dim = 2 * int(env.observation_space.shape[0]) + int(nav_features.feature_dim)
+        if int(high_level_policy.state_dim) != int(expected_state_dim):
+            raise ValueError(
+                "high-level policy checkpoint 的 state_dim 与当前环境/QRL 特征配置不匹配。"
+                f" checkpoint={high_level_policy.state_dim}, expected={expected_state_dim}"
+            )
 
     lookahead_cfg = DubinsLookaheadConfig(
         horizon=int(args.lookahead_horizon),
@@ -1353,12 +1363,9 @@ def main():
             lookahead_cfg=cfg,
             output_dir=output_dir,
             viz_cfg=viz_cfg,
-            subgoal_actor=subgoal_actor,
-            actor_device=device,
+            high_level_policy=high_level_policy,
+            nav_features=nav_features,
             high_level_period=int(args.high_level_period),
-            subgoal_candidates=int(args.subgoal_candidates),
-            subgoal_lambda_final=float(args.subgoal_lambda_final),
-            subgoal_lambda_task=float(args.subgoal_lambda_task),
         )
         results[mode] = metrics
         visualization_index[mode] = vis_index
@@ -1372,8 +1379,8 @@ def main():
         "results": results,
         "visualizations": visualization_index,
         "lookahead_config": asdict(lookahead_cfg),
-        "subgoal_actor_checkpoint": os.path.abspath(subgoal_ckpt) if subgoal_ckpt else None,
-        "subgoal_actor_metadata": subgoal_actor_meta,
+        "high_level_policy_checkpoint": os.path.abspath(high_level_policy_ckpt) if high_level_policy_ckpt else None,
+        "high_level_policy_metadata": high_level_policy_meta,
         "visualization_config": asdict(viz_cfg),
         "env_config": {
             "bounds": [float(v) for v in args.bounds],

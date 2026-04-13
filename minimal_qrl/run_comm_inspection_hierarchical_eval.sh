@@ -2,7 +2,7 @@
 # 通信感知巡检 Dubins UAV 上的分层 QRL 评估脚本
 #
 # 目标：
-# - 读取分层训练输出的 critic checkpoint 与 subgoal actor checkpoint
+# - 读取分层训练输出的 critic checkpoint 与 high-level policy checkpoint
 # - 对比 greedy / lookahead / hierarchical 三种执行方式
 #
 # 直接运行：
@@ -25,7 +25,7 @@ fi
 
 OUTPUT_DIR="${OUTPUT_DIR:-./results/minimal_qrl_inspection_dubins_hier}"
 CHECKPOINT="${CHECKPOINT:-$OUTPUT_DIR/checkpoint_final.pth}"
-SUBGOAL_ACTOR_CHECKPOINT="${SUBGOAL_ACTOR_CHECKPOINT:-$OUTPUT_DIR/subgoal_actor_checkpoint_final.pth}"
+HIGH_LEVEL_POLICY_CHECKPOINT="${HIGH_LEVEL_POLICY_CHECKPOINT:-$OUTPUT_DIR/high_level_policy_checkpoint_final.pth}"
 
 BOUNDS="${BOUNDS:-0 0 10 10}"
 INSPECTION_TARGET="${INSPECTION_TARGET:-3.0 7.5}"
@@ -68,7 +68,7 @@ echo "评估通信巡检 Dubins UAV 分层 QRL..."
 
 "$PYTHON_BIN" minimal_qrl/eval/comm_inspection_execution_eval.py \
   --checkpoint "$CHECKPOINT" \
-  --subgoal-actor-checkpoint "$SUBGOAL_ACTOR_CHECKPOINT" \
+  --high-level-policy-checkpoint "$HIGH_LEVEL_POLICY_CHECKPOINT" \
   --output-dir "$OUTPUT_DIR/hier_eval_results" \
   --bounds ${BOUNDS} \
   --omega-max "${OMEGA_MAX:-3.0}" \
@@ -108,9 +108,9 @@ echo "评估通信巡检 Dubins UAV 分层 QRL..."
   --device "${DEVICE:-auto}" \
   --execution-modes "${EXECUTION_MODES:-greedy,lookahead,hierarchical}" \
   --high-level-period "${HIGH_LEVEL_PERIOD:-5}" \
-  --subgoal-candidates "${SUBGOAL_CANDIDATES:-64}" \
-  --subgoal-lambda-final "${SUBGOAL_LAMBDA_FINAL:-0.3}" \
-  --subgoal-lambda-task "${SUBGOAL_LAMBDA_TASK:-1.0}" \
+  --high-level-use-qrl-distance \
+  --high-level-use-qrl-latent \
+  --high-level-qrl-critic-index "${HIGH_LEVEL_QRL_CRITIC_INDEX:-0}" \
   --lookahead-horizon "${LOOKAHEAD_HORIZON:-10}" \
   --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-128}" \
   --lookahead-step-cost-weight "${LOOKAHEAD_STEP_COST_WEIGHT:-0.0}" \
@@ -118,8 +118,8 @@ echo "评估通信巡检 Dubins UAV 分层 QRL..."
   --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-24}" \
   --lookahead-bias-kp "${LOOKAHEAD_BIAS_KP:-2.0}" \
   --planner-alpha-subgoal "${PLANNER_ALPHA_SUBGOAL:-1.0}" \
-  --planner-alpha-final "${PLANNER_ALPHA_FINAL:-0.3}" \
-  --planner-alpha-task-terminal "${PLANNER_ALPHA_TASK_TERMINAL:-0.5}" \
+  --planner-alpha-final "${PLANNER_ALPHA_FINAL:-0.0}" \
+  --planner-alpha-task-terminal "${PLANNER_ALPHA_TASK_TERMINAL:-0.0}" \
   ${NO_PLANNER_USE_ENV_STAGE_COST_FLAG} \
   ${SAVE_VISUALIZATIONS_FLAG} \
   --viz-max-successes "${VIZ_MAX_SUCCESSES:-10}" \

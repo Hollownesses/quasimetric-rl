@@ -8,6 +8,7 @@ import os
 import sys
 import argparse
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import *
 from datetime import datetime
@@ -18,6 +19,9 @@ import torch.utils.data
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+os.environ.setdefault("XDG_CACHE_HOME", "/tmp")
+
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -27,6 +31,7 @@ from quasimetric_rl.modules.quasimetric_critic import QuasimetricCriticConf
 from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
+from minimal_qrl.comm_inspection_planner import comm_inspection_lookahead_action
 from minimal_qrl.envs import (
     SimpleGrid2D,
     ContinuousObstacle2D,
@@ -36,7 +41,15 @@ from minimal_qrl.envs import (
 )
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
+from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
 from minimal_qrl.gc_agents import QRLGoalValueAdapter
+from minimal_qrl.high_level_policy import (
+    CostAwareSubgoalPolicy,
+    FrozenQRLNavigationFeatures,
+    HighLevelSACConfig,
+    save_high_level_policy_checkpoint,
+    train_high_level_policy,
+)
 from minimal_qrl.subgoal_actor import (
     SubgoalActor,
     SubgoalActorTrainConfig,
@@ -207,6 +220,26 @@ def get_env_kwargs(args) -> dict:
         return kwargs
     else:
         raise ValueError(f"未知的环境类型: {args.env_type}")
+
+
+def _build_comm_inspection_hierarchical_lookahead_cfg(args) -> DubinsLookaheadConfig:
+    cfg = DubinsLookaheadConfig(
+        horizon=int(getattr(args, 'lookahead_horizon', 20)),
+        num_sequences=int(getattr(args, 'lookahead_num_sequences', 256)),
+        step_cost_weight=float(getattr(args, 'lookahead_step_cost_weight', 0.0)),
+        collision_penalty=float(getattr(args, 'lookahead_collision_penalty', 0.0)),
+        biased_sequences=int(getattr(args, 'lookahead_biased_sequences', 48)),
+        bias_kp=float(getattr(args, 'lookahead_bias_kp', 2.0)),
+        use_cem=bool(getattr(args, 'lookahead_use_cem', False)),
+        cem_iters=int(getattr(args, 'lookahead_cem_iters', 3)),
+        cem_elite_frac=float(getattr(args, 'lookahead_cem_elite_frac', 0.1)),
+        cem_std_init_frac=float(getattr(args, 'lookahead_cem_std_init_frac', 0.5)),
+        alpha_subgoal=float(getattr(args, 'planner_alpha_subgoal', 1.0)),
+        alpha_final=float(getattr(args, 'planner_alpha_final', 0.0)),
+        alpha_task_terminal=float(getattr(args, 'planner_alpha_task_terminal', 0.0)),
+        use_env_stage_cost=bool(getattr(args, 'planner_use_env_stage_cost', True)),
+    )
+    return replace(cfg, alpha_final=0.0, alpha_task_terminal=0.0)
 
 
 def _log_planning_results(planning_results: dict, execution_modes: list, writer, logger, optim_steps: int, prefix: str = 'planning'):
@@ -632,60 +665,265 @@ def train(args):
     }, final_path)
     logger.info(f"保存最终模型: {final_path}")
 
-    if (
-        args.env_type == 'comm_inspection_dubins_uav'
-        and getattr(args, 'hierarchical_mode', 'none') == 'subgoal_actor'
-        and int(getattr(args, 'subgoal_train_steps', 0)) > 0
-    ):
-        logger.info("开始第二阶段：冻结 critic，监督训练 SubgoalActor...")
-        subgoal_actor = SubgoalActor(
-            obs_dim=int(eval_env.observation_space.shape[0]),
-            hidden_dim=int(args.subgoal_actor_hidden_dim),
-        ).to(device)
-        subgoal_ckpt_init = os.path.join(output_dir, 'subgoal_actor_checkpoint_00000.pth')
-        save_subgoal_actor_checkpoint(
-            subgoal_ckpt_init,
-            subgoal_actor,
-            train_step=0,
-            metadata={
-                'hierarchical_mode': args.hierarchical_mode,
-                'subgoal_candidates': int(args.subgoal_candidates),
-                'subgoal_lambda_final': float(args.subgoal_lambda_final),
-                'subgoal_lambda_task': float(args.subgoal_lambda_task),
-                'taskscore_beta_obs': float(args.taskscore_beta_obs),
-                'taskscore_beta_comm': float(args.taskscore_beta_comm),
-                'taskscore_beta_feas': float(args.taskscore_beta_feas),
-                'taskscore_margin_clip': float(args.taskscore_margin_clip),
-            },
-        )
-        logger.info(f"保存初始 SubgoalActor 检查点: {subgoal_ckpt_init}")
+    if args.env_type == 'comm_inspection_dubins_uav':
+        if getattr(args, 'hierarchical_mode', 'none') == 'sac_subgoal' and int(getattr(args, 'high_level_train_steps', 0)) > 0:
+            logger.info("开始第二阶段：冻结 critic，训练高层 CostAwareSubgoalPolicy (goal-conditioned SAC)...")
+            agent.eval()
+            for param in agent.parameters():
+                param.requires_grad = False
 
-        agent.eval()
-        qrl_value_agent = QRLGoalValueAdapter(agent, env=eval_env, device=device)
+            qrl_value_agent = QRLGoalValueAdapter(agent, env=eval_env, device=device)
+            obs_dim = int(eval_env.observation_space.shape[0])
+            nav_features = FrozenQRLNavigationFeatures(
+                agent,
+                obs_dim=obs_dim,
+                device=device,
+                critic_index=int(args.high_level_qrl_critic_index),
+                use_distance=bool(args.high_level_use_qrl_distance),
+                use_latent=bool(args.high_level_use_qrl_latent),
+            )
+            state_dim = 2 * obs_dim + int(nav_features.feature_dim)
+            high_level_policy = CostAwareSubgoalPolicy(
+                state_dim=state_dim,
+                action_dim=3,
+                hidden_dim=int(args.high_level_hidden_dim),
+                actor_lr=float(args.high_level_actor_lr),
+                critic_lr=float(args.high_level_critic_lr),
+                tau=float(args.high_level_tau),
+                init_alpha=float(args.high_level_init_alpha),
+                target_entropy=float(args.high_level_target_entropy) if args.high_level_target_entropy is not None else None,
+                subgoal_max_radius=float(args.subgoal_max_radius),
+                subgoal_relative_param=str(args.subgoal_relative_param),
+                device=device,
+            ).to(device)
+            planner_cfg = _build_comm_inspection_hierarchical_lookahead_cfg(args)
 
-        def _log_subgoal_metrics(step: int, metrics: dict):
-            global_step = optim_steps + step
-            for key, value in metrics.items():
-                writer.add_scalar(f'subgoal_actor/{key}', value, global_step)
-            if step == 1 or step % max(1, args.log_interval) == 0:
-                logger.info(
-                    "SubgoalActor step %d: loss=%.4f pos=%.4f heading=%.4f raw_valid=%.3f repair=%.3f",
-                    step,
-                    float(metrics.get('loss', 0.0)),
-                    float(metrics.get('pos_loss', 0.0)),
-                    float(metrics.get('heading_loss', 0.0)),
-                    float(metrics.get('raw_actor_output_valid_rate', 0.0)),
-                    float(metrics.get('mean_repair_distance', 0.0)),
+            def _planner_fn(low_level_agent, env, goal_obs, cfg, *, subgoal_state=None):
+                return comm_inspection_lookahead_action(
+                    low_level_agent,
+                    env,
+                    goal_obs,
+                    cfg,
+                    subgoal_state=subgoal_state,
                 )
 
-        def _save_subgoal_checkpoint(step: int, metrics: dict):
-            ckpt_path = os.path.join(output_dir, f'subgoal_actor_checkpoint_{step:05d}.pth')
-            save_subgoal_actor_checkpoint(
-                ckpt_path,
-                subgoal_actor,
-                train_step=step,
+            high_level_ckpt_init = os.path.join(output_dir, 'high_level_policy_checkpoint_00000.pth')
+            save_high_level_policy_checkpoint(
+                high_level_ckpt_init,
+                high_level_policy,
+                train_step=0,
                 metadata={
-                    'metrics': metrics,
+                    'hierarchical_mode': args.hierarchical_mode,
+                    'high_level_period': int(args.high_level_period),
+                    'use_qrl_distance': bool(args.high_level_use_qrl_distance),
+                    'use_qrl_latent': bool(args.high_level_use_qrl_latent),
+                    'qrl_critic_index': int(args.high_level_qrl_critic_index),
+                    'subgoal_max_radius': float(args.subgoal_max_radius),
+                    'subgoal_relative_param': str(args.subgoal_relative_param),
+                    'taskscore_beta_obs': float(args.taskscore_beta_obs),
+                    'taskscore_beta_comm': float(args.taskscore_beta_comm),
+                    'taskscore_beta_feas': float(args.taskscore_beta_feas),
+                    'taskscore_margin_clip': float(args.taskscore_margin_clip),
+                    'lookahead_config': {
+                        'horizon': int(planner_cfg.horizon),
+                        'num_sequences': int(planner_cfg.num_sequences),
+                        'biased_sequences': int(planner_cfg.biased_sequences),
+                        'bias_kp': float(planner_cfg.bias_kp),
+                        'use_cem': bool(planner_cfg.use_cem),
+                        'use_env_stage_cost': bool(planner_cfg.use_env_stage_cost),
+                        'alpha_subgoal': float(planner_cfg.alpha_subgoal),
+                        'alpha_final': float(planner_cfg.alpha_final),
+                        'alpha_task_terminal': float(planner_cfg.alpha_task_terminal),
+                    },
+                },
+            )
+            logger.info(f"保存初始高层策略检查点: {high_level_ckpt_init}")
+
+            def _log_high_level_metrics(step: int, metrics: dict):
+                global_step = optim_steps + step
+                for key, value in metrics.items():
+                    writer.add_scalar(f'high_level/{key}', value, global_step)
+                if step == 1 or step % max(1, args.log_interval) == 0:
+                    logger.info(
+                        "HighLevelSAC step %d: seg_reward=%.4f seg_len=%.1f q1=%.4f q2=%.4f actor=%.4f alpha=%.4f repair=%.3f",
+                        step,
+                        float(metrics.get('segment_reward', 0.0)),
+                        float(metrics.get('segment_len', 0.0)),
+                        float(metrics.get('q1_loss', 0.0)),
+                        float(metrics.get('q2_loss', 0.0)),
+                        float(metrics.get('actor_loss', 0.0)),
+                        float(metrics.get('alpha', 0.0)),
+                        float(metrics.get('mean_repair_distance', 0.0)),
+                    )
+
+            def _save_high_level_checkpoint(step: int, metrics: dict):
+                ckpt_path = os.path.join(output_dir, f'high_level_policy_checkpoint_{step:05d}.pth')
+                save_high_level_policy_checkpoint(
+                    ckpt_path,
+                    high_level_policy,
+                    train_step=step,
+                    metadata={
+                        'metrics': metrics,
+                        'hierarchical_mode': args.hierarchical_mode,
+                        'high_level_period': int(args.high_level_period),
+                        'use_qrl_distance': bool(args.high_level_use_qrl_distance),
+                        'use_qrl_latent': bool(args.high_level_use_qrl_latent),
+                        'qrl_critic_index': int(args.high_level_qrl_critic_index),
+                        'subgoal_max_radius': float(args.subgoal_max_radius),
+                        'subgoal_relative_param': str(args.subgoal_relative_param),
+                        'taskscore_beta_obs': float(args.taskscore_beta_obs),
+                        'taskscore_beta_comm': float(args.taskscore_beta_comm),
+                        'taskscore_beta_feas': float(args.taskscore_beta_feas),
+                        'taskscore_margin_clip': float(args.taskscore_margin_clip),
+                    },
+                )
+                logger.info(f"保存高层策略检查点: {ckpt_path}")
+
+            final_high_level_metrics = train_high_level_policy(
+                policy=high_level_policy,
+                nav_features=nav_features,
+                low_level_agent=qrl_value_agent,
+                env_factory=create_env_fn,
+                planner_fn=_planner_fn,
+                planner_cfg=planner_cfg,
+                device=device,
+                cfg=HighLevelSACConfig(
+                    train_steps=int(args.high_level_train_steps),
+                    batch_size=int(args.high_level_batch_size),
+                    actor_lr=float(args.high_level_actor_lr),
+                    critic_lr=float(args.high_level_critic_lr),
+                    gamma=float(args.high_level_gamma),
+                    tau=float(args.high_level_tau),
+                    init_alpha=float(args.high_level_init_alpha),
+                    replay_size=int(args.high_level_replay_size),
+                    start_random_steps=int(args.high_level_start_random_steps),
+                    updates_per_step=int(args.high_level_updates_per_step),
+                    hidden_dim=int(args.high_level_hidden_dim),
+                    save_interval=int(args.high_level_save_interval),
+                    log_interval=int(args.log_interval),
+                    seed=int(args.seed),
+                    high_level_period=int(args.high_level_period),
+                    subgoal_max_radius=float(args.subgoal_max_radius),
+                    subgoal_relative_param=str(args.subgoal_relative_param),
+                    use_qrl_distance=bool(args.high_level_use_qrl_distance),
+                    use_qrl_latent=bool(args.high_level_use_qrl_latent),
+                    qrl_critic_index=int(args.high_level_qrl_critic_index),
+                    target_entropy=float(args.high_level_target_entropy) if args.high_level_target_entropy is not None else None,
+                ),
+                log_fn=_log_high_level_metrics,
+                checkpoint_fn=_save_high_level_checkpoint,
+            )
+            high_level_ckpt_final = os.path.join(output_dir, 'high_level_policy_checkpoint_final.pth')
+            save_high_level_policy_checkpoint(
+                high_level_ckpt_final,
+                high_level_policy,
+                train_step=int(args.high_level_train_steps),
+                metadata={
+                    'final_metrics': final_high_level_metrics,
+                    'hierarchical_mode': args.hierarchical_mode,
+                    'high_level_period': int(args.high_level_period),
+                    'use_qrl_distance': bool(args.high_level_use_qrl_distance),
+                    'use_qrl_latent': bool(args.high_level_use_qrl_latent),
+                    'qrl_critic_index': int(args.high_level_qrl_critic_index),
+                    'subgoal_max_radius': float(args.subgoal_max_radius),
+                    'subgoal_relative_param': str(args.subgoal_relative_param),
+                    'taskscore_beta_obs': float(args.taskscore_beta_obs),
+                    'taskscore_beta_comm': float(args.taskscore_beta_comm),
+                    'taskscore_beta_feas': float(args.taskscore_beta_feas),
+                    'taskscore_margin_clip': float(args.taskscore_margin_clip),
+                },
+            )
+            logger.info(f"保存最终高层策略检查点: {high_level_ckpt_final}")
+
+        elif getattr(args, 'hierarchical_mode', 'none') == 'subgoal_actor' and int(getattr(args, 'subgoal_train_steps', 0)) > 0:
+            logger.info("开始第二阶段：冻结 critic，监督训练 SubgoalActor...")
+            subgoal_actor = SubgoalActor(
+                obs_dim=int(eval_env.observation_space.shape[0]),
+                hidden_dim=int(args.subgoal_actor_hidden_dim),
+            ).to(device)
+            subgoal_ckpt_init = os.path.join(output_dir, 'subgoal_actor_checkpoint_00000.pth')
+            save_subgoal_actor_checkpoint(
+                subgoal_ckpt_init,
+                subgoal_actor,
+                train_step=0,
+                metadata={
+                    'hierarchical_mode': args.hierarchical_mode,
+                    'subgoal_candidates': int(args.subgoal_candidates),
+                    'subgoal_lambda_final': float(args.subgoal_lambda_final),
+                    'subgoal_lambda_task': float(args.subgoal_lambda_task),
+                    'taskscore_beta_obs': float(args.taskscore_beta_obs),
+                    'taskscore_beta_comm': float(args.taskscore_beta_comm),
+                    'taskscore_beta_feas': float(args.taskscore_beta_feas),
+                    'taskscore_margin_clip': float(args.taskscore_margin_clip),
+                },
+            )
+            logger.info(f"保存初始 SubgoalActor 检查点: {subgoal_ckpt_init}")
+
+            agent.eval()
+            qrl_value_agent = QRLGoalValueAdapter(agent, env=eval_env, device=device)
+
+            def _log_subgoal_metrics(step: int, metrics: dict):
+                global_step = optim_steps + step
+                for key, value in metrics.items():
+                    writer.add_scalar(f'subgoal_actor/{key}', value, global_step)
+                if step == 1 or step % max(1, args.log_interval) == 0:
+                    logger.info(
+                        "SubgoalActor step %d: loss=%.4f pos=%.4f heading=%.4f raw_valid=%.3f repair=%.3f",
+                        step,
+                        float(metrics.get('loss', 0.0)),
+                        float(metrics.get('pos_loss', 0.0)),
+                        float(metrics.get('heading_loss', 0.0)),
+                        float(metrics.get('raw_actor_output_valid_rate', 0.0)),
+                        float(metrics.get('mean_repair_distance', 0.0)),
+                    )
+
+            def _save_subgoal_checkpoint(step: int, metrics: dict):
+                ckpt_path = os.path.join(output_dir, f'subgoal_actor_checkpoint_{step:05d}.pth')
+                save_subgoal_actor_checkpoint(
+                    ckpt_path,
+                    subgoal_actor,
+                    train_step=step,
+                    metadata={
+                        'metrics': metrics,
+                        'hierarchical_mode': args.hierarchical_mode,
+                        'subgoal_candidates': int(args.subgoal_candidates),
+                        'subgoal_lambda_final': float(args.subgoal_lambda_final),
+                        'subgoal_lambda_task': float(args.subgoal_lambda_task),
+                        'high_level_period': int(args.high_level_period),
+                        'taskscore_beta_obs': float(args.taskscore_beta_obs),
+                        'taskscore_beta_comm': float(args.taskscore_beta_comm),
+                        'taskscore_beta_feas': float(args.taskscore_beta_feas),
+                        'taskscore_margin_clip': float(args.taskscore_margin_clip),
+                    },
+                )
+                logger.info(f"保存 SubgoalActor 检查点: {ckpt_path}")
+
+            final_subgoal_metrics = train_subgoal_actor(
+                actor=subgoal_actor,
+                agent=qrl_value_agent,
+                env_factory=create_env_fn,
+                device=device,
+                cfg=SubgoalActorTrainConfig(
+                    train_steps=int(args.subgoal_train_steps),
+                    batch_size=int(args.subgoal_batch_size),
+                    lr=float(args.subgoal_actor_lr),
+                    hidden_dim=int(args.subgoal_actor_hidden_dim),
+                    num_candidates=int(args.subgoal_candidates),
+                    lambda_final=float(args.subgoal_lambda_final),
+                    lambda_task=float(args.subgoal_lambda_task),
+                    seed=int(args.seed),
+                    save_interval=int(args.subgoal_save_interval),
+                ),
+                log_fn=_log_subgoal_metrics,
+                checkpoint_fn=_save_subgoal_checkpoint,
+            )
+            subgoal_ckpt_final = os.path.join(output_dir, 'subgoal_actor_checkpoint_final.pth')
+            save_subgoal_actor_checkpoint(
+                subgoal_ckpt_final,
+                subgoal_actor,
+                train_step=int(args.subgoal_train_steps),
+                metadata={
+                    'final_metrics': final_subgoal_metrics,
                     'hierarchical_mode': args.hierarchical_mode,
                     'subgoal_candidates': int(args.subgoal_candidates),
                     'subgoal_lambda_final': float(args.subgoal_lambda_final),
@@ -697,46 +935,7 @@ def train(args):
                     'taskscore_margin_clip': float(args.taskscore_margin_clip),
                 },
             )
-            logger.info(f"保存 SubgoalActor 检查点: {ckpt_path}")
-
-        final_subgoal_metrics = train_subgoal_actor(
-            actor=subgoal_actor,
-            agent=qrl_value_agent,
-            env_factory=create_env_fn,
-            device=device,
-            cfg=SubgoalActorTrainConfig(
-                train_steps=int(args.subgoal_train_steps),
-                batch_size=int(args.subgoal_batch_size),
-                lr=float(args.subgoal_actor_lr),
-                hidden_dim=int(args.subgoal_actor_hidden_dim),
-                num_candidates=int(args.subgoal_candidates),
-                lambda_final=float(args.subgoal_lambda_final),
-                lambda_task=float(args.subgoal_lambda_task),
-                seed=int(args.seed),
-                save_interval=int(args.subgoal_save_interval),
-            ),
-            log_fn=_log_subgoal_metrics,
-            checkpoint_fn=_save_subgoal_checkpoint,
-        )
-        subgoal_ckpt_final = os.path.join(output_dir, 'subgoal_actor_checkpoint_final.pth')
-        save_subgoal_actor_checkpoint(
-            subgoal_ckpt_final,
-            subgoal_actor,
-            train_step=int(args.subgoal_train_steps),
-            metadata={
-                'final_metrics': final_subgoal_metrics,
-                'hierarchical_mode': args.hierarchical_mode,
-                'subgoal_candidates': int(args.subgoal_candidates),
-                'subgoal_lambda_final': float(args.subgoal_lambda_final),
-                'subgoal_lambda_task': float(args.subgoal_lambda_task),
-                'high_level_period': int(args.high_level_period),
-                'taskscore_beta_obs': float(args.taskscore_beta_obs),
-                'taskscore_beta_comm': float(args.taskscore_beta_comm),
-                'taskscore_beta_feas': float(args.taskscore_beta_feas),
-                'taskscore_margin_clip': float(args.taskscore_margin_clip),
-            },
-        )
-        logger.info(f"保存最终 SubgoalActor 检查点: {subgoal_ckpt_final}")
+            logger.info(f"保存最终 SubgoalActor 检查点: {subgoal_ckpt_final}")
     
     # 标记完成
     with open(os.path.join(output_dir, 'COMPLETE'), 'w') as f:
@@ -887,31 +1086,94 @@ def main():
                         help='lookahead 碰撞惩罚（默认 0；ContinuousObstacle2D 碰撞 reward=-0.1）')
     parser.add_argument('--lookahead-distance-types', type=str, default='qrl',
                         help='lookahead 终端代价的 distance 类型，逗号分隔："qrl" 或 "euclidean"；默认仅使用 QRL')
+    parser.add_argument('--lookahead-biased-sequences', type=int, default=48,
+                        help='通信巡检/分层执行时 lookahead 的 goal/subgoal 偏置序列数量')
+    parser.add_argument('--lookahead-bias-kp', type=float, default=2.0,
+                        help='通信巡检/分层执行时 lookahead 偏置序列的转向增益')
+    parser.add_argument('--lookahead-use-cem', action='store_true',
+                        help='通信巡检/分层执行时启用 CEM 优化 lookahead 序列')
+    parser.add_argument('--lookahead-cem-iters', type=int, default=3,
+                        help='CEM 迭代轮数')
+    parser.add_argument('--lookahead-cem-elite-frac', type=float, default=0.1,
+                        help='CEM elite 比例')
+    parser.add_argument('--lookahead-cem-std-init-frac', type=float, default=0.5,
+                        help='CEM 初始标准差相对动作范围的比例')
+    parser.add_argument('--planner-alpha-subgoal', type=float, default=1.0,
+                        help='通信巡检 hierarchical 低层 planner 的 subgoal 终端项系数')
+    parser.add_argument('--planner-alpha-final', type=float, default=0.0,
+                        help='通信巡检 hierarchical 低层 planner 的 final goal 终端项系数（主线默认 0）')
+    parser.add_argument('--planner-alpha-task-terminal', type=float, default=0.0,
+                        help='通信巡检 hierarchical 低层 planner 的 terminal task score 系数（主线默认 0）')
+    parser.add_argument('--planner-use-env-stage-cost', dest='planner_use_env_stage_cost', action='store_true', default=True,
+                        help='通信巡检 hierarchical 低层 planner 是否累计环境真实阶段代价')
+    parser.add_argument('--no-planner-use-env-stage-cost', dest='planner_use_env_stage_cost', action='store_false',
+                        help='禁用环境真实阶段代价，回退到 planner 内部近似代价')
     parser.add_argument('--planning-visualize-failures', action='store_true',
                         help='是否可视化失败案例')
     parser.add_argument('--planning-visualize-interval', type=int, default=2000,
                         help='Failure mode 可视化间隔（步数）')
     parser.add_argument('--hierarchical-mode', type=str, default='none',
-                        choices=['none', 'subgoal_actor'],
-                        help='是否在 critic 训练后追加高层 SubgoalActor 训练')
+                        choices=['none', 'subgoal_actor', 'sac_subgoal'],
+                        help='critic 训练后追加的高层策略类型；主线使用 sac_subgoal')
     parser.add_argument('--subgoal-train-steps', type=int, default=0,
-                        help='SubgoalActor 监督训练步数')
+                        help='Legacy: SubgoalActor 监督训练步数')
     parser.add_argument('--subgoal-batch-size', type=int, default=32,
-                        help='SubgoalActor 训练批大小')
+                        help='Legacy: SubgoalActor 训练批大小')
     parser.add_argument('--subgoal-actor-lr', type=float, default=3e-4,
-                        help='SubgoalActor 学习率')
+                        help='Legacy: SubgoalActor 学习率')
     parser.add_argument('--subgoal-actor-hidden-dim', type=int, default=256,
-                        help='SubgoalActor 隐层宽度')
+                        help='Legacy: SubgoalActor 隐层宽度')
     parser.add_argument('--subgoal-save-interval', type=int, default=1000,
-                        help='SubgoalActor checkpoint 保存间隔；设为0表示只保存首尾')
+                        help='Legacy: SubgoalActor checkpoint 保存间隔；设为0表示只保存首尾')
     parser.add_argument('--subgoal-candidates', type=int, default=64,
-                        help='每个 teacher 打分时的 subgoal 候选数')
+                        help='Legacy: 每个 teacher 打分时的 subgoal 候选数')
     parser.add_argument('--high-level-period', type=int, default=5,
                         help='hierarchical 执行时的高层重规划周期')
     parser.add_argument('--subgoal-lambda-final', type=float, default=0.3,
-                        help='高层 teacher 中 final goal critic 项系数')
+                        help='Legacy: 高层 teacher 中 final goal critic 项系数')
     parser.add_argument('--subgoal-lambda-task', type=float, default=1.0,
-                        help='高层 teacher 中 TaskScore 奖励项系数')
+                        help='Legacy: 高层 teacher 中 TaskScore 奖励项系数')
+    parser.add_argument('--high-level-train-steps', type=int, default=0,
+                        help='高层 goal-conditioned SAC 训练步数（按高层 transition 计）')
+    parser.add_argument('--high-level-batch-size', type=int, default=128,
+                        help='高层 SAC replay batch size')
+    parser.add_argument('--high-level-actor-lr', type=float, default=3e-4,
+                        help='高层 SAC actor 学习率')
+    parser.add_argument('--high-level-critic-lr', type=float, default=3e-4,
+                        help='高层 SAC critic 学习率')
+    parser.add_argument('--high-level-gamma', type=float, default=0.99,
+                        help='高层 SAC 折扣因子 gamma；backup 使用 gamma^k')
+    parser.add_argument('--high-level-tau', type=float, default=0.005,
+                        help='高层 SAC target network 软更新系数')
+    parser.add_argument('--high-level-init-alpha', type=float, default=0.2,
+                        help='高层 SAC 初始熵温度 alpha')
+    parser.add_argument('--high-level-target-entropy', type=float, default=None,
+                        help='高层 SAC 目标熵；默认为 -action_dim')
+    parser.add_argument('--high-level-replay-size', type=int, default=200000,
+                        help='高层 SAC replay buffer 大小')
+    parser.add_argument('--high-level-start-random-steps', type=int, default=1000,
+                        help='高层 SAC 前期随机探索步数')
+    parser.add_argument('--high-level-updates-per-step', type=int, default=1,
+                        help='每收集一个高层 transition 后执行多少次梯度更新')
+    parser.add_argument('--high-level-hidden-dim', type=int, default=256,
+                        help='高层 SAC 网络隐层宽度')
+    parser.add_argument('--high-level-save-interval', type=int, default=1000,
+                        help='高层 SAC checkpoint 保存间隔；设为0表示只保存首尾')
+    parser.add_argument('--subgoal-max-radius', type=float, default=1.5,
+                        help='局部相对 subgoal 的最大半径')
+    parser.add_argument('--subgoal-relative-param', type=str, default='polar_local',
+                        choices=['polar_local'],
+                        help='局部相对 subgoal 的参数化方式')
+    parser.add_argument('--high-level-use-qrl-distance', dest='high_level_use_qrl_distance', action='store_true', default=True,
+                        help='高层 state 中加入 d_qrl(obs, goal_obs)')
+    parser.add_argument('--no-high-level-use-qrl-distance', dest='high_level_use_qrl_distance', action='store_false',
+                        help='高层 state 中不加入 d_qrl(obs, goal_obs)')
+    parser.add_argument('--high-level-use-qrl-latent', dest='high_level_use_qrl_latent', action='store_true', default=True,
+                        help='高层 state 中加入冻结 QRL latent 特征 z_t, z_g, delta_z')
+    parser.add_argument('--no-high-level-use-qrl-latent', dest='high_level_use_qrl_latent', action='store_false',
+                        help='高层 state 中不加入冻结 QRL latent 特征')
+    parser.add_argument('--high-level-qrl-critic-index', type=int, default=0,
+                        help='构造高层 QRL feature 时使用的 critic 下标')
     
     args = parser.parse_args()
     train(args)

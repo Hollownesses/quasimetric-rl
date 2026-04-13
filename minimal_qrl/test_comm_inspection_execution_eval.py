@@ -24,7 +24,6 @@ from minimal_qrl.eval.comm_inspection_execution_eval import (
 )
 from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
 from minimal_qrl.gc_agents import GoalConditionedAgentBase
-from minimal_qrl.subgoal_actor import SubgoalActor
 from minimal_qrl.envs import CircleObstacle
 
 
@@ -38,23 +37,30 @@ class ZeroTurnAgent(GoalConditionedAgentBase):
         return 0.0
 
 
-class FixedInvalidSubgoalActor:
-    def __init__(self, raw_state: np.ndarray):
-        self.raw_state = np.asarray(raw_state, dtype=np.float32)
+class DummyNavFeatures:
+    def __init__(self, obs_dim: int):
+        self.obs_dim = int(obs_dim)
+        self.feature_dim = 0
 
-    def predict_state(
-        self,
-        obs: np.ndarray,
-        goal_obs: np.ndarray,
-        env: CommInspectionDubinsUAV2D,
-        device: torch.device,
-    ) -> np.ndarray:
-        _ = obs, goal_obs, env, device
-        return self.raw_state.copy()
+    def build_state(self, obs: np.ndarray, goal_obs: np.ndarray) -> np.ndarray:
+        return np.concatenate([obs, goal_obs], axis=0).astype(np.float32)
+
+    def distance_to_goal(self, obs: np.ndarray, goal_obs: np.ndarray) -> float:
+        return float(np.linalg.norm(np.asarray(obs[:2], dtype=np.float32) - np.asarray(goal_obs[:2], dtype=np.float32)))
 
 
-def make_env() -> CommInspectionDubinsUAV2D:
-    return CommInspectionDubinsUAV2D(
+class FixedActionHighLevelPolicy:
+    def __init__(self, raw_action: np.ndarray, *, subgoal_max_radius: float = 1.5):
+        self.raw_action = np.asarray(raw_action, dtype=np.float32)
+        self.subgoal_max_radius = float(subgoal_max_radius)
+
+    def act(self, state: np.ndarray, *, eval_mode: bool = True) -> np.ndarray:
+        _ = state, eval_mode
+        return self.raw_action.copy()
+
+
+def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
+    default = dict(
         bounds=(0.0, 0.0, 10.0, 10.0),
         omega_max=1.0,
         v=1.0,
@@ -74,6 +80,8 @@ def make_env() -> CommInspectionDubinsUAV2D:
         goal_position_tolerance=0.15,
         goal_heading_tolerance=0.2,
     )
+    default.update(kwargs)
+    return CommInspectionDubinsUAV2D(**default)
 
 
 def test_execution_eval_visualization_smoke(tmp_path: Path):
@@ -111,7 +119,8 @@ def test_execution_eval_visualization_smoke(tmp_path: Path):
 def test_hierarchical_execution_eval_smoke(tmp_path: Path):
     env = make_env()
     agent = ZeroTurnAgent()
-    actor = SubgoalActor(obs_dim=int(env.observation_space.shape[0]), hidden_dim=32)
+    policy = FixedActionHighLevelPolicy(np.array([0.0, 0.0, 0.0], dtype=np.float32))
+    nav_features = DummyNavFeatures(int(env.observation_space.shape[0]))
     viz_cfg = VisualizationConfig(
         save_visualizations=False,
         max_successes=0,
@@ -138,12 +147,9 @@ def test_hierarchical_execution_eval_smoke(tmp_path: Path):
         lookahead_cfg=lookahead_cfg,
         output_dir=tmp_path,
         viz_cfg=viz_cfg,
-        subgoal_actor=actor,
-        actor_device=torch.device("cpu"),
+        high_level_policy=policy,
+        nav_features=nav_features,
         high_level_period=3,
-        subgoal_candidates=16,
-        subgoal_lambda_final=0.3,
-        subgoal_lambda_task=1.0,
     )
 
     assert "raw_actor_output_valid_rate" in metrics
@@ -152,9 +158,14 @@ def test_hierarchical_execution_eval_smoke(tmp_path: Path):
 
 
 def test_hierarchical_metrics_and_rollout_recording(tmp_path: Path):
-    env = make_env()
+    env = make_env(
+        start=(9.7, 9.7, 0.0),
+        goal=(8.5, 8.5, 0.0),
+        goal_sampling_mode="valid",
+    )
     agent = ZeroTurnAgent()
-    actor = FixedInvalidSubgoalActor(np.array([11.0, 11.0, 0.0], dtype=np.float32))
+    policy = FixedActionHighLevelPolicy(np.array([1.0, 0.0, 0.0], dtype=np.float32), subgoal_max_radius=2.0)
+    nav_features = DummyNavFeatures(int(env.observation_space.shape[0]))
     lookahead_cfg = DubinsLookaheadConfig(
         horizon=3,
         num_sequences=8,
@@ -178,15 +189,13 @@ def test_hierarchical_metrics_and_rollout_recording(tmp_path: Path):
         "hierarchical",
         episode_seed=5,
         lookahead_cfg=lookahead_cfg,
-        subgoal_actor=actor,
-        actor_device=torch.device("cpu"),
+        high_level_policy=policy,
+        nav_features=nav_features,
         high_level_period=2,
-        subgoal_candidates=8,
-        subgoal_lambda_final=0.3,
-        subgoal_lambda_task=1.0,
     )
     assert len(rollout["high_level_events"]) >= 2
     assert {"raw_subgoal", "repaired_subgoal", "executed_subgoal"} <= set(rollout["high_level_events"][0].keys())
+    assert "raw_action" in rollout["high_level_events"][0]
 
     metrics, visualizations = evaluate_execution_mode(
         agent,
@@ -197,16 +206,13 @@ def test_hierarchical_metrics_and_rollout_recording(tmp_path: Path):
         lookahead_cfg=lookahead_cfg,
         output_dir=tmp_path,
         viz_cfg=viz_cfg,
-        subgoal_actor=actor,
-        actor_device=torch.device("cpu"),
+        high_level_policy=policy,
+        nav_features=nav_features,
         high_level_period=2,
-        subgoal_candidates=8,
-        subgoal_lambda_final=0.3,
-        subgoal_lambda_task=1.0,
     )
 
     assert metrics["raw_actor_output_valid_rate"] == 0.0
-    assert np.isclose(metrics["mean_repair_distance"], np.sqrt(2.0), atol=1e-4)
+    assert metrics["mean_repair_distance"] > 0.0
     saved_entries = visualizations["success"] + visualizations["failure"]
     assert saved_entries
     assert saved_entries[0]["high_level_events"]
