@@ -38,6 +38,8 @@ REQUIRE_TARGET_LOS_FLAG=""
 REQUIRE_GROUND_STATION_LOS_FLAG=""
 INIT_CHECKPOINT_FLAG=""
 SKIP_CRITIC_TRAINING_FLAG=""
+HIGH_LEVEL_USE_QRL_DISTANCE_FLAG="--high-level-use-qrl-distance"
+HIGH_LEVEL_USE_QRL_LATENT_FLAG=""
 
 if [[ "${RANDOMIZE_INSPECTION_TARGET:-0}" == "1" ]]; then
   RANDOMIZE_INSPECTION_TARGET_FLAG="--randomize-inspection-target"
@@ -57,6 +59,14 @@ if [[ "${ONLY_HIGH_LEVEL_POLICY:-${ONLY_SUBGOAL_ACTOR:-0}}" == "1" ]]; then
 fi
 if [[ -n "${CRITIC_CHECKPOINT:-}" ]]; then
   INIT_CHECKPOINT_FLAG="--init-checkpoint ${CRITIC_CHECKPOINT}"
+fi
+if [[ "${HIGH_LEVEL_USE_QRL_DISTANCE:-1}" != "1" ]]; then
+  HIGH_LEVEL_USE_QRL_DISTANCE_FLAG="--no-high-level-use-qrl-distance"
+fi
+if [[ "${HIGH_LEVEL_USE_QRL_LATENT:-0}" == "1" ]]; then
+  HIGH_LEVEL_USE_QRL_LATENT_FLAG="--high-level-use-qrl-latent"
+else
+  HIGH_LEVEL_USE_QRL_LATENT_FLAG="--no-high-level-use-qrl-latent"
 fi
 
 "$PYTHON_BIN" minimal_qrl/train.py \
@@ -109,19 +119,20 @@ fi
   --taskscore-margin-clip "${TASKSCORE_MARGIN_CLIP:-2.0}" \
   --hierarchical-mode "${HIERARCHICAL_MODE:-sac_subgoal}" \
   --high-level-period "${HIGH_LEVEL_PERIOD:-5}" \
-  --lookahead-horizon "${LOOKAHEAD_HORIZON:-10}" \
-  --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-128}" \
+  --lookahead-horizon "${LOOKAHEAD_HORIZON:-6}" \
+  --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-48}" \
   --lookahead-step-cost-weight "${LOOKAHEAD_STEP_COST_WEIGHT:-0.0}" \
   --lookahead-collision-penalty "${LOOKAHEAD_COLLISION_PENALTY:-0.0}" \
-  --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-24}" \
+  --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-16}" \
   --lookahead-bias-kp "${LOOKAHEAD_BIAS_KP:-2.0}" \
   --planner-alpha-subgoal "${PLANNER_ALPHA_SUBGOAL:-1.0}" \
   --planner-alpha-final "${PLANNER_ALPHA_FINAL:-0.0}" \
   --planner-alpha-task-terminal "${PLANNER_ALPHA_TASK_TERMINAL:-0.0}" \
   --high-level-train-steps "${HIGH_LEVEL_TRAIN_STEPS:-5000}" \
   --high-level-batch-size "${HIGH_LEVEL_BATCH_SIZE:-128}" \
-  --high-level-actor-lr "${HIGH_LEVEL_ACTOR_LR:-3e-4}" \
-  --high-level-critic-lr "${HIGH_LEVEL_CRITIC_LR:-3e-4}" \
+  --high-level-actor-lr "${HIGH_LEVEL_ACTOR_LR:-1e-4}" \
+  --high-level-critic-lr "${HIGH_LEVEL_CRITIC_LR:-1e-4}" \
+  --high-level-alpha-lr "${HIGH_LEVEL_ALPHA_LR:-1e-4}" \
   --high-level-gamma "${HIGH_LEVEL_GAMMA:-0.99}" \
   --high-level-tau "${HIGH_LEVEL_TAU:-0.005}" \
   --high-level-init-alpha "${HIGH_LEVEL_INIT_ALPHA:-0.2}" \
@@ -130,6 +141,14 @@ fi
   --high-level-updates-per-step "${HIGH_LEVEL_UPDATES_PER_STEP:-1}" \
   --high-level-hidden-dim "${HIGH_LEVEL_HIDDEN_DIM:-256}" \
   --high-level-save-interval "${HIGH_LEVEL_SAVE_INTERVAL:-1000}" \
+  --high-level-reward-scale "${HIGH_LEVEL_REWARD_SCALE:-0.1}" \
+  --high-level-reward-clip "${HIGH_LEVEL_REWARD_CLIP:-20.0}" \
+  --high-level-critic-grad-clip-norm "${HIGH_LEVEL_CRITIC_GRAD_CLIP_NORM:-5.0}" \
+  --high-level-actor-grad-clip-norm "${HIGH_LEVEL_ACTOR_GRAD_CLIP_NORM:-5.0}" \
+  --high-level-alpha-grad-clip-norm "${HIGH_LEVEL_ALPHA_GRAD_CLIP_NORM:-5.0}" \
+  --high-level-low-level-replan-interval "${HIGH_LEVEL_LOW_LEVEL_REPLAN_INTERVAL:-2}" \
+  ${HIGH_LEVEL_USE_QRL_DISTANCE_FLAG} \
+  ${HIGH_LEVEL_USE_QRL_LATENT_FLAG} \
   --subgoal-max-radius "${SUBGOAL_MAX_RADIUS:-1.5}" \
   --subgoal-relative-param "${SUBGOAL_RELATIVE_PARAM:-polar_local}"
 

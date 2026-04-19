@@ -225,6 +225,7 @@ class HighLevelSACConfig:
     batch_size: int = 128
     actor_lr: float = 3e-4
     critic_lr: float = 3e-4
+    alpha_lr: float = 1e-4
     gamma: float = 0.99
     tau: float = 0.005
     init_alpha: float = 0.2
@@ -242,6 +243,12 @@ class HighLevelSACConfig:
     use_qrl_latent: bool = True
     qrl_critic_index: int = 0
     target_entropy: Optional[float] = None
+    reward_scale: float = 0.1
+    reward_clip: float = 20.0
+    critic_grad_clip_norm: float = 5.0
+    actor_grad_clip_norm: float = 5.0
+    alpha_grad_clip_norm: float = 5.0
+    low_level_replan_interval: int = 2
 
 
 class CostAwareSubgoalPolicy(nn.Module):
@@ -253,6 +260,7 @@ class CostAwareSubgoalPolicy(nn.Module):
         hidden_dim: int = 256,
         actor_lr: float = 3e-4,
         critic_lr: float = 3e-4,
+        alpha_lr: float = 1e-4,
         tau: float = 0.005,
         init_alpha: float = 0.2,
         target_entropy: Optional[float] = None,
@@ -271,6 +279,9 @@ class CostAwareSubgoalPolicy(nn.Module):
         self.target_entropy = float(target_entropy) if target_entropy is not None else -float(self.action_dim)
         self.subgoal_max_radius = float(subgoal_max_radius)
         self.subgoal_relative_param = str(subgoal_relative_param)
+        self.critic_grad_clip_norm = 5.0
+        self.actor_grad_clip_norm = 5.0
+        self.alpha_grad_clip_norm = 5.0
         self.device = device
 
         self.actor = SquashedGaussianActor(self.state_dim, self.action_dim, self.hidden_dim).to(device)
@@ -290,7 +301,7 @@ class CostAwareSubgoalPolicy(nn.Module):
             device=device,
             requires_grad=True,
         )
-        self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=float(critic_lr))
+        self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=float(alpha_lr))
 
     @property
     def alpha(self) -> torch.Tensor:
@@ -330,10 +341,14 @@ class CostAwareSubgoalPolicy(nn.Module):
 
         self.q1_opt.zero_grad(set_to_none=True)
         q1_loss.backward()
+        if self.critic_grad_clip_norm > 0.0:
+            torch.nn.utils.clip_grad_norm_(self.q1.parameters(), max_norm=float(self.critic_grad_clip_norm))
         self.q1_opt.step()
 
         self.q2_opt.zero_grad(set_to_none=True)
         q2_loss.backward()
+        if self.critic_grad_clip_norm > 0.0:
+            torch.nn.utils.clip_grad_norm_(self.q2.parameters(), max_norm=float(self.critic_grad_clip_norm))
         self.q2_opt.step()
 
         policy_action, log_prob = self.actor.sample(state, deterministic=False)
@@ -344,11 +359,15 @@ class CostAwareSubgoalPolicy(nn.Module):
 
         self.actor_opt.zero_grad(set_to_none=True)
         actor_loss.backward()
+        if self.actor_grad_clip_norm > 0.0:
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=float(self.actor_grad_clip_norm))
         self.actor_opt.step()
 
         alpha_loss = -(self.log_alpha * (log_prob.detach() + self.target_entropy)).mean()
         self.alpha_opt.zero_grad(set_to_none=True)
         alpha_loss.backward()
+        if self.alpha_grad_clip_norm > 0.0:
+            torch.nn.utils.clip_grad_norm_([self.log_alpha], max_norm=float(self.alpha_grad_clip_norm))
         self.alpha_opt.step()
 
         with torch.no_grad():
@@ -510,6 +529,9 @@ def train_high_level_policy(
     rng = np.random.default_rng(int(cfg.seed))
     np.random.seed(int(cfg.seed))
     torch.manual_seed(int(cfg.seed))
+    policy.critic_grad_clip_norm = float(max(0.0, cfg.critic_grad_clip_norm))
+    policy.actor_grad_clip_norm = float(max(0.0, cfg.actor_grad_clip_norm))
+    policy.alpha_grad_clip_norm = float(max(0.0, cfg.alpha_grad_clip_norm))
 
     env = env_factory()
     replay = HighLevelReplayBuffer(
@@ -523,6 +545,10 @@ def train_high_level_policy(
     goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
     current_high_state = nav_features.build_state(obs, goal_obs)
     final_metrics: Dict[str, float] = {}
+    reward_scale = float(cfg.reward_scale)
+    reward_clip = float(max(0.0, cfg.reward_clip))
+    min_replay_before_update = max(int(cfg.batch_size), int(cfg.start_random_steps))
+    low_level_replan_interval = max(1, int(cfg.low_level_replan_interval))
 
     progress = tqdm(range(1, int(cfg.train_steps) + 1), desc="HighLevelSAC", leave=True)
     for step in progress:
@@ -544,14 +570,27 @@ def train_high_level_policy(
         truncated = False
         last_obs = obs
         last_info: Dict[str, Any] = {}
-        for _ in range(max(1, int(cfg.high_level_period))):
-            action = planner_fn(
-                low_level_agent,
-                env,
-                goal_obs,
-                planner_cfg,
-                subgoal_state=executed_subgoal,
-            )
+        planner_sequence = np.zeros((0,), dtype=np.float32)
+        planner_sequence_idx = 0
+        planner_replans = 0
+        for low_step in range(max(1, int(cfg.high_level_period))):
+            should_replan = planner_sequence_idx >= int(planner_sequence.shape[0]) or (low_step % low_level_replan_interval == 0)
+            if should_replan:
+                planned = planner_fn(
+                    low_level_agent,
+                    env,
+                    goal_obs,
+                    planner_cfg,
+                    subgoal_state=executed_subgoal,
+                    return_sequence=True,
+                )
+                planner_sequence = np.asarray(planned, dtype=np.float32).reshape(-1)
+                planner_sequence_idx = 0
+                planner_replans += 1
+                if planner_sequence.size == 0:
+                    planner_sequence = np.zeros((1,), dtype=np.float32)
+            action = np.array([float(planner_sequence[planner_sequence_idx])], dtype=np.float32)
+            planner_sequence_idx += 1
             last_obs, reward, done, truncated, last_info = env.step(action)
             segment_reward += float(reward)
             segment_len += 1
@@ -569,10 +608,12 @@ def train_high_level_policy(
         next_goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
         next_high_state = nav_features.build_state(last_obs, next_goal_obs)
         episode_done = bool(done or truncated)
+        clipped_segment_reward = float(np.clip(segment_reward, -reward_clip, reward_clip)) if reward_clip > 0.0 else float(segment_reward)
+        stored_reward = float(clipped_segment_reward * reward_scale)
         replay.add(
             current_high_state,
             subgoal_choice["raw_action"],
-            float(segment_reward),
+            stored_reward,
             next_high_state,
             episode_done,
             float(cfg.gamma ** max(segment_len, 1)),
@@ -580,13 +621,15 @@ def train_high_level_policy(
         )
 
         update_metrics: Dict[str, float] = {}
-        if replay.size >= int(cfg.batch_size):
+        if replay.size >= min_replay_before_update and step > int(cfg.start_random_steps):
             for _ in range(max(1, int(cfg.updates_per_step))):
                 update_metrics = policy.update(replay.sample(int(cfg.batch_size)))
 
         qrl_distance = float(nav_features.distance_to_goal(obs, goal_obs))
         final_metrics = {
             "segment_reward": float(segment_reward),
+            "segment_reward_clipped": float(clipped_segment_reward),
+            "segment_reward_scaled": float(stored_reward),
             "segment_len": float(segment_len),
             "qrl_distance_to_final": float(qrl_distance),
             "raw_subgoal_valid_rate": float(subgoal_choice["raw_valid"]),
@@ -595,6 +638,7 @@ def train_high_level_policy(
             "mean_taskscore_raw_subgoal": float(subgoal_choice["raw_task_score"]),
             "mean_taskscore_repaired_subgoal": float(subgoal_choice["repaired_task_score"]),
             "episode_done_rate": float(episode_done),
+            "planner_replans_per_segment": float(planner_replans),
             "last_comm_margin": float(last_info.get("comm_margin", 0.0)) if last_info else 0.0,
             "last_obs_margin": float(last_info.get("obs_margin", 0.0)) if last_info else 0.0,
             **update_metrics,

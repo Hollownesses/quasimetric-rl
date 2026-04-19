@@ -31,7 +31,10 @@ from quasimetric_rl.modules.quasimetric_critic import QuasimetricCriticConf
 from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
-from minimal_qrl.comm_inspection_planner import comm_inspection_lookahead_action
+from minimal_qrl.comm_inspection_planner import (
+    comm_inspection_lookahead_action,
+    comm_inspection_lookahead_plan,
+)
 from minimal_qrl.envs import (
     SimpleGrid2D,
     ContinuousObstacle2D,
@@ -689,6 +692,7 @@ def train(args):
                 hidden_dim=int(args.high_level_hidden_dim),
                 actor_lr=float(args.high_level_actor_lr),
                 critic_lr=float(args.high_level_critic_lr),
+                alpha_lr=float(args.high_level_alpha_lr),
                 tau=float(args.high_level_tau),
                 init_alpha=float(args.high_level_init_alpha),
                 target_entropy=float(args.high_level_target_entropy) if args.high_level_target_entropy is not None else None,
@@ -698,7 +702,15 @@ def train(args):
             ).to(device)
             planner_cfg = _build_comm_inspection_hierarchical_lookahead_cfg(args)
 
-            def _planner_fn(low_level_agent, env, goal_obs, cfg, *, subgoal_state=None):
+            def _planner_fn(low_level_agent, env, goal_obs, cfg, *, subgoal_state=None, return_sequence=False):
+                if return_sequence:
+                    return comm_inspection_lookahead_plan(
+                        low_level_agent,
+                        env,
+                        goal_obs,
+                        cfg,
+                        subgoal_state=subgoal_state,
+                    )
                 return comm_inspection_lookahead_action(
                     low_level_agent,
                     env,
@@ -718,6 +730,9 @@ def train(args):
                     'use_qrl_distance': bool(args.high_level_use_qrl_distance),
                     'use_qrl_latent': bool(args.high_level_use_qrl_latent),
                     'qrl_critic_index': int(args.high_level_qrl_critic_index),
+                    'reward_scale': float(args.high_level_reward_scale),
+                    'reward_clip': float(args.high_level_reward_clip),
+                    'low_level_replan_interval': int(args.high_level_low_level_replan_interval),
                     'subgoal_max_radius': float(args.subgoal_max_radius),
                     'subgoal_relative_param': str(args.subgoal_relative_param),
                     'taskscore_beta_obs': float(args.taskscore_beta_obs),
@@ -734,6 +749,7 @@ def train(args):
                         'alpha_subgoal': float(planner_cfg.alpha_subgoal),
                         'alpha_final': float(planner_cfg.alpha_final),
                         'alpha_task_terminal': float(planner_cfg.alpha_task_terminal),
+                        'train_replan_interval': int(args.high_level_low_level_replan_interval),
                     },
                 },
             )
@@ -769,6 +785,9 @@ def train(args):
                         'use_qrl_distance': bool(args.high_level_use_qrl_distance),
                         'use_qrl_latent': bool(args.high_level_use_qrl_latent),
                         'qrl_critic_index': int(args.high_level_qrl_critic_index),
+                        'reward_scale': float(args.high_level_reward_scale),
+                        'reward_clip': float(args.high_level_reward_clip),
+                        'low_level_replan_interval': int(args.high_level_low_level_replan_interval),
                         'subgoal_max_radius': float(args.subgoal_max_radius),
                         'subgoal_relative_param': str(args.subgoal_relative_param),
                         'taskscore_beta_obs': float(args.taskscore_beta_obs),
@@ -792,6 +811,7 @@ def train(args):
                     batch_size=int(args.high_level_batch_size),
                     actor_lr=float(args.high_level_actor_lr),
                     critic_lr=float(args.high_level_critic_lr),
+                    alpha_lr=float(args.high_level_alpha_lr),
                     gamma=float(args.high_level_gamma),
                     tau=float(args.high_level_tau),
                     init_alpha=float(args.high_level_init_alpha),
@@ -809,6 +829,12 @@ def train(args):
                     use_qrl_latent=bool(args.high_level_use_qrl_latent),
                     qrl_critic_index=int(args.high_level_qrl_critic_index),
                     target_entropy=float(args.high_level_target_entropy) if args.high_level_target_entropy is not None else None,
+                    reward_scale=float(args.high_level_reward_scale),
+                    reward_clip=float(args.high_level_reward_clip),
+                    critic_grad_clip_norm=float(args.high_level_critic_grad_clip_norm),
+                    actor_grad_clip_norm=float(args.high_level_actor_grad_clip_norm),
+                    alpha_grad_clip_norm=float(args.high_level_alpha_grad_clip_norm),
+                    low_level_replan_interval=int(args.high_level_low_level_replan_interval),
                 ),
                 log_fn=_log_high_level_metrics,
                 checkpoint_fn=_save_high_level_checkpoint,
@@ -825,6 +851,9 @@ def train(args):
                     'use_qrl_distance': bool(args.high_level_use_qrl_distance),
                     'use_qrl_latent': bool(args.high_level_use_qrl_latent),
                     'qrl_critic_index': int(args.high_level_qrl_critic_index),
+                    'reward_scale': float(args.high_level_reward_scale),
+                    'reward_clip': float(args.high_level_reward_clip),
+                    'low_level_replan_interval': int(args.high_level_low_level_replan_interval),
                     'subgoal_max_radius': float(args.subgoal_max_radius),
                     'subgoal_relative_param': str(args.subgoal_relative_param),
                     'taskscore_beta_obs': float(args.taskscore_beta_obs),
@@ -1141,6 +1170,8 @@ def main():
                         help='高层 SAC actor 学习率')
     parser.add_argument('--high-level-critic-lr', type=float, default=3e-4,
                         help='高层 SAC critic 学习率')
+    parser.add_argument('--high-level-alpha-lr', type=float, default=1e-4,
+                        help='高层 SAC 温度 alpha 学习率')
     parser.add_argument('--high-level-gamma', type=float, default=0.99,
                         help='高层 SAC 折扣因子 gamma；backup 使用 gamma^k')
     parser.add_argument('--high-level-tau', type=float, default=0.005,
@@ -1159,6 +1190,18 @@ def main():
                         help='高层 SAC 网络隐层宽度')
     parser.add_argument('--high-level-save-interval', type=int, default=1000,
                         help='高层 SAC checkpoint 保存间隔；设为0表示只保存首尾')
+    parser.add_argument('--high-level-reward-scale', type=float, default=0.1,
+                        help='写入 replay 前对高层 segment reward 的缩放系数')
+    parser.add_argument('--high-level-reward-clip', type=float, default=20.0,
+                        help='写入 replay 前对高层 segment reward 的绝对值截断；<=0 表示不截断')
+    parser.add_argument('--high-level-critic-grad-clip-norm', type=float, default=5.0,
+                        help='高层 critic 梯度裁剪阈值；<=0 表示关闭')
+    parser.add_argument('--high-level-actor-grad-clip-norm', type=float, default=5.0,
+                        help='高层 actor 梯度裁剪阈值；<=0 表示关闭')
+    parser.add_argument('--high-level-alpha-grad-clip-norm', type=float, default=5.0,
+                        help='高层 alpha 梯度裁剪阈值；<=0 表示关闭')
+    parser.add_argument('--high-level-low-level-replan-interval', type=int, default=2,
+                        help='高层训练时 low-level lookahead 多少步重规划一次；>=1')
     parser.add_argument('--subgoal-max-radius', type=float, default=1.5,
                         help='局部相对 subgoal 的最大半径')
     parser.add_argument('--subgoal-relative-param', type=str, default='polar_local',
