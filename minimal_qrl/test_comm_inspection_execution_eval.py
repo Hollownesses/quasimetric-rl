@@ -4,6 +4,7 @@
 不依赖真实 checkpoint，用一个简单的假 agent 跑评估并生成样本图，确保这条新链路以后不容易悄悄坏掉。
 """
 import os
+import json
 from pathlib import Path
 import sys
 
@@ -15,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import torch
 
+import minimal_qrl.eval.comm_inspection_execution_eval as comm_eval
 from minimal_qrl.envs import CommInspectionDubinsUAV2D
 from minimal_qrl.eval.comm_inspection_execution_eval import (
     VisualizationConfig,
@@ -35,6 +37,21 @@ class ZeroTurnAgent(GoalConditionedAgentBase):
     def value(self, obs: np.ndarray, goal_obs: np.ndarray) -> float:
         _ = obs, goal_obs
         return 0.0
+
+
+class DistanceToGoalAgent(GoalConditionedAgentBase):
+    def act(self, obs: np.ndarray, goal_obs: np.ndarray, eval_mode: bool = True) -> np.ndarray:
+        _ = obs, goal_obs, eval_mode
+        return np.array([0.0], dtype=np.float32)
+
+    def value(self, obs: np.ndarray, goal_obs: np.ndarray) -> float:
+        return float(np.linalg.norm(np.asarray(obs[:2], dtype=np.float32) - np.asarray(goal_obs[:2], dtype=np.float32)))
+
+    def batch_value(self, obs_batch: np.ndarray, goal_obs_batch: np.ndarray) -> np.ndarray:
+        return np.linalg.norm(
+            np.asarray(obs_batch[:, :2], dtype=np.float32) - np.asarray(goal_obs_batch[:, :2], dtype=np.float32),
+            axis=1,
+        ).astype(np.float32)
 
 
 class DummyNavFeatures:
@@ -270,9 +287,128 @@ def test_planner_uses_env_stage_cost_without_duplicate_collision_penalty():
     assert np.isclose(float(costs[0]), expected_cost, atol=1e-6)
 
 
+def test_terminal_heuristic_ignores_dense_progress_term():
+    env = make_env(
+        start=(4.0, 5.0, 0.0),
+        goal=(6.0, 5.0, 0.0),
+        goal_sampling_mode="valid",
+    )
+    agent = DistanceToGoalAgent()
+    lookahead_cfg = DubinsLookaheadConfig(
+        horizon=1,
+        num_sequences=2,
+        biased_sequences=0,
+        alpha_subgoal=0.0,
+        alpha_final=0.0,
+        alpha_task_terminal=0.0,
+        use_env_stage_cost=False,
+        heuristic_mode="terminal",
+        qrl_progress_alpha=1000.0,
+    )
+
+    env.reset(seed=0)
+    goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
+    costs, _ = _evaluate_comm_lookahead_sequences(
+        agent,
+        env,
+        goal_obs,
+        lookahead_cfg,
+        np.asarray([[0.0], [1.0]], dtype=np.float32),
+        env.get_state(),
+    )
+    assert np.allclose(costs, np.zeros_like(costs), atol=1e-6)
+
+
+def test_dense_heuristic_prefers_qrl_progress():
+    env = make_env(
+        start=(4.0, 5.0, 0.0),
+        goal=(6.0, 5.0, 0.0),
+        goal_sampling_mode="valid",
+    )
+    agent = DistanceToGoalAgent()
+    lookahead_cfg = DubinsLookaheadConfig(
+        horizon=1,
+        num_sequences=2,
+        biased_sequences=0,
+        alpha_subgoal=0.0,
+        alpha_final=0.0,
+        alpha_task_terminal=0.0,
+        use_env_stage_cost=False,
+        heuristic_mode="dense",
+        qrl_progress_alpha=1.0,
+    )
+
+    env.reset(seed=0)
+    goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
+    costs, _ = _evaluate_comm_lookahead_sequences(
+        agent,
+        env,
+        goal_obs,
+        lookahead_cfg,
+        np.asarray([[0.0], [1.0]], dtype=np.float32),
+        env.get_state(),
+    )
+    assert float(costs[0]) < 0.0
+    assert float(costs[0]) < float(costs[1])
+
+
+def test_cli_outputs_separate_lookahead_heuristic_keys(tmp_path: Path):
+    checkpoint = tmp_path / "checkpoint_final.pth"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_bytes(b"fake")
+    output_dir = tmp_path / "eval"
+
+    old_argv = sys.argv[:]
+    old_make_env = comm_eval.make_comm_inspection_env
+    old_build_adapter = comm_eval.build_qrl_adapter
+    old_auto_device = comm_eval.auto_device
+    try:
+        comm_eval.make_comm_inspection_env = lambda args: make_env(max_steps=2)
+        comm_eval.build_qrl_adapter = lambda args, device, env: (ZeroTurnAgent(), None)
+        comm_eval.auto_device = lambda device: torch.device("cpu")
+        sys.argv = [
+            "comm_inspection_execution_eval.py",
+            "--checkpoint",
+            str(checkpoint),
+            "--output-dir",
+            str(output_dir),
+            "--execution-modes",
+            "lookahead",
+            "--lookahead-heuristics",
+            "terminal,dense",
+            "--lookahead-horizon",
+            "1",
+            "--lookahead-num-sequences",
+            "1",
+            "--lookahead-biased-sequences",
+            "0",
+            "--planner-alpha-final",
+            "0.0",
+            "--planner-alpha-task-terminal",
+            "0.0",
+            "--planner-qrl-progress-alpha",
+            "1.0",
+            "--n-trials",
+            "1",
+        ]
+        comm_eval.main()
+    finally:
+        sys.argv = old_argv
+        comm_eval.make_comm_inspection_env = old_make_env
+        comm_eval.build_qrl_adapter = old_build_adapter
+        comm_eval.auto_device = old_auto_device
+
+    payload = json.loads((output_dir / "comm_inspection_execution_eval.json").read_text(encoding="utf-8"))
+    assert set(payload["results"].keys()) == {"lookahead_terminal", "lookahead_dense"}
+    assert payload["execution_modes"] == ["lookahead_terminal", "lookahead_dense"]
+
+
 if __name__ == "__main__":
     test_execution_eval_visualization_smoke(Path("results/test_comm_inspection_execution_eval"))
     test_hierarchical_execution_eval_smoke(Path("results/test_comm_inspection_execution_eval_hier"))
     test_hierarchical_metrics_and_rollout_recording(Path("results/test_comm_inspection_execution_eval_hier_metrics"))
     test_planner_uses_env_stage_cost_without_duplicate_collision_penalty()
+    test_terminal_heuristic_ignores_dense_progress_term()
+    test_dense_heuristic_prefers_qrl_progress()
+    test_cli_outputs_separate_lookahead_heuristic_keys(Path("/tmp/test_comm_inspection_execution_eval_cli"))
     print("Execution eval visualization smoke test passed.")

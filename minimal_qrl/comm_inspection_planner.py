@@ -32,6 +32,8 @@ def _batch_agent_value(
     obs_batch: np.ndarray,
     goal_obs_batch: np.ndarray,
 ) -> np.ndarray:
+    if int(obs_batch.shape[0]) <= 0:
+        return np.zeros((0,), dtype=np.float32)
     if hasattr(agent, "batch_value"):
         return np.asarray(agent.batch_value(obs_batch, goal_obs_batch), dtype=np.float32)
     values = [
@@ -39,6 +41,13 @@ def _batch_agent_value(
         for i in range(int(obs_batch.shape[0]))
     ]
     return np.asarray(values, dtype=np.float32)
+
+
+def _heuristic_mode(cfg: DubinsLookaheadConfig) -> str:
+    mode = str(getattr(cfg, "heuristic_mode", "terminal")).strip().lower()
+    if mode not in {"terminal", "dense"}:
+        raise ValueError(f"未知 lookahead heuristic_mode: {mode}")
+    return mode
 
 
 def _build_candidate_omegas(
@@ -94,6 +103,12 @@ def evaluate_comm_lookahead_sequences(
     reached_subgoal_mask = np.zeros((n,), dtype=bool)
     terminal_obs_batch = np.zeros((n, int(goal_obs.shape[0])), dtype=np.float32)
     terminal_states = np.zeros((n, 3), dtype=np.float32)
+    mode = _heuristic_mode(cfg)
+    progress_alpha = float(getattr(cfg, "qrl_progress_alpha", 0.0))
+    collect_progress = mode == "dense" and progress_alpha != 0.0
+    progress_seq_indices: list[int] = []
+    progress_prev_obs: list[np.ndarray] = []
+    progress_next_obs: list[np.ndarray] = []
 
     for i in range(n):
         env.set_state(base_state)
@@ -104,7 +119,12 @@ def evaluate_comm_lookahead_sequences(
         for t in range(int(omegas.shape[1])):
             w = float(omegas[i, t])
             action = np.array([w], dtype=np.float32)
+            prev_obs = env.state_to_observation(env.state).astype(np.float32) if collect_progress else None
             _obs, _reward, terminated, truncated, info = env.step(action)
+            if collect_progress:
+                progress_seq_indices.append(i)
+                progress_prev_obs.append(prev_obs)
+                progress_next_obs.append(env.state_to_observation(env.state).astype(np.float32))
 
             if bool(cfg.use_env_stage_cost):
                 total_cost += _safe_float(info.get("cost_total"))
@@ -136,6 +156,20 @@ def evaluate_comm_lookahead_sequences(
 
     not_success = ~success_mask
     if np.any(not_success):
+        if collect_progress and progress_seq_indices:
+            seq_idx = np.asarray(progress_seq_indices, dtype=np.int64)
+            active = not_success[seq_idx]
+            if np.any(active):
+                prev_batch = np.stack([progress_prev_obs[j] for j in np.nonzero(active)[0]], axis=0).astype(np.float32)
+                next_batch = np.stack([progress_next_obs[j] for j in np.nonzero(active)[0]], axis=0).astype(np.float32)
+                goal_batch = np.repeat(goal_obs[None, :].astype(np.float32), prev_batch.shape[0], axis=0)
+                progress = (
+                    _batch_agent_value(agent, next_batch, goal_batch)
+                    - _batch_agent_value(agent, prev_batch, goal_batch)
+                )
+                progress_cost = np.bincount(seq_idx[active], weights=progress, minlength=n).astype(np.float32)
+                costs += progress_alpha * progress_cost
+
         active_obs = terminal_obs_batch[not_success]
         if float(cfg.alpha_final) != 0.0:
             goal_batch = np.repeat(goal_obs[None, :].astype(np.float32), active_obs.shape[0], axis=0)

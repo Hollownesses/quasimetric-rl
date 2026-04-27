@@ -74,6 +74,8 @@ class DubinsLookaheadConfig:
     alpha_final: float = 0.3
     alpha_task_terminal: float = 0.5
     use_env_stage_cost: bool = False
+    heuristic_mode: str = "terminal"
+    qrl_progress_alpha: float = 0.0
     subgoal_reached_pos_tolerance: float = 0.35
     subgoal_reached_theta_tolerance: float = 0.35
 
