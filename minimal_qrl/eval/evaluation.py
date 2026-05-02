@@ -208,8 +208,15 @@ def visualize_distance_field_heatmap(
             h, w = (env.grid_size if hasattr(env, 'grid_size') else (25, 25))
         else:
             h, w = resolution
-        x_coords = np.linspace(0.0, 1.0, h, dtype=np.float32)
-        y_coords = np.linspace(0.0, 1.0, w, dtype=np.float32)
+        if hasattr(env, 'observation_space') and hasattr(env.observation_space, 'low'):
+            low = np.asarray(env.observation_space.low, dtype=np.float32).reshape(-1)
+            high = np.asarray(env.observation_space.high, dtype=np.float32).reshape(-1)
+            x_min, y_min = float(low[0]), float(low[1])
+            x_max, y_max = float(high[0]), float(high[1])
+        else:
+            x_min, y_min, x_max, y_max = 0.0, 0.0, 1.0, 1.0
+        x_coords = np.linspace(x_min, x_max, h, dtype=np.float32)
+        y_coords = np.linspace(y_min, y_max, w, dtype=np.float32)
         Y, X = np.meshgrid(y_coords, x_coords)
         states = np.stack([X.flatten(), Y.flatten()], axis=1).astype(np.float32)
         if isinstance(env, BaseNavigationEnv):
@@ -229,8 +236,8 @@ def visualize_distance_field_heatmap(
             for j in range(w):
                 s = np.array([x_coords[i], y_coords[j]], dtype=np.float32)
                 gt_dists[i, j] = compute_ground_truth_distance(env, s, goal)
-        extent = [0, 1, 0, 1]
-        xlabel, ylabel = 'Y position (normalized)', 'X position (normalized)'
+        extent = [y_min, y_max, x_min, x_max]
+        xlabel, ylabel = 'state[1]', 'state[0]'
         goal_plot_xy = (goal[1], goal[0])
         title_suffix = ''
 
@@ -320,4 +327,3 @@ def evaluate_planning(
         starts=starts,
         goals=goals,
     )
-

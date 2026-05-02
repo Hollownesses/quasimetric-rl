@@ -7,7 +7,9 @@
 import os
 import sys
 import argparse
+import csv
 import logging
+import tempfile
 from pathlib import Path
 from typing import *
 from datetime import datetime
@@ -18,18 +20,37 @@ import torch.utils.data
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 
+_CACHE_ROOT = os.path.join(tempfile.gettempdir(), "quasimetric_rl_cache")
+for _cache_dir in (
+    _CACHE_ROOT,
+    os.path.join(_CACHE_ROOT, "matplotlib"),
+    os.path.join(_CACHE_ROOT, "xdg"),
+    os.path.join(_CACHE_ROOT, "xdg", "fontconfig"),
+):
+    os.makedirs(_cache_dir, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(_CACHE_ROOT, "matplotlib"))
+os.environ.setdefault("XDG_CACHE_HOME", os.path.join(_CACHE_ROOT, "xdg"))
+
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quasimetric_rl.modules import QRLConf, QRLAgent, QRLLosses
 from quasimetric_rl.modules.optim import AdamWSpec
 from quasimetric_rl.modules.quasimetric_critic import QuasimetricCriticConf
+from quasimetric_rl.modules.quasimetric_critic.models import QuasimetricCritic
+from quasimetric_rl.modules.quasimetric_critic.models.encoder import Encoder
+from quasimetric_rl.modules.quasimetric_critic.models.latent_dynamics import LatentDynamics
+from quasimetric_rl.modules.quasimetric_critic.models.quasimetric_model import QuasimetricModel
 from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
+from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
+from quasimetric_rl.modules.quasimetric_critic.losses.latent_dynamics import LatentDynamicsLoss
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
 from minimal_qrl.envs import (
     SimpleGrid2D,
     ContinuousObstacle2D,
+    Maze2DNavigation,
+    MountainCar2D,
     DubinsUAV2D,
     CircleObstacle,
     CommInspectionDubinsUAV2D,
@@ -53,7 +74,7 @@ def setup_logging(output_dir: str):
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_file),
+            logging.FileHandler(log_file, mode='w'),
             logging.StreamHandler()
         ]
     )
@@ -65,7 +86,8 @@ def create_env_factory(env_type: str, **env_kwargs):
     创建环境工厂函数
     
     Args:
-        env_type: 环境类型 ('simple_grid', 'obstacle', 'dubins_uav', 或 'comm_inspection_dubins_uav')
+        env_type: 环境类型 ('simple_grid', 'obstacle', 'maze2d', 'mountaincar',
+                  'dubins_uav', 或 'comm_inspection_dubins_uav')
         **env_kwargs: 环境参数
     
     Returns:
@@ -78,6 +100,14 @@ def create_env_factory(env_type: str, **env_kwargs):
     elif env_type == 'obstacle':
         def factory():
             return ContinuousObstacle2D(**env_kwargs)
+        return factory
+    elif env_type == 'maze2d':
+        def factory():
+            return Maze2DNavigation(**env_kwargs)
+        return factory
+    elif env_type == 'mountaincar':
+        def factory():
+            return MountainCar2D(**env_kwargs)
         return factory
     elif env_type == 'dubins_uav':
         def factory():
@@ -146,6 +176,24 @@ def get_env_kwargs(args) -> dict:
         return {
             'max_episode_steps': args.max_steps_per_episode,
             'grid_resolution': args.grid_resolution,
+        }
+    elif args.env_type == 'maze2d':
+        return {
+            'grid_size': tuple(args.grid_size),
+            'max_episode_steps': args.max_steps_per_episode,
+        }
+    elif args.env_type == 'mountaincar':
+        return {
+            'goal_position': args.mountaincar_goal_position,
+            'goal_velocity': args.mountaincar_goal_velocity,
+            'goal_tolerance_pos': args.mountaincar_goal_tolerance_pos,
+            'goal_tolerance_vel': args.mountaincar_goal_tolerance_vel,
+            'max_episode_steps': args.max_steps_per_episode,
+            'gt_pos_bins': args.mountaincar_gt_pos_bins,
+            'gt_vel_bins': args.mountaincar_gt_vel_bins,
+            'gt_goal_mode': args.mountaincar_gt_goal_mode,
+            'dataset_mode': args.mountaincar_dataset_mode,
+            'abstract_goal_transition_repeats': args.mountaincar_abstract_goal_transition_repeats,
         }
     elif args.env_type == 'dubins_uav':
         obstacles = _dubins_obstacles_from_args(args)
@@ -262,6 +310,44 @@ def _log_planning_results(planning_results: dict, execution_modes: list, writer,
             )
 
 
+def _scalarize_for_csv(value):
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu()
+        return float(value.mean().item())
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return float(value)
+    return None
+
+
+def _flatten_scalar_info(info: dict, prefix: str = '') -> dict:
+    row = {}
+    for key, value in info.items():
+        name = f"{prefix}{key}" if not prefix else f"{prefix}/{key}"
+        if isinstance(value, dict):
+            row.update(_flatten_scalar_info(value, prefix=name))
+        else:
+            scalar = _scalarize_for_csv(value)
+            if scalar is not None:
+                row[name] = scalar
+    return row
+
+
+def _write_metric_rows_csv(path: str, rows: list):
+    if not rows:
+        return
+    fieldnames = []
+    seen = set()
+    for row in rows:
+        for key in row.keys():
+            if key not in seen:
+                fieldnames.append(key)
+                seen.add(key)
+    with open(path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def train(args):
     """训练主函数"""
     # 设置随机种子
@@ -351,7 +437,47 @@ def train(args):
     # 创建 QRL Agent 和 Losses（Dubins 用 step_cost=1.0 使约束与网络输出尺度一致，评估时再乘 dt 得时间）
     logger.info("创建 QRL Agent 和 Losses...")
     step_cost = 1.0
-    if args.env_type in {'dubins_uav', 'comm_inspection_dubins_uav'}:
+    if args.env_type == 'mountaincar':
+        agent_conf = QRLConf(
+            actor=None,
+            num_critics=args.num_critics,
+            quasimetric_critic=QuasimetricCriticConf(
+                model=QuasimetricCritic.Conf(
+                    encoder=Encoder.Conf(
+                        arch=tuple(args.mountaincar_encoder_arch),
+                        latent_size=args.mountaincar_latent_size,
+                    ),
+                    quasimetric_model=QuasimetricModel.Conf(
+                        projector_arch=tuple(args.mountaincar_projector_arch),
+                        quasimetric_head_spec=(
+                            f"iqe(dim={args.mountaincar_iqe_dim},"
+                            f"components={args.mountaincar_iqe_components})"
+                        ),
+                    ),
+                    latent_dynamics=LatentDynamics.Conf(
+                        arch=tuple(args.mountaincar_transition_arch),
+                        residual=True,
+                    ),
+                ),
+                losses=QuasimetricCriticLosses.Conf(
+                    global_push=GlobalPushLoss.Conf(
+                        softplus_beta=args.mountaincar_global_beta,
+                        softplus_offset=args.mountaincar_global_offset,
+                    ),
+                    local_constraint=LocalConstraintLoss.Conf(
+                        epsilon=args.mountaincar_epsilon,
+                        step_cost=step_cost,
+                        init_lagrange_multiplier=args.mountaincar_lambda_init,
+                    ),
+                    latent_dynamics=LatentDynamicsLoss.Conf(
+                        weight=args.mountaincar_transition_loss_weight,
+                    ),
+                    critic_optim=AdamWSpec.Conf(lr=args.mountaincar_model_lr),
+                    lagrange_mult_optim=AdamWSpec.Conf(lr=args.mountaincar_lambda_lr),
+                )
+            ),
+        )
+    elif args.env_type in {'dubins_uav', 'comm_inspection_dubins_uav'}:
         # 约束为 d(s,s') 不超过 step_cost；网络输出多为 O(1)，故用 1.0 易满足，评估时 pred*dt 得时间
         step_cost = 1.0
         agent_conf = QRLConf(
@@ -420,6 +546,7 @@ def train(args):
     # 初始化训练状态
     logger.info("开始训练...")
     optim_steps = loaded_optim_steps
+    train_metric_rows = []
     critic_training_enabled = not bool(getattr(args, 'skip_critic_training', False))
     critic_steps_remaining = max(0, int(args.total_steps) - int(optim_steps))
     pbar = tqdm(total=critic_steps_remaining, desc="训练进度")
@@ -465,6 +592,12 @@ def train(args):
                 
                 log_dict(loss_result.info, prefix='train/')
                 writer.add_scalar('train/total_loss', loss_result.loss.item(), optim_steps)
+                train_row = {
+                    'step': int(optim_steps),
+                    'total_loss': float(loss_result.loss.item()),
+                }
+                train_row.update(_flatten_scalar_info(loss_result.info))
+                train_metric_rows.append(train_row)
                 # 监控一步距离与 TD 类偏差（便于验证收敛与震荡）
                 try:
                     lc = loss_result.info.get('critic_00', {}).get('local_constraint', {})
@@ -631,6 +764,9 @@ def train(args):
         'losses': losses.state_dict(),
     }, final_path)
     logger.info(f"保存最终模型: {final_path}")
+    train_metrics_path = os.path.join(output_dir, 'train_metrics.csv')
+    _write_metric_rows_csv(train_metrics_path, train_metric_rows)
+    logger.info(f"保存训练指标 CSV: {train_metrics_path}")
 
     if (
         args.env_type == 'comm_inspection_dubins_uav'
@@ -759,12 +895,58 @@ def main():
     
     # 环境参数
     parser.add_argument('--env-type', type=str, default='simple_grid',
-                        choices=['simple_grid', 'obstacle', 'dubins_uav', 'comm_inspection_dubins_uav'],
-                        help='环境类型: simple_grid, obstacle, dubins_uav, 或 comm_inspection_dubins_uav')
+                        choices=['simple_grid', 'obstacle', 'maze2d', 'mountaincar', 'dubins_uav', 'comm_inspection_dubins_uav'],
+                        help='环境类型: simple_grid, obstacle, maze2d, mountaincar, dubins_uav, 或 comm_inspection_dubins_uav')
     parser.add_argument('--grid-size', type=int, nargs=2, default=[10, 10],
                         help='网格大小 (height, width)，仅用于 simple_grid 环境')
     parser.add_argument('--grid-resolution', type=int, default=50,
                         help='A* 搜索的网格分辨率，仅用于 obstacle 环境（降低可加速评估）')
+    parser.add_argument('--mountaincar-goal-position', type=float, default=0.5,
+                        help='MountainCar 目标位置')
+    parser.add_argument('--mountaincar-goal-velocity', type=float, default=0.0,
+                        help='MountainCar 点目标速度；threshold 模式下仅用于可视化/点目标评估')
+    parser.add_argument('--mountaincar-goal-tolerance-pos', type=float, default=0.015,
+                        help='MountainCar 点目标位置容差')
+    parser.add_argument('--mountaincar-goal-tolerance-vel', type=float, default=0.01,
+                        help='MountainCar 点目标速度容差')
+    parser.add_argument('--mountaincar-gt-pos-bins', type=int, default=160,
+                        help='MountainCar ground-truth 图搜索的位置离散网格数')
+    parser.add_argument('--mountaincar-gt-vel-bins', type=int, default=160,
+                        help='MountainCar ground-truth 图搜索的速度离散网格数')
+    parser.add_argument('--mountaincar-gt-goal-mode', type=str, default='threshold',
+                        choices=['threshold', 'point'],
+                        help='MountainCar ground-truth 目标定义：threshold=到达目标位置阈值，point=到达位置速度小区域')
+    parser.add_argument('--mountaincar-dataset-mode', type=str, default='random_policy_paper',
+                        choices=['random_policy_paper', 'discrete_graph', 'random_rollout'],
+                        help='MountainCar 数据集模式：random_policy_paper=论文式随机策略离线数据并加入 abstract-goal transitions')
+    parser.add_argument('--mountaincar-abstract-goal-transition-repeats', type=int, default=15,
+                        help='MountainCar goal-set 到 abstract goal 的附加 transition 重复次数，用于近似论文中的 5% abstract-goal 采样')
+    parser.add_argument('--mountaincar-encoder-arch', type=int, nargs='*', default=[1024, 1024, 1024],
+                        help='MountainCar encoder hidden sizes')
+    parser.add_argument('--mountaincar-transition-arch', type=int, nargs='*', default=[1024, 1024, 1024],
+                        help='MountainCar latent transition hidden sizes')
+    parser.add_argument('--mountaincar-projector-arch', type=int, nargs='*', default=[1024, 1024, 1024],
+                        help='MountainCar quasimetric projector hidden sizes')
+    parser.add_argument('--mountaincar-latent-size', type=int, default=256,
+                        help='MountainCar latent dimension')
+    parser.add_argument('--mountaincar-iqe-dim', type=int, default=512,
+                        help='MountainCar IQE projected dimension; 16 components x 32 dim in the paper')
+    parser.add_argument('--mountaincar-iqe-components', type=int, default=16,
+                        help='MountainCar IQE component count')
+    parser.add_argument('--mountaincar-transition-loss-weight', type=float, default=75.0,
+                        help='MountainCar latent transition loss weight')
+    parser.add_argument('--mountaincar-model-lr', type=float, default=5e-4,
+                        help='MountainCar model parameter learning rate')
+    parser.add_argument('--mountaincar-lambda-lr', type=float, default=0.3,
+                        help='MountainCar Lagrange multiplier learning rate')
+    parser.add_argument('--mountaincar-epsilon', type=float, default=0.25,
+                        help='MountainCar local constraint epsilon')
+    parser.add_argument('--mountaincar-lambda-init', type=float, default=0.01,
+                        help='MountainCar initial Lagrange multiplier')
+    parser.add_argument('--mountaincar-global-offset', type=float, default=500.0,
+                        help='MountainCar global push softplus offset')
+    parser.add_argument('--mountaincar-global-beta', type=float, default=0.01,
+                        help='MountainCar global push softplus beta')
     
     # Dubins UAV 特定参数
     parser.add_argument('--bounds', type=float, nargs=4, default=None,

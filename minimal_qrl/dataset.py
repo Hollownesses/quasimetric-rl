@@ -134,6 +134,18 @@ def create_dataset(
     Yields:
         EpisodeData
     """
+    if getattr(env, 'dataset_mode', None) == 'discrete_graph' and hasattr(env, 'iter_discrete_transitions'):
+        for state, action, next_state, reward, done in env.iter_discrete_transitions():
+            yield EpisodeData.from_simple_trajectory(
+                observations=np.array([state], dtype=np.float32),
+                actions=np.array([action], dtype=np.int64),
+                next_observations=np.array([next_state], dtype=np.float32),
+                rewards=np.array([reward], dtype=np.float32),
+                terminals=np.array([done], dtype=np.bool_),
+                timeouts=np.array([False], dtype=np.bool_),
+            )
+        return
+
     for i in range(num_episodes):
         episode_seed = (seed + i) if seed is not None else None
         yield collect_random_episode(
@@ -142,6 +154,17 @@ def create_dataset(
             sample_valid_start=sample_valid_states,
             seed=episode_seed
         )
+
+    if getattr(env, 'dataset_mode', None) == 'random_policy_paper' and hasattr(env, 'iter_added_goal_transitions'):
+        for state, action, next_state, reward, done in env.iter_added_goal_transitions():
+            yield EpisodeData.from_simple_trajectory(
+                observations=np.array([state], dtype=np.float32),
+                actions=np.array([action], dtype=np.int64),
+                next_observations=np.array([next_state], dtype=np.float32),
+                rewards=np.array([reward], dtype=np.float32),
+                terminals=np.array([done], dtype=np.bool_),
+                timeouts=np.array([False], dtype=np.bool_),
+            )
 
 
 # 为了向后兼容，保留旧函数名
@@ -167,4 +190,3 @@ def create_simple_dataset(
         max_steps_per_episode=max_steps_per_episode,
         sample_valid_states=True,
     )
-
