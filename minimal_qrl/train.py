@@ -434,7 +434,7 @@ def train(args):
     dataset = dataset_conf.make(dummy=False)
     logger.info(f"数据集大小: {len(dataset)} 个转移")
     
-    # 创建 QRL Agent 和 Losses（Dubins 用 step_cost=1.0 使约束与网络输出尺度一致，评估时再乘 dt 得时间）
+    # 创建 QRL Agent 和 Losses
     logger.info("创建 QRL Agent 和 Losses...")
     step_cost = 1.0
     if args.env_type == 'mountaincar':
@@ -477,7 +477,7 @@ def train(args):
                 )
             ),
         )
-    elif args.env_type in {'dubins_uav', 'comm_inspection_dubins_uav'}:
+    elif args.env_type == 'dubins_uav':
         # 约束为 d(s,s') 不超过 step_cost；网络输出多为 O(1)，故用 1.0 易满足，评估时 pred*dt 得时间
         step_cost = 1.0
         agent_conf = QRLConf(
@@ -486,6 +486,26 @@ def train(args):
             quasimetric_critic=QuasimetricCriticConf(
                 losses=QuasimetricCriticLosses.Conf(
                     local_constraint=LocalConstraintLoss.Conf(step_cost=step_cost),
+                    critic_optim=AdamWSpec.Conf(lr=5e-5),
+                    lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
+                )
+            ),
+        )
+    elif args.env_type == 'comm_inspection_dubins_uav':
+        # negative_reward: reward=-cost_total，用逐 transition 非负任务 cost 锚定 QRL local constraint。
+        # fixed: 恢复 geometry-only 对照实验的固定一步代价。
+        step_cost = 1.0
+        qrl_cost_source = str(args.qrl_cost_source)
+        logger.info(f"通信巡检 QRL local cost source: {qrl_cost_source}")
+        agent_conf = QRLConf(
+            actor=None,
+            num_critics=args.num_critics,
+            quasimetric_critic=QuasimetricCriticConf(
+                losses=QuasimetricCriticLosses.Conf(
+                    local_constraint=LocalConstraintLoss.Conf(
+                        step_cost=step_cost,
+                        cost_source=qrl_cost_source,
+                    ),
                     critic_optim=AdamWSpec.Conf(lr=5e-5),
                     lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
                 )
@@ -605,13 +625,28 @@ def train(args):
                         d = lc['dist']
                         one_step_dist = d.mean().item() if hasattr(d, 'mean') else (d.item() if hasattr(d, 'item') else float(d))
                         writer.add_scalar('train/one_step_dist', one_step_dist, optim_steps)
-                        step_cost_val = getattr(losses.critic_losses[0].local_constraint, 'step_cost', 1.0)
-                        writer.add_scalar('train/td_like_error', one_step_dist - step_cost_val, optim_steps)
+                        target_cost = lc.get('target_cost_mean', None)
+                        if target_cost is not None:
+                            target_cost_val = (
+                                target_cost.mean().item()
+                                if hasattr(target_cost, 'mean')
+                                else (target_cost.item() if hasattr(target_cost, 'item') else float(target_cost))
+                            )
+                        else:
+                            target_cost_val = getattr(losses.critic_losses[0].local_constraint, 'step_cost', 1.0)
+                        writer.add_scalar('train/td_like_error', one_step_dist - target_cost_val, optim_steps)
                 except Exception:
                     pass
                 
                 # 打印到控制台（包含详细信息）
                 loss_str = f"Step {optim_steps}: total_loss={loss_result.loss.item():.4f}"
+
+                def scalar_for_log(value):
+                    if isinstance(value, torch.Tensor):
+                        return value.mean().item()
+                    if isinstance(value, (int, float)):
+                        return float(value)
+                    return None
                 
                 # 提取各个损失组件信息（如果有）
                 if hasattr(loss_result, 'info') and isinstance(loss_result.info, dict):
@@ -625,9 +660,15 @@ def train(args):
                                     violation = lc_info.get('violation', 'N/A')
                                     sq_dev = lc_info.get('sq_deviation', 'N/A')
                                     dist = lc_info.get('dist', 'N/A')
-                                    loss_str += f" | violation={violation:.4f}" if isinstance(violation, (int, float)) else ""
-                                    loss_str += f" | sq_dev={sq_dev:.4f}" if isinstance(sq_dev, (int, float)) else ""
-                                    loss_str += f" | dist={dist:.4f}" if isinstance(dist, (int, float)) else ""
+                                    target_cost = lc_info.get('target_cost_mean', 'N/A')
+                                    violation = scalar_for_log(violation)
+                                    sq_dev = scalar_for_log(sq_dev)
+                                    dist = scalar_for_log(dist)
+                                    target_cost = scalar_for_log(target_cost)
+                                    loss_str += f" | violation={violation:.4f}" if violation is not None else ""
+                                    loss_str += f" | sq_dev={sq_dev:.4f}" if sq_dev is not None else ""
+                                    loss_str += f" | dist={dist:.4f}" if dist is not None else ""
+                                    loss_str += f" | target_cost_mean={target_cost:.4f}" if target_cost is not None else ""
                 
                 pbar.set_postfix_str(loss_str)
                 logger.info(loss_str)
@@ -1031,6 +1072,10 @@ def main():
                         help='TaskScore 中 task feasible bonus 的权重')
     parser.add_argument('--taskscore-margin-clip', type=float, default=2.0,
                         help='TaskScore 对 obs/comm margin 的对称裁剪阈值')
+    parser.add_argument('--qrl-cost-source', type=str, default='negative_reward',
+                        choices=['negative_reward', 'fixed'],
+                        help='comm_inspection_dubins_uav 的 QRL local constraint 单步代价来源：'
+                             'negative_reward 使用环境 task cost；fixed 使用原始固定 step_cost=1.0')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')

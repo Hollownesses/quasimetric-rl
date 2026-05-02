@@ -25,45 +25,81 @@ class LocalConstraintLoss(CriticLossBase):
         # to load from data, and QRL will still have guarantees.
         step_cost: float = attrs.field(default=1, validator=attrs.validators.gt(0))
 
+        cost_source: Literal["fixed", "negative_reward"] = attrs.field(
+            default="fixed",
+            validator=attrs.validators.in_(("fixed", "negative_reward")),
+        )
+
         init_lagrange_multiplier: float = attrs.field(default=0.01, validator=attrs.validators.gt(0))
 
         def make(self) -> 'LocalConstraintLoss':
             return LocalConstraintLoss(
                 epsilon=self.epsilon,
                 step_cost=self.step_cost,
+                cost_source=self.cost_source,
                 init_lagrange_multiplier=self.init_lagrange_multiplier,
             )
 
     epsilon: float
     step_cost: float
+    cost_source: Literal["fixed", "negative_reward"]
     init_lagrange_multiplier: float
 
     raw_lagrange_multiplier: nn.Parameter  # for the QRL constrained optimization
 
-    def __init__(self, *, epsilon: float, step_cost: float, init_lagrange_multiplier: float):
+    def __init__(
+        self,
+        *,
+        epsilon: float,
+        step_cost: float,
+        cost_source: Literal["fixed", "negative_reward"],
+        init_lagrange_multiplier: float,
+    ):
         super().__init__()
         self.epsilon = epsilon
         self.step_cost = step_cost
+        if cost_source not in ("fixed", "negative_reward"):
+            raise ValueError(f"Unsupported local-constraint cost_source: {cost_source}")
+        self.cost_source = cost_source
         self.init_lagrange_multiplier = init_lagrange_multiplier
         self.raw_lagrange_multiplier = nn.Parameter(
             torch.tensor(softplus_inv_float(init_lagrange_multiplier), dtype=torch.float32))
 
+    def _target_cost(self, data: BatchData, dist: torch.Tensor) -> torch.Tensor:
+        if self.cost_source == "fixed":
+            return torch.full_like(dist, float(self.step_cost))
+
+        if self.cost_source == "negative_reward":
+            costs = -data.rewards.to(device=dist.device, dtype=dist.dtype)
+            return costs.reshape_as(dist).clamp_min(0)
+
+        raise RuntimeError(f"Unsupported local-constraint cost_source: {self.cost_source}")
+
     def forward(self, data: BatchData, critic_batch_info: CriticBatchInfo) -> LossResult:
 
         dist = critic_batch_info.critic.quasimetric_model(critic_batch_info.zx, critic_batch_info.zy)
+        target_cost = self._target_cost(data, dist)
 
         lagrange_mult = F.softplus(self.raw_lagrange_multiplier)  # make positive
         # lagrange multiplier is minimax training, so grad_mul -1
         lagrange_mult = grad_mul(lagrange_mult, -1)
 
-        sq_deviation = (dist - self.step_cost).relu().square().mean()
+        sq_deviation = (dist - target_cost).relu().square().mean()
         violation = (sq_deviation - self.epsilon ** 2)
         loss = violation * lagrange_mult
 
         return LossResult(
             loss=loss,
-            info=dict(dist=dist.mean(), sq_deviation=sq_deviation, violation=violation, lagrange_mult=lagrange_mult),
+            info=dict(
+                dist=dist.mean(),
+                sq_deviation=sq_deviation,
+                violation=violation,
+                lagrange_mult=lagrange_mult,
+                target_cost_mean=target_cost.mean(),
+                target_cost_min=target_cost.min(),
+                target_cost_max=target_cost.max(),
+            ),
         )
 
     def extra_repr(self) -> str:
-        return f"epsilon={self.epsilon:g}, step_cost={self.step_cost:g}"
+        return f"epsilon={self.epsilon:g}, step_cost={self.step_cost:g}, cost_source={self.cost_source}"
