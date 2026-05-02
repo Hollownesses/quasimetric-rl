@@ -1072,7 +1072,7 @@ def main():
                         help='TaskScore 中 task feasible bonus 的权重')
     parser.add_argument('--taskscore-margin-clip', type=float, default=2.0,
                         help='TaskScore 对 obs/comm margin 的对称裁剪阈值')
-    parser.add_argument('--qrl-cost-source', type=str, default='negative_reward',
+    parser.add_argument('--qrl-cost-source', type=str, default='fixed',
                         choices=['negative_reward', 'fixed'],
                         help='comm_inspection_dubins_uav 的 QRL local constraint 单步代价来源：'
                              'negative_reward 使用环境 task cost；fixed 使用原始固定 step_cost=1.0')
