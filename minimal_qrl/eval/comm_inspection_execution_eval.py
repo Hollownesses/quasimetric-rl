@@ -954,6 +954,14 @@ def evaluate_execution_mode(
     success_count = 0
     success_steps: List[int] = []
     all_steps: List[int] = []
+    total_costs: List[float] = []
+    avg_costs_per_step: List[float] = []
+    observation_feasible_ratios: List[float] = []
+    communication_feasible_ratios: List[float] = []
+    task_feasible_ratios: List[float] = []
+    final_obs_margins: List[float] = []
+    final_comm_margins: List[float] = []
+    final_task_scores: List[float] = []
     ever_task_feasible = 0
     first_task_feasible_steps: List[int] = []
     collision_episodes = 0
@@ -1000,6 +1008,24 @@ def evaluate_execution_mode(
             success_steps.append(step_count)
 
         all_steps.append(step_count)
+        episode_cost = float(-np.sum(np.asarray(rollout["rewards"], dtype=np.float32)))
+        total_costs.append(episode_cost)
+        if step_count > 0:
+            avg_costs_per_step.append(episode_cost / float(step_count))
+        step_infos = list(rollout["step_infos"])
+        if step_infos:
+            observation_feasible_ratios.append(
+                float(np.mean([bool(info.get("observation_feasible", False)) for info in step_infos]))
+            )
+            communication_feasible_ratios.append(
+                float(np.mean([bool(info.get("communication_feasible", False)) for info in step_infos]))
+            )
+            task_feasible_ratios.append(
+                float(np.mean([bool(info.get("task_feasible", False)) for info in step_infos]))
+            )
+        final_obs_margins.append(_safe_float(final_info.get("obs_margin")))
+        final_comm_margins.append(_safe_float(final_info.get("comm_margin")))
+        final_task_scores.append(_safe_float(final_info.get("task_score")))
 
         if bool(final_info.get("ever_task_feasible", False)):
             ever_task_feasible += 1
@@ -1061,8 +1087,20 @@ def evaluate_execution_mode(
         "success_rate": success_rate,
         "avg_steps_success": float(np.mean(success_steps)) if success_steps else 0.0,
         "avg_steps_all": float(np.mean(all_steps)) if all_steps else 0.0,
+        "avg_total_cost": float(np.mean(total_costs)) if total_costs else 0.0,
+        "avg_cost_per_step": float(np.mean(avg_costs_per_step)) if avg_costs_per_step else 0.0,
         "num_success": float(success_count),
         "num_trials": float(n_trials),
+        "observation_feasible_ratio": (
+            float(np.mean(observation_feasible_ratios)) if observation_feasible_ratios else 0.0
+        ),
+        "communication_feasible_ratio": (
+            float(np.mean(communication_feasible_ratios)) if communication_feasible_ratios else 0.0
+        ),
+        "task_feasible_ratio": float(np.mean(task_feasible_ratios)) if task_feasible_ratios else 0.0,
+        "avg_final_obs_margin": float(np.mean(final_obs_margins)) if final_obs_margins else 0.0,
+        "avg_final_comm_margin": float(np.mean(final_comm_margins)) if final_comm_margins else 0.0,
+        "avg_final_task_score": float(np.mean(final_task_scores)) if final_task_scores else 0.0,
         "ever_task_feasible_rate": ever_task_feasible / float(n_trials) if n_trials > 0 else 0.0,
         "avg_first_task_feasible_step": (
             float(np.mean(first_task_feasible_steps)) if first_task_feasible_steps else 0.0
@@ -1349,6 +1387,7 @@ def main():
         line = (
             f"  {mode}: success_rate={metrics['success_rate']:.3f}, "
             f"avg_steps_success={metrics['avg_steps_success']:.1f}, "
+            f"avg_total_cost={metrics['avg_total_cost']:.2f}, "
             f"ever_task_feasible_rate={metrics['ever_task_feasible_rate']:.3f}, "
             f"collision_rate={metrics['collision_rate']:.3f}, "
             f"out_of_bounds_rate={metrics['out_of_bounds_rate']:.3f}"

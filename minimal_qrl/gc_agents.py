@@ -268,6 +268,24 @@ def _is_goal_achieved(env: DubinsUAV2D, state: np.ndarray, goal_state: np.ndarra
     return (pos_dist < env.epsilon_pos) and (theta_diff < env.epsilon_theta)
 
 
+def _is_task_success_for_goal(env: DubinsUAV2D, state: np.ndarray, goal_state: np.ndarray) -> bool:
+    """Goal reaching check with the communication-inspection task feasibility gate when present."""
+    achieved = _is_goal_achieved(env, state, goal_state)
+    if not achieved:
+        return False
+    if hasattr(env, "is_task_feasible"):
+        return bool(env.is_task_feasible(state))
+    return True
+
+
+def _future_goal_candidates(env: DubinsUAV2D, future_states: np.ndarray) -> np.ndarray:
+    """For comm-aware HER, only relabel to future states that satisfy the task constraints."""
+    if hasattr(env, "is_task_feasible"):
+        feasible = [bool(env.is_task_feasible(s)) for s in future_states]
+        future_states = future_states[np.asarray(feasible, dtype=bool)]
+    return future_states
+
+
 def _her_relabel_episode(
     env: DubinsUAV2D,
     episode_states: List[np.ndarray],
@@ -297,21 +315,25 @@ def _her_relabel_episode(
         # 1. 原始目标（环境自带 goal）
         g_state = np.asarray(env.goal, dtype=np.float32)
         g_obs = env.state_to_observation(g_state)
-        done = bool(episode_rewards[t] > -dt * 1.5)  # 环境 terminate 时 reward 仍为 -dt，这里用 episode 的 done 更精确
+        done = _is_task_success_for_goal(env, s_tp1, g_state)
         buf.add(obs_t, g_obs, a_t, episode_rewards[t], obs_tp1, done)
 
         # 2. HER 目标
         future_idxs = np.arange(t + 1, T + 1, dtype=np.int64)
         if len(future_idxs) == 0:
             continue
+        future_states = _future_goal_candidates(env, np.asarray([episode_states[j] for j in future_idxs], dtype=np.float32))
+        if len(future_states) == 0:
+            continue
         np.random.shuffle(future_idxs)
-        future_idxs = future_idxs[: cfg.her_k]
-        for j in future_idxs:
-            g_state_her = episode_states[j]
+        selected = future_states[np.random.choice(len(future_states), size=min(cfg.her_k, len(future_states)), replace=False)]
+        for g_state_her in selected:
             g_obs_her = env.state_to_observation(g_state_her)
-            # 在新目标下，单步 reward 仍为 -dt
-            r_her = -dt
-            done_her = _is_goal_achieved(env, s_tp1, g_state_her)
+            if hasattr(env, "compute_step_terms"):
+                r_her = float(episode_rewards[t])
+            else:
+                r_her = -dt
+            done_her = _is_task_success_for_goal(env, s_tp1, g_state_her)
             buf.add(obs_t, g_obs_her, a_t, r_her, obs_tp1, done_her)
 
 
@@ -763,4 +785,3 @@ def train_td_agent(
 
     pbar.close()
     return agent
-
