@@ -13,6 +13,10 @@
 #
 # 若希望 reset 时随机采样巡检目标 / 地面站，可设置：
 #   RANDOMIZE_INSPECTION_TARGET=1 RANDOMIZE_GROUND_STATION=1 bash minimal_qrl/run_comm_inspection_train.sh
+#
+# QRL local constraint 单步代价来源：
+#   QRL_COST_SOURCE=negative_reward  # 默认：使用环境 task cost
+#   QRL_COST_SOURCE=fixed            # 对照：使用原始固定 step_cost=1.0
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -64,6 +68,7 @@ fi
   --batch-size "${BATCH_SIZE:-256}" \
   --total-steps "${TOTAL_STEPS:-20000}" \
   --num-critics "${NUM_CRITICS:-2}" \
+  --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
   --log-interval "${LOG_INTERVAL:-100}" \
   --save-interval "${SAVE_INTERVAL:-2000}" \
   --eval-interval "${EVAL_INTERVAL:-1000}" \

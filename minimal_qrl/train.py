@@ -354,13 +354,20 @@ def train(args):
             ),
         )
     elif args.env_type == 'comm_inspection_dubins_uav':
-        # 通信巡检环境返回 reward=-cost_total；用逐 transition 非负任务 cost 锚定 QRL local constraint。
+        # negative_reward: reward=-cost_total，用逐 transition 非负任务 cost 锚定 QRL local constraint。
+        # fixed: 恢复 geometry-only 对照实验的固定一步代价。
+        step_cost = 1.0
+        qrl_cost_source = str(args.qrl_cost_source)
+        logger.info(f"通信巡检 QRL local cost source: {qrl_cost_source}")
         agent_conf = QRLConf(
             actor=None,
             num_critics=args.num_critics,
             quasimetric_critic=QuasimetricCriticConf(
                 losses=QuasimetricCriticLosses.Conf(
-                    local_constraint=LocalConstraintLoss.Conf(cost_source="negative_reward"),
+                    local_constraint=LocalConstraintLoss.Conf(
+                        step_cost=step_cost,
+                        cost_source=qrl_cost_source,
+                    ),
                     critic_optim=AdamWSpec.Conf(lr=5e-5),
                     lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
                 )
@@ -731,6 +738,10 @@ def main():
                         help='通信约束短缺的软代价权重，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--observation-failure-cost', type=float, default=0.25,
                         help='观测不可行时的固定阶段代价，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--qrl-cost-source', type=str, default='negative_reward',
+                        choices=['negative_reward', 'fixed'],
+                        help='comm_inspection_dubins_uav 的 QRL local constraint 单步代价来源：'
+                             'negative_reward 使用环境 task cost；fixed 使用原始固定 step_cost=1.0')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')
