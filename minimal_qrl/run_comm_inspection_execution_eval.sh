@@ -8,6 +8,8 @@
 #   OUTPUT_DIR=./results/minimal_qrl_inspection_dubins \
 #   N_TRIALS=300 \
 #   EXECUTION_MODES=greedy,lookahead \
+#   LOOKAHEAD_HEURISTICS=terminal,dense \
+#   PLANNER_QRL_PROGRESS_ALPHA=1.0 \
 #   bash minimal_qrl/run_comm_inspection_execution_eval.sh
 
 set -euo pipefail
@@ -95,10 +97,12 @@ echo "评估通信巡检 Dubins UAV 执行成功率..."
   --execution-modes "${EXECUTION_MODES:-greedy,lookahead}" \
   --lookahead-horizon "${LOOKAHEAD_HORIZON:-10}" \
   --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-128}" \
+  --lookahead-heuristics "${LOOKAHEAD_HEURISTICS:-terminal}" \
   --lookahead-step-cost-weight "${LOOKAHEAD_STEP_COST_WEIGHT:-0.0}" \
   --lookahead-collision-penalty "${LOOKAHEAD_COLLISION_PENALTY:-0.0}" \
   --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-24}" \
   --lookahead-bias-kp "${LOOKAHEAD_BIAS_KP:-2.0}" \
+  --planner-qrl-progress-alpha "${PLANNER_QRL_PROGRESS_ALPHA:-0.0}" \
   ${SAVE_VISUALIZATIONS_FLAG} \
   --viz-max-successes "${VIZ_MAX_SUCCESSES:-10}" \
   --viz-max-failures "${VIZ_MAX_FAILURES:-10}" \

@@ -15,7 +15,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -38,6 +38,10 @@ from quasimetric_rl.data import Dataset
 from quasimetric_rl.modules import QRLConf
 
 from minimal_qrl.dataset import create_dataset
+from minimal_qrl.comm_inspection_planner import (
+    comm_inspection_lookahead_action,
+    evaluate_comm_lookahead_sequences,
+)
 from minimal_qrl.envs import CircleObstacle, CommInspectionDubinsUAV2D
 from minimal_qrl.eval.dubins_execution_mode_eval import (
     DubinsLookaheadConfig,
@@ -218,57 +222,15 @@ def _evaluate_comm_lookahead_sequences(
     *,
     subgoal_state: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    n = int(omegas.shape[0])
-    costs = np.zeros((n,), dtype=np.float32)
-    first_actions = omegas[:, 0].astype(np.float32).copy()
-    subgoal_obs = env.state_to_observation(subgoal_state) if subgoal_state is not None else None
-
-    for i in range(n):
-        env.set_state(base_state)
-        total_cost = 0.0
-        reached_subgoal = False
-        success = False
-
-        for t in range(int(omegas.shape[1])):
-            w = float(omegas[i, t])
-            action = np.array([w], dtype=np.float32)
-            _obs, _reward, terminated, truncated, info = env.step(action)
-
-            if bool(cfg.use_env_stage_cost):
-                total_cost += _safe_float(info.get("cost_total"))
-            else:
-                if cfg.step_cost_weight > 0.0:
-                    total_cost += float(cfg.step_cost_weight) * abs(w)
-                if cfg.collision_penalty > 0.0 and bool(info.get("collision", False)):
-                    total_cost += float(cfg.collision_penalty)
-
-            if subgoal_state is not None and env.is_subgoal_reached(
-                env.state,
-                subgoal_state,
-                pos_tolerance=float(cfg.subgoal_reached_pos_tolerance),
-                theta_tolerance=float(cfg.subgoal_reached_theta_tolerance),
-            ):
-                reached_subgoal = True
-
-            if terminated:
-                success = True
-                break
-            if truncated:
-                break
-
-        terminal_obs = env.state_to_observation(env.state)
-        terminal_task_score = env.compute_task_score(env.state)
-        terminal_cost = 0.0
-        if not success:
-            terminal_cost += float(cfg.alpha_final) * float(agent.value(terminal_obs, goal_obs))
-            terminal_cost -= float(cfg.alpha_task_terminal) * float(terminal_task_score)
-            if subgoal_obs is not None and not reached_subgoal:
-                terminal_cost += float(cfg.alpha_subgoal) * float(agent.value(terminal_obs, subgoal_obs))
-
-        costs[i] = float(total_cost + terminal_cost)
-
-    env.set_state(base_state)
-    return costs, first_actions
+    return evaluate_comm_lookahead_sequences(
+        agent,
+        env,
+        goal_obs,
+        cfg,
+        omegas,
+        base_state,
+        subgoal_state=subgoal_state,
+    )
 
 
 def _comm_inspection_lookahead_action(
@@ -279,79 +241,13 @@ def _comm_inspection_lookahead_action(
     *,
     subgoal_state: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    horizon = max(1, int(cfg.horizon))
-    num_sequences = max(1, int(cfg.num_sequences))
-    base_state = env.get_state()
-
-    low = float(env.action_space.low[0])
-    high = float(env.action_space.high[0])
-    n_bias = int(min(max(0, cfg.biased_sequences), num_sequences))
-    n_rand = int(max(0, num_sequences - n_bias))
-    rand = (
-        np.random.uniform(low, high, size=(n_rand, horizon)).astype(np.float32)
-        if n_rand > 0
-        else np.zeros((0, horizon), dtype=np.float32)
-    )
-    if n_bias > 0:
-        bias = np.zeros((n_bias, horizon), dtype=np.float32)
-        desired = subgoal_state if subgoal_state is not None else np.asarray(env.goal, dtype=np.float32)
-        dx = float(desired[0] - env.state[0])
-        dy = float(desired[1] - env.state[1])
-        err = env._normalize_angle(float(np.arctan2(dy, dx) - env.state[2]))
-        w0 = float(np.clip(float(cfg.bias_kp) * err, low, high))
-        bias[0, :] = w0
-        for idx in range(1, n_bias):
-            scale = max(0.0, 1.0 - 0.15 * float(idx))
-            bias[idx, :] = float(np.clip(w0 * scale, low, high))
-    else:
-        bias = np.zeros((0, horizon), dtype=np.float32)
-    omegas0 = np.concatenate([bias, rand], axis=0) if (n_bias + n_rand) > 0 else np.zeros((1, horizon), dtype=np.float32)
-
-    if cfg.use_cem:
-        om_range = float(high - low)
-        std = np.full((horizon,), float(cfg.cem_std_init_frac) * 0.5 * om_range, dtype=np.float32)
-        mean = np.mean(omegas0, axis=0).astype(np.float32) if omegas0.shape[0] > 0 else np.zeros((horizon,), dtype=np.float32)
-        n_elite = max(1, int(float(cfg.cem_elite_frac) * float(num_sequences)))
-        best_first = np.array([0.0], dtype=np.float32)
-        best_cost = float("inf")
-
-        for _ in range(max(1, int(cfg.cem_iters))):
-            samples = np.random.normal(loc=mean[None, :], scale=std[None, :], size=(num_sequences, horizon)).astype(np.float32)
-            samples = np.clip(samples, low, high)
-            if n_bias > 0:
-                samples[: min(n_bias, samples.shape[0])] = bias[: min(n_bias, samples.shape[0])]
-            costs, firsts = _evaluate_comm_lookahead_sequences(
-                agent,
-                env,
-                goal_obs,
-                cfg,
-                samples,
-                base_state,
-                subgoal_state=subgoal_state,
-            )
-            idx = int(np.argmin(costs))
-            if float(costs[idx]) < best_cost:
-                best_cost = float(costs[idx])
-                best_first = np.array([float(firsts[idx])], dtype=np.float32)
-            elite = samples[np.argsort(costs)[:n_elite]]
-            mean = np.mean(elite, axis=0).astype(np.float32)
-            std = (np.std(elite, axis=0) + 1e-4).astype(np.float32)
-
-        env.set_state(base_state)
-        return best_first
-
-    costs, firsts = _evaluate_comm_lookahead_sequences(
+    return comm_inspection_lookahead_action(
         agent,
         env,
         goal_obs,
         cfg,
-        omegas0,
-        base_state,
         subgoal_state=subgoal_state,
     )
-    best_idx = int(np.argmin(costs))
-    env.set_state(base_state)
-    return np.array([float(firsts[best_idx])], dtype=np.float32)
 
 
 def _choose_hierarchical_subgoal(
@@ -1044,6 +940,7 @@ def evaluate_execution_mode(
     subgoal_candidates: int = 64,
     subgoal_lambda_final: float = 0.3,
     subgoal_lambda_task: float = 1.0,
+    result_name: Optional[str] = None,
 ) -> tuple[Dict[str, float], Dict[str, List[Dict[str, Any]]]]:
     if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
@@ -1072,14 +969,15 @@ def evaluate_execution_mode(
         "failure": [],
     }
 
-    vis_root = output_dir / "visualizations" / execution_mode
+    output_name = result_name or execution_mode
+    vis_root = output_dir / "visualizations" / output_name
     success_dir = vis_root / "success"
     failure_dir = vis_root / "failure"
     if viz_cfg.save_visualizations:
         success_dir.mkdir(parents=True, exist_ok=True)
         failure_dir.mkdir(parents=True, exist_ok=True)
 
-    for i in tqdm(range(n_trials), desc=f"{execution_mode}_success_rate", leave=False):
+    for i in tqdm(range(n_trials), desc=f"{output_name}_success_rate", leave=False):
         rollout = rollout_execution_episode(
             agent,
             env,
@@ -1131,7 +1029,7 @@ def evaluate_execution_mode(
                 _save_rollout_visualization(
                     env,
                     rollout,
-                    execution_mode=execution_mode,
+                    execution_mode=output_name,
                     episode_index=i,
                     category="success",
                     category_dir=success_dir,
@@ -1149,7 +1047,7 @@ def evaluate_execution_mode(
                 _save_rollout_visualization(
                     env,
                     rollout,
-                    execution_mode=execution_mode,
+                    execution_mode=output_name,
                     episode_index=i,
                     category="failure",
                     category_dir=failure_dir,
@@ -1188,6 +1086,19 @@ def _parse_execution_modes(raw: str) -> List[str]:
         if mode not in {"greedy", "lookahead", "hierarchical"}:
             raise ValueError(f"不支持的 execution mode: {mode}")
     return modes
+
+
+def _parse_lookahead_heuristics(raw: str) -> List[str]:
+    heuristics = [h.strip().lower() for h in str(raw).split(",") if h.strip()]
+    if not heuristics:
+        heuristics = ["terminal"]
+    parsed: List[str] = []
+    for heuristic in heuristics:
+        if heuristic not in {"terminal", "dense"}:
+            raise ValueError(f"不支持的 lookahead heuristic: {heuristic}")
+        if heuristic not in parsed:
+            parsed.append(heuristic)
+    return parsed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1256,6 +1167,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--lookahead-horizon", type=int, default=20)
     parser.add_argument("--lookahead-num-sequences", type=int, default=256)
+    parser.add_argument("--lookahead-heuristics", type=str, default="terminal")
     parser.add_argument("--lookahead-step-cost-weight", type=float, default=0.0)
     parser.add_argument("--lookahead-collision-penalty", type=float, default=0.0)
     parser.add_argument("--lookahead-biased-sequences", type=int, default=48)
@@ -1267,6 +1179,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--planner-alpha-subgoal", type=float, default=1.0)
     parser.add_argument("--planner-alpha-final", type=float, default=0.3)
     parser.add_argument("--planner-alpha-task-terminal", type=float, default=0.5)
+    parser.add_argument("--planner-qrl-progress-alpha", type=float, default=0.0)
     parser.add_argument("--planner-use-env-stage-cost", dest="planner_use_env_stage_cost", action="store_true", default=True)
     parser.add_argument("--no-planner-use-env-stage-cost", dest="planner_use_env_stage_cost", action="store_false")
     parser.add_argument("--taskscore-beta-obs", type=float, default=1.0)
@@ -1300,6 +1213,7 @@ def main():
     agent, ckpt_step = build_qrl_adapter(args, device, env)
 
     execution_modes = _parse_execution_modes(args.execution_modes)
+    lookahead_heuristics = _parse_lookahead_heuristics(args.lookahead_heuristics)
     subgoal_actor = None
     subgoal_actor_meta: Dict[str, Any] = {}
     subgoal_ckpt: Optional[str] = None
@@ -1329,6 +1243,8 @@ def main():
         alpha_final=float(args.planner_alpha_final),
         alpha_task_terminal=float(args.planner_alpha_task_terminal),
         use_env_stage_cost=bool(args.planner_use_env_stage_cost),
+        heuristic_mode="terminal",
+        qrl_progress_alpha=float(args.planner_qrl_progress_alpha),
     )
     viz_cfg = VisualizationConfig(
         save_visualizations=bool(args.save_visualizations),
@@ -1340,8 +1256,31 @@ def main():
 
     results: Dict[str, Dict[str, float]] = {}
     visualization_index: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    result_modes: List[str] = []
     for mode in execution_modes:
-        cfg = lookahead_cfg if mode == "lookahead" else None
+        if mode == "lookahead":
+            multi_heuristic = len(lookahead_heuristics) > 1
+            for heuristic in lookahead_heuristics:
+                result_key = "lookahead" if not multi_heuristic and heuristic == "terminal" else f"lookahead_{heuristic}"
+                cfg = replace(lookahead_cfg, heuristic_mode=heuristic)
+                metrics, vis_index = evaluate_execution_mode(
+                    agent,
+                    env,
+                    "lookahead",
+                    n_trials=int(args.n_trials),
+                    seed=int(args.seed),
+                    lookahead_cfg=cfg,
+                    output_dir=output_dir,
+                    viz_cfg=viz_cfg,
+                    high_level_period=int(args.high_level_period),
+                    result_name=result_key,
+                )
+                results[result_key] = metrics
+                visualization_index[result_key] = vis_index
+                result_modes.append(result_key)
+            continue
+
+        cfg = None
         if mode == "hierarchical":
             cfg = lookahead_cfg
         metrics, vis_index = evaluate_execution_mode(
@@ -1359,16 +1298,20 @@ def main():
             subgoal_candidates=int(args.subgoal_candidates),
             subgoal_lambda_final=float(args.subgoal_lambda_final),
             subgoal_lambda_task=float(args.subgoal_lambda_task),
+            result_name=mode,
         )
         results[mode] = metrics
         visualization_index[mode] = vis_index
+        result_modes.append(mode)
 
     payload = {
         "checkpoint": os.path.abspath(args.checkpoint),
         "ckpt_step": int(ckpt_step) if ckpt_step is not None else None,
         "seed": int(args.seed),
         "n_trials": int(args.n_trials),
-        "execution_modes": execution_modes,
+        "execution_modes": result_modes,
+        "requested_execution_modes": execution_modes,
+        "lookahead_heuristics": lookahead_heuristics,
         "results": results,
         "visualizations": visualization_index,
         "lookahead_config": asdict(lookahead_cfg),
@@ -1401,7 +1344,7 @@ def main():
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     print(f"[comm_inspection_execution_eval] 已保存评估结果到 {out_json}")
-    for mode in execution_modes:
+    for mode in result_modes:
         metrics = results[mode]
         line = (
             f"  {mode}: success_rate={metrics['success_rate']:.3f}, "
