@@ -10,8 +10,8 @@ else
   PYTHON_BIN="${PYTHON_BIN:-python3}"
 fi
 
-OUTPUT_DIR="${OUTPUT_DIR:-./results/comm_inspection_td_baselines}"
-QRL_DIR="${QRL_DIR:-./results/comm_inspection_td_baselines/qrl_original}"
+OUTPUT_DIR="${OUTPUT_DIR:-./results/experiments/comm_inspection_td_baselines}"
+QRL_DIR="${QRL_DIR:-./results/experiments/comm_inspection_td_baselines/qrl_original}"
 QRL_CKPT="${QRL_CKPT:-$QRL_DIR/checkpoint_final.pth}"
 mkdir -p "$OUTPUT_DIR"
 
@@ -26,6 +26,7 @@ REQUIRE_TARGET_LOS_FLAG="--require-target-los"
 REQUIRE_GROUND_STATION_LOS_FLAG=""
 NO_PLANNER_USE_ENV_STAGE_COST_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
+SKIP_TD_TRAINING_FLAG=""
 
 if [[ "${RANDOMIZE_INSPECTION_TARGET:-0}" == "1" ]]; then
   RANDOMIZE_INSPECTION_TARGET_FLAG="--randomize-inspection-target"
@@ -45,6 +46,9 @@ fi
 if [[ "${SAVE_VISUALIZATIONS:-0}" == "1" ]]; then
   SAVE_VISUALIZATIONS_FLAG="--save-visualizations"
 fi
+if [[ "${SKIP_TD_TRAINING:-0}" == "1" ]]; then
+  SKIP_TD_TRAINING_FLAG="--skip-td-training"
+fi
 
 if [[ "${RUN_QRL_TRAIN:-auto}" == "1" || ( "${RUN_QRL_TRAIN:-auto}" == "auto" && ! -f "$QRL_CKPT" ) ]]; then
   echo "[td_baselines] Training original QRL checkpoint: $QRL_DIR"
@@ -63,6 +67,7 @@ if [[ "${RUN_QRL_TRAIN:-auto}" == "1" || ( "${RUN_QRL_TRAIN:-auto}" == "auto" &&
     --batch-size "${QRL_BATCH_SIZE:-256}" \
     --total-steps "${QRL_TOTAL_STEPS:-20000}" \
     --num-critics "${NUM_CRITICS:-2}" \
+    --qrl-cost-source fixed \
     --log-interval "${LOG_INTERVAL:-100}" \
     --save-interval "${SAVE_INTERVAL:-2000}" \
     --eval-interval "${EVAL_INTERVAL:-1000}" \
@@ -96,8 +101,14 @@ echo "[td_baselines] Training/evaluating TD baselines and QRL..."
 "$PYTHON_BIN" minimal_qrl/run_comm_inspection_td_baselines.py \
   --output-dir "$OUTPUT_DIR" \
   --qrl-ckpt "$QRL_CKPT" \
+  --qrl-execution-modes "${QRL_EXECUTION_MODES:-${TD_EXECUTION_MODES:-greedy,lookahead}}" \
+  --qrl-cost-source fixed \
+  --qrl-num-episodes "${QRL_NUM_EPISODES:-180}" \
+  --qrl-total-steps "${QRL_TOTAL_STEPS:-20000}" \
+  --qrl-batch-size "${QRL_BATCH_SIZE:-256}" \
   --td-algos "${TD_ALGOS:-gc_sac,her_ddpg,uvfa}" \
   --td-execution-modes "${TD_EXECUTION_MODES:-greedy,lookahead}" \
+  ${SKIP_TD_TRAINING_FLAG} \
   --total-env-steps "${TD_TOTAL_ENV_STEPS:-200000}" \
   --batch-size "${TD_BATCH_SIZE:-256}" \
   --start-random-steps "${TD_START_RANDOM_STEPS:-1000}" \
@@ -134,7 +145,7 @@ echo "[td_baselines] Training/evaluating TD baselines and QRL..."
   --n-trials "${N_TRIALS:-100}" \
   --seed "${SEED:-0}" \
   --device "${DEVICE:-auto}" \
-  --lookahead-horizon "${LOOKAHEAD_HORIZON:-10}" \
+  --lookahead-horizon "${LOOKAHEAD_HORIZON:-15}" \
   --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-128}" \
   --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-24}" \
   --lookahead-bias-kp "${LOOKAHEAD_BIAS_KP:-2.0}" \

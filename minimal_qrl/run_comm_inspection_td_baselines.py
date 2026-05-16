@@ -218,6 +218,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=str, default="results/comm_inspection_td_baselines")
     parser.add_argument("--qrl-ckpt", type=str, default="results/minimal_qrl_inspection_dubins/checkpoint_final.pth")
     parser.add_argument("--include-qrl", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--qrl-execution-modes", type=str, default="greedy,lookahead")
+    parser.add_argument("--qrl-cost-source", type=str, default="fixed")
+    parser.add_argument("--qrl-num-episodes", type=int, default=180)
+    parser.add_argument("--qrl-total-steps", type=int, default=20_000)
+    parser.add_argument("--qrl-batch-size", type=int, default=256)
     parser.add_argument("--td-algos", type=str, default="gc_sac,her_ddpg,uvfa")
     parser.add_argument("--td-execution-modes", type=str, default="greedy,lookahead")
     parser.add_argument("--skip-td-training", action="store_true")
@@ -319,7 +324,7 @@ def main() -> None:
                 qrl_agent,
                 args,
                 method_prefix="qrl",
-                execution_modes=["greedy", "lookahead"],
+                execution_modes=_parse_list(args.qrl_execution_modes),
                 device=device,
             )
         )
@@ -350,10 +355,19 @@ def main() -> None:
             "goal_sampling_mode": args.goal_sampling_mode,
         },
         "training_config": {
-            "total_env_steps": int(args.total_env_steps),
-            "batch_size": int(args.batch_size),
-            "gamma": float(args.gamma),
-            "her_k": int(args.her_k),
+            "qrl": {
+                "cost_source": str(args.qrl_cost_source),
+                "num_episodes": int(args.qrl_num_episodes),
+                "total_steps": int(args.qrl_total_steps),
+                "batch_size": int(args.qrl_batch_size),
+            },
+            "td_baselines": {
+                "total_env_steps": int(args.total_env_steps),
+                "batch_size": int(args.batch_size),
+                "gamma": float(args.gamma),
+                "her_k": int(args.her_k),
+                "skip_td_training": bool(args.skip_td_training),
+            },
         },
         "checkpoints": checkpoints,
         "results": results,

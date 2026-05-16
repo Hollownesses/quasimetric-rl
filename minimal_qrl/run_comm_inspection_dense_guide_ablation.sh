@@ -10,7 +10,7 @@ else
   PYTHON_BIN="${PYTHON_BIN:-python3}"
 fi
 
-OUTPUT_DIR="${OUTPUT_DIR:-./results/comm_inspection_dense_guide_ablation}"
+OUTPUT_DIR="${OUTPUT_DIR:-./results/experiments/comm_inspection_dense_guide_ablation}"
 QRL_DIR="${QRL_DIR:-$OUTPUT_DIR/qrl_original}"
 CHECKPOINT="${CHECKPOINT:-$QRL_DIR/checkpoint_final.pth}"
 mkdir -p "$OUTPUT_DIR"
@@ -59,6 +59,7 @@ if [[ "${RUN_TRAIN:-auto}" == "1" || ( "${RUN_TRAIN:-auto}" == "auto" && ! -f "$
     --batch-size "${BATCH_SIZE:-256}" \
     --total-steps "${TOTAL_STEPS:-20000}" \
     --num-critics "${NUM_CRITICS:-2}" \
+    --qrl-cost-source fixed \
     --log-interval "${LOG_INTERVAL:-100}" \
     --save-interval "${SAVE_INTERVAL:-2000}" \
     --eval-interval "${EVAL_INTERVAL:-1000}" \
@@ -121,7 +122,7 @@ echo "[dense_ablation] Evaluating terminal vs dense lookahead with checkpoint: $
   --communication-violation-cost-weight "${COMM_VIOLATION_COST_WEIGHT:-0.5}" \
   --observation-failure-cost "${OBSERVATION_FAILURE_COST:-0.25}" \
   --num-critics "${NUM_CRITICS:-2}" \
-  --n-trials "${N_TRIALS:-100}" \
+  --n-trials "${N_TRIALS:-300}" \
   --seed "${SEED:-0}" \
   --device "${DEVICE:-auto}" \
   --execution-modes lookahead \

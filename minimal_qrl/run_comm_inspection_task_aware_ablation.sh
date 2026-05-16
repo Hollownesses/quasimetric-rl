@@ -15,7 +15,7 @@ else
   PYTHON_BIN="${PYTHON_BIN:-python3}"
 fi
 
-OUTPUT_DIR="${OUTPUT_DIR:-./results/comm_inspection_task_aware_ablation}"
+OUTPUT_DIR="${OUTPUT_DIR:-./results/experiments/comm_inspection_task_aware_ablation}"
 ORIGINAL_DIR="${ORIGINAL_DIR:-$OUTPUT_DIR/qrl_original_fixed_cost}"
 TASK_AWARE_DIR="${TASK_AWARE_DIR:-$OUTPUT_DIR/qrl_task_aware_reward_cost}"
 mkdir -p "$OUTPUT_DIR"
