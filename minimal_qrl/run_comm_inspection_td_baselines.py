@@ -8,6 +8,7 @@ import csv
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -134,8 +135,9 @@ def _evaluate_agent(
     *,
     method_prefix: str,
     execution_modes: List[str],
+    lookahead_heuristics: str,
     device: torch.device,
-) -> Dict[str, Dict[str, float]]:
+) -> tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, List[Dict[str, Any]]]]]:
     env = make_comm_inspection_env(args)
     if hasattr(agent, "env"):
         agent.env = env
@@ -154,7 +156,7 @@ def _evaluate_agent(
         alpha_task_terminal=float(args.planner_alpha_task_terminal),
         use_env_stage_cost=bool(args.planner_use_env_stage_cost),
         heuristic_mode="terminal",
-        qrl_progress_alpha=0.0,
+        qrl_progress_alpha=float(args.planner_qrl_progress_alpha),
     )
     viz_cfg = VisualizationConfig(
         save_visualizations=bool(args.save_visualizations),
@@ -164,21 +166,48 @@ def _evaluate_agent(
         gif_fps=8,
     )
     out: Dict[str, Dict[str, float]] = {}
+    visualizations: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    parsed_lookahead_heuristics = _parse_lookahead_heuristics(lookahead_heuristics)
     for mode in execution_modes:
+        if mode == "lookahead":
+            multi_heuristic = len(parsed_lookahead_heuristics) > 1
+            for heuristic in parsed_lookahead_heuristics:
+                mode_key = (
+                    "lookahead"
+                    if not multi_heuristic and heuristic == "terminal"
+                    else f"lookahead_{heuristic}"
+                )
+                metric_key = f"{method_prefix}_{mode_key}"
+                metrics, vis_index = evaluate_execution_mode(
+                    agent,
+                    env,
+                    "lookahead",
+                    n_trials=int(args.n_trials),
+                    seed=int(args.seed),
+                    lookahead_cfg=replace(lookahead_cfg, heuristic_mode=heuristic),
+                    output_dir=Path(args.output_dir),
+                    viz_cfg=viz_cfg,
+                    result_name=metric_key,
+                )
+                out[metric_key] = metrics
+                visualizations[metric_key] = vis_index
+            continue
+
         metric_key = f"{method_prefix}_{mode}"
-        metrics, _vis = evaluate_execution_mode(
+        metrics, vis_index = evaluate_execution_mode(
             agent,
             env,
-            "lookahead" if mode == "lookahead" else "greedy",
+            "greedy",
             n_trials=int(args.n_trials),
             seed=int(args.seed),
-            lookahead_cfg=lookahead_cfg if mode == "lookahead" else None,
+            lookahead_cfg=None,
             output_dir=Path(args.output_dir),
             viz_cfg=viz_cfg,
             result_name=metric_key,
         )
         out[metric_key] = metrics
-    return out
+        visualizations[metric_key] = vis_index
+    return out, visualizations
 
 
 def _write_csv(path: str, results: Dict[str, Dict[str, float]]) -> None:
@@ -211,6 +240,17 @@ def _write_csv(path: str, results: Dict[str, Dict[str, float]]) -> None:
 
 def _parse_list(raw: str) -> List[str]:
     return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
+def _parse_lookahead_heuristics(raw: str) -> List[str]:
+    heuristics = _parse_list(raw)
+    if not heuristics:
+        raise ValueError("--lookahead-heuristics 至少需要一个值")
+    valid = {"terminal", "dense"}
+    bad = [item for item in heuristics if item not in valid]
+    if bad:
+        raise ValueError(f"未知 lookahead heuristic: {bad}; 可选值: terminal,dense")
+    return heuristics
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -265,8 +305,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--comm-threshold", type=float, default=0.5)
     parser.add_argument("--require-ground-station-los", action="store_true")
     parser.add_argument("--goal-sampling-mode", type=str, default="task_feasible", choices=["task_feasible", "valid"])
-    parser.add_argument("--goal-position-tolerance", type=float, default=0.15)
-    parser.add_argument("--goal-heading-tolerance", type=float, default=0.2)
+    parser.add_argument("--goal-position-tolerance", type=float, default=0.25)
+    parser.add_argument("--goal-heading-tolerance", type=float, default=0.3)
     parser.add_argument("--collision-cost", type=float, default=10.0)
     parser.add_argument("--out-of-bounds-cost", type=float, default=10.0)
     parser.add_argument("--communication-break-cost", type=float, default=1.0)
@@ -285,6 +325,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-name", type=str, default="comm_inspection_td_baseline_eval")
     parser.add_argument("--lookahead-horizon", type=int, default=10)
     parser.add_argument("--lookahead-num-sequences", type=int, default=128)
+    parser.add_argument("--lookahead-heuristics", type=str, default="terminal")
+    parser.add_argument("--qrl-lookahead-heuristics", type=str, default=None)
     parser.add_argument("--lookahead-step-cost-weight", type=float, default=0.0)
     parser.add_argument("--lookahead-collision-penalty", type=float, default=0.0)
     parser.add_argument("--lookahead-biased-sequences", type=int, default=24)
@@ -295,6 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lookahead-cem-std-init-frac", type=float, default=0.5)
     parser.add_argument("--planner-alpha-final", type=float, default=0.3)
     parser.add_argument("--planner-alpha-task-terminal", type=float, default=0.5)
+    parser.add_argument("--planner-qrl-progress-alpha", type=float, default=0.0)
     parser.add_argument("--planner-use-env-stage-cost", dest="planner_use_env_stage_cost", action="store_true", default=True)
     parser.add_argument("--no-planner-use-env-stage-cost", dest="planner_use_env_stage_cost", action="store_false")
     parser.add_argument("--save-visualizations", action="store_true")
@@ -308,26 +351,29 @@ def main() -> None:
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     device = auto_device(args.device)
     results: Dict[str, Dict[str, float]] = {}
+    visualizations: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     checkpoints: Dict[str, Optional[str]] = {}
 
     if args.include_qrl:
         if not os.path.exists(args.qrl_ckpt):
             raise FileNotFoundError(f"QRL checkpoint not found: {args.qrl_ckpt}")
+        qrl_lookahead_heuristics = args.qrl_lookahead_heuristics or args.lookahead_heuristics
         qrl_env = make_comm_inspection_env(args)
         qrl_agent, _ckpt_step = build_qrl_adapter(
             argparse.Namespace(**{**vars(args), "checkpoint": args.qrl_ckpt}),
             device,
             qrl_env,
         )
-        results.update(
-            _evaluate_agent(
-                qrl_agent,
-                args,
-                method_prefix="qrl",
-                execution_modes=_parse_list(args.qrl_execution_modes),
-                device=device,
-            )
+        qrl_results, qrl_visualizations = _evaluate_agent(
+            qrl_agent,
+            args,
+            method_prefix="qrl",
+            execution_modes=_parse_list(args.qrl_execution_modes),
+            lookahead_heuristics=qrl_lookahead_heuristics,
+            device=device,
         )
+        results.update(qrl_results)
+        visualizations.update(qrl_visualizations)
         checkpoints["qrl"] = args.qrl_ckpt
 
     td_algos = _parse_list(args.td_algos)
@@ -335,15 +381,16 @@ def main() -> None:
     for algo in td_algos:
         agent, ckpt_path = _train_or_load_td_agent(algo, args, device)
         checkpoints[algo] = ckpt_path
-        results.update(
-            _evaluate_agent(
-                agent,
-                args,
-                method_prefix=algo,
-                execution_modes=td_modes,
-                device=device,
-            )
+        algo_results, algo_visualizations = _evaluate_agent(
+            agent,
+            args,
+            method_prefix=algo,
+            execution_modes=td_modes,
+            lookahead_heuristics="terminal",
+            device=device,
         )
+        results.update(algo_results)
+        visualizations.update(algo_visualizations)
 
     payload = {
         "env_config": {
@@ -369,8 +416,20 @@ def main() -> None:
                 "skip_td_training": bool(args.skip_td_training),
             },
         },
+        "evaluation_config": {
+            "lookahead_heuristics": _parse_lookahead_heuristics(args.lookahead_heuristics),
+            "qrl_lookahead_heuristics": _parse_lookahead_heuristics(
+                args.qrl_lookahead_heuristics or args.lookahead_heuristics
+            ),
+            "td_lookahead_heuristics": ["terminal"],
+            "planner_qrl_progress_alpha": float(args.planner_qrl_progress_alpha),
+            "planner_alpha_final": float(args.planner_alpha_final),
+            "planner_alpha_task_terminal": float(args.planner_alpha_task_terminal),
+            "planner_use_env_stage_cost": bool(args.planner_use_env_stage_cost),
+        },
         "checkpoints": checkpoints,
         "results": results,
+        "visualizations": visualizations,
     }
     out_json = os.path.join(args.output_dir, "comm_inspection_td_baselines.json")
     with open(out_json, "w", encoding="utf-8") as f:

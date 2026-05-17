@@ -239,8 +239,8 @@ def get_env_kwargs(args) -> dict:
             'comm_threshold': getattr(args, 'comm_threshold', 0.0),
             'require_ground_station_los': getattr(args, 'require_ground_station_los', False),
             'goal_sampling_mode': getattr(args, 'goal_sampling_mode', 'task_feasible'),
-            'goal_position_tolerance': getattr(args, 'goal_position_tolerance', 0.15),
-            'goal_heading_tolerance': getattr(args, 'goal_heading_tolerance', 0.2),
+            'goal_position_tolerance': getattr(args, 'goal_position_tolerance', 0.25),
+            'goal_heading_tolerance': getattr(args, 'goal_heading_tolerance', 0.3),
             'collision_cost': abs(getattr(args, 'collision_cost', 10.0)),
             'out_of_bounds_cost': abs(getattr(args, 'out_of_bounds_cost', 10.0)),
             'communication_break_cost': abs(getattr(args, 'communication_break_cost', 1.0)),
@@ -1048,9 +1048,9 @@ def main():
     parser.add_argument('--goal-sampling-mode', type=str, default='task_feasible',
                         choices=['task_feasible', 'valid'],
                         help='目标采样方式，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--goal-position-tolerance', type=float, default=0.15,
+    parser.add_argument('--goal-position-tolerance', type=float, default=0.25,
                         help='目标位置容差，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--goal-heading-tolerance', type=float, default=0.2,
+    parser.add_argument('--goal-heading-tolerance', type=float, default=0.3,
                         help='目标朝向容差，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--collision-cost', type=float, default=10.0,
                         help='碰撞阶段代价，仅用于 comm_inspection_dubins_uav')

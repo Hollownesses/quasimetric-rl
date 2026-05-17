@@ -24,6 +24,7 @@ from minimal_qrl.eval.comm_inspection_execution_eval import (
     evaluate_execution_mode,
     rollout_execution_episode,
 )
+from minimal_qrl.comm_inspection_planner import INVALID_ROLLOUT_COST
 from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
 from minimal_qrl.gc_agents import GoalConditionedAgentBase
 from minimal_qrl.subgoal_actor import SubgoalActor
@@ -88,8 +89,8 @@ def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
         comm_occlusion_penalty=6.0,
         comm_threshold=0.5,
         goal_sampling_mode="task_feasible",
-        goal_position_tolerance=0.15,
-        goal_heading_tolerance=0.2,
+        goal_position_tolerance=0.25,
+        goal_heading_tolerance=0.3,
     )
     default.update(kwargs)
     return CommInspectionDubinsUAV2D(**default)
@@ -233,7 +234,7 @@ def test_hierarchical_metrics_and_rollout_recording(tmp_path: Path):
     assert (tmp_path / saved_entries[0]["png"]).exists()
 
 
-def test_planner_uses_env_stage_cost_without_duplicate_collision_penalty():
+def test_planner_rejects_collision_rollouts_even_with_env_stage_cost():
     env = CommInspectionDubinsUAV2D(
         bounds=(0.0, 0.0, 10.0, 10.0),
         omega_max=1.0,
@@ -280,7 +281,7 @@ def test_planner_uses_env_stage_cost_without_duplicate_collision_penalty():
         np.asarray([[0.0]], dtype=np.float32),
         env.get_state(),
     )
-    assert np.isclose(float(costs[0]), expected_cost, atol=1e-6)
+    assert float(costs[0]) >= INVALID_ROLLOUT_COST + expected_cost - 0.1
 
 
 def test_terminal_heuristic_ignores_dense_progress_term():
@@ -403,7 +404,7 @@ if __name__ == "__main__":
     test_execution_eval_visualization_smoke(Path("results/test_comm_inspection_execution_eval"))
     test_hierarchical_execution_eval_smoke(Path("results/test_comm_inspection_execution_eval_hier"))
     test_hierarchical_metrics_and_rollout_recording(Path("results/test_comm_inspection_execution_eval_hier_metrics"))
-    test_planner_uses_env_stage_cost_without_duplicate_collision_penalty()
+    test_planner_rejects_collision_rollouts_even_with_env_stage_cost()
     test_terminal_heuristic_ignores_dense_progress_term()
     test_dense_heuristic_prefers_qrl_progress()
     test_cli_outputs_separate_lookahead_heuristic_keys(Path("/tmp/test_comm_inspection_execution_eval_cli"))

@@ -57,8 +57,8 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         comm_threshold: float = 0.0,
         require_ground_station_los: bool = False,
         goal_sampling_mode: str = "task_feasible",
-        goal_position_tolerance: float = 0.15,
-        goal_heading_tolerance: float = 0.2,
+        goal_position_tolerance: float = 0.25,
+        goal_heading_tolerance: float = 0.3,
         collision_cost: float = 10.0,
         out_of_bounds_cost: float = 10.0,
         communication_break_cost: float = 1.0,
@@ -737,13 +737,13 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
 
         if self.obstacles and self._check_collision(x, y, x_new, y_new):
             collision = True
-            x_new, y_new = x, y
+            x_new, y_new, theta_new = x, y, theta
         elif not (self.x_min <= x_new <= self.x_max and self.y_min <= y_new <= self.y_max):
             out_of_bounds = True
-            x_new, y_new = x, y
+            x_new, y_new, theta_new = x, y, theta
         elif any(obs.contains(x_new, y_new) for obs in self.obstacles):
             collision = True
-            x_new, y_new = x, y
+            x_new, y_new, theta_new = x, y, theta
 
         self.state = np.array([x_new, y_new, theta_new], dtype=np.float32)
         self._t += 1
@@ -755,7 +755,8 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             and heading_error <= self.goal_heading_tolerance
         )
         success = reached_goal and self.is_task_feasible(self.state)
-        truncated = self._t >= self.max_episode_steps
+        terminated = bool(success or collision or out_of_bounds)
+        truncated = bool(self._t >= self.max_episode_steps and not terminated)
 
         if self.is_task_feasible(self.state):
             self._ever_task_feasible = True
@@ -776,7 +777,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             out_of_bounds=out_of_bounds,
             step_terms=step_terms,
         )
-        return self._get_obs(), float(reward), bool(success), bool(truncated), info
+        return self._get_obs(), float(reward), terminated, truncated, info
 
     def compute_goal_reaching_cost_estimate(
         self,

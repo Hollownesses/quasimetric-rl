@@ -9,6 +9,9 @@ from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
 from minimal_qrl.gc_agents import GoalConditionedAgentBase
 
 
+INVALID_ROLLOUT_COST = 1_000_000.0
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     if value is None:
         return float(default)
@@ -75,6 +78,7 @@ def evaluate_comm_lookahead_sequences(
     first_actions = omegas[:, 0].astype(np.float32).copy()
     subgoal_obs = env.state_to_observation(subgoal_state) if subgoal_state is not None else None
     success_mask = np.zeros((n,), dtype=bool)
+    invalid_mask = np.zeros((n,), dtype=bool)
     reached_subgoal_mask = np.zeros((n,), dtype=bool)
     terminal_obs_batch = np.zeros((n, int(goal_obs.shape[0])), dtype=np.float32)
     terminal_states = np.zeros((n, 3), dtype=np.float32)
@@ -90,6 +94,7 @@ def evaluate_comm_lookahead_sequences(
         total_cost = 0.0
         reached_subgoal = False
         success = False
+        invalid = False
 
         for t in range(int(omegas.shape[1])):
             w = float(omegas[i, t])
@@ -109,6 +114,9 @@ def evaluate_comm_lookahead_sequences(
                 if cfg.collision_penalty > 0.0 and bool(info.get("collision", False)):
                     total_cost += float(cfg.collision_penalty)
 
+            if bool(info.get("collision", False)) or bool(info.get("out_of_bounds", False)):
+                invalid = True
+
             if subgoal_state is not None and env.is_subgoal_reached(
                 env.state,
                 subgoal_state,
@@ -118,7 +126,7 @@ def evaluate_comm_lookahead_sequences(
                 reached_subgoal = True
 
             if terminated:
-                success = True
+                success = bool(info.get("success", False))
                 break
             if truncated:
                 break
@@ -126,10 +134,11 @@ def evaluate_comm_lookahead_sequences(
         terminal_obs_batch[i] = env.state_to_observation(env.state).astype(np.float32)
         terminal_states[i] = np.asarray(env.state, dtype=np.float32)
         success_mask[i] = bool(success)
+        invalid_mask[i] = bool(invalid)
         reached_subgoal_mask[i] = bool(reached_subgoal)
-        costs[i] = float(total_cost)
+        costs[i] = float(INVALID_ROLLOUT_COST + total_cost) if invalid else float(total_cost)
 
-    not_success = ~success_mask
+    not_success = np.logical_and(~success_mask, ~invalid_mask)
     if np.any(not_success):
         if collect_progress and progress_seq_indices:
             seq_idx = np.asarray(progress_seq_indices, dtype=np.int64)

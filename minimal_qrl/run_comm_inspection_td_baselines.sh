@@ -67,7 +67,7 @@ if [[ "${RUN_QRL_TRAIN:-auto}" == "1" || ( "${RUN_QRL_TRAIN:-auto}" == "auto" &&
     --batch-size "${QRL_BATCH_SIZE:-256}" \
     --total-steps "${QRL_TOTAL_STEPS:-20000}" \
     --num-critics "${NUM_CRITICS:-2}" \
-    --qrl-cost-source fixed \
+    --qrl-cost-source "${QRL_COST_SOURCE:-fixed}" \
     --log-interval "${LOG_INTERVAL:-100}" \
     --save-interval "${SAVE_INTERVAL:-2000}" \
     --eval-interval "${EVAL_INTERVAL:-1000}" \
@@ -87,8 +87,8 @@ if [[ "${RUN_QRL_TRAIN:-auto}" == "1" || ( "${RUN_QRL_TRAIN:-auto}" == "auto" &&
     --comm-threshold "${COMM_THRESHOLD:-0.5}" \
     ${REQUIRE_GROUND_STATION_LOS_FLAG} \
     --goal-sampling-mode "${GOAL_SAMPLING_MODE:-task_feasible}" \
-    --goal-position-tolerance "${GOAL_POS_TOL:-0.15}" \
-    --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.2}" \
+    --goal-position-tolerance "${GOAL_POS_TOL:-0.25}" \
+    --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.3}" \
     --collision-cost "${COLLISION_COST:-10.0}" \
     --out-of-bounds-cost "${OUT_OF_BOUNDS_COST:-10.0}" \
     --communication-break-cost "${COMM_BREAK_COST:-1.0}" \
@@ -102,7 +102,6 @@ echo "[td_baselines] Training/evaluating TD baselines and QRL..."
   --output-dir "$OUTPUT_DIR" \
   --qrl-ckpt "$QRL_CKPT" \
   --qrl-execution-modes "${QRL_EXECUTION_MODES:-${TD_EXECUTION_MODES:-greedy,lookahead}}" \
-  --qrl-cost-source fixed \
   --qrl-num-episodes "${QRL_NUM_EPISODES:-180}" \
   --qrl-total-steps "${QRL_TOTAL_STEPS:-20000}" \
   --qrl-batch-size "${QRL_BATCH_SIZE:-256}" \
@@ -133,8 +132,8 @@ echo "[td_baselines] Training/evaluating TD baselines and QRL..."
   --comm-threshold "${COMM_THRESHOLD:-0.5}" \
   ${REQUIRE_GROUND_STATION_LOS_FLAG} \
   --goal-sampling-mode "${GOAL_SAMPLING_MODE:-task_feasible}" \
-  --goal-position-tolerance "${GOAL_POS_TOL:-0.15}" \
-  --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.2}" \
+  --goal-position-tolerance "${GOAL_POS_TOL:-0.25}" \
+  --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.3}" \
   --collision-cost "${COLLISION_COST:-10.0}" \
   --out-of-bounds-cost "${OUT_OF_BOUNDS_COST:-10.0}" \
   --communication-break-cost "${COMM_BREAK_COST:-1.0}" \
@@ -145,12 +144,16 @@ echo "[td_baselines] Training/evaluating TD baselines and QRL..."
   --n-trials "${N_TRIALS:-100}" \
   --seed "${SEED:-0}" \
   --device "${DEVICE:-auto}" \
-  --lookahead-horizon "${LOOKAHEAD_HORIZON:-15}" \
+  --lookahead-horizon "${LOOKAHEAD_HORIZON:-10}" \
   --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-128}" \
+  --qrl-lookahead-heuristics "${QRL_LOOKAHEAD_HEURISTICS:-terminal}" \
   --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-24}" \
   --lookahead-bias-kp "${LOOKAHEAD_BIAS_KP:-2.0}" \
-  --planner-alpha-final "${PLANNER_ALPHA_FINAL:-0.3}" \
+  --planner-alpha-final "${PLANNER_ALPHA_FINAL:-0.4}" \
   --planner-alpha-task-terminal "${PLANNER_ALPHA_TASK_TERMINAL:-0.5}" \
+  --planner-qrl-progress-alpha "${PLANNER_QRL_PROGRESS_ALPHA:-0.0}" \
+  --viz-max-successes "${VIZ_MAX_SUCCESSES:-3}" \
+  --viz-max-failures "${VIZ_MAX_FAILURES:-3}" \
   ${NO_PLANNER_USE_ENV_STAGE_COST_FLAG} \
   ${SAVE_VISUALIZATIONS_FLAG}
 

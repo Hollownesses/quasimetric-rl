@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import sys
@@ -416,7 +417,8 @@ def rollout_execution_episode(
         "rewards": rewards,
         "step_infos": step_infos,
         "task_flags": task_flags,
-        "success": bool(done),
+        "success": bool(final_info.get("success", False)),
+        "terminated": bool(done),
         "truncated": bool(truncated),
         "num_steps": int(len(actions)),
         "collision": bool(collided),
@@ -854,6 +856,125 @@ def _plot_rollout_gif(
     return out_path
 
 
+def _float_list(values: Any) -> List[float]:
+    return [float(v) for v in np.asarray(values, dtype=np.float32).reshape(-1)]
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return _float_list(value)
+    if isinstance(value, (np.bool_, bool)):
+        return bool(value)
+    if isinstance(value, (np.integer, int)):
+        return int(value)
+    if isinstance(value, (np.floating, float)):
+        return float(value)
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _rollout_to_raw_payload(rollout: Dict[str, Any], *, execution_mode: str, episode_index: int) -> Dict[str, Any]:
+    return {
+        "execution_mode": execution_mode,
+        "episode_index": int(episode_index),
+        "seed": int(rollout["seed"]),
+        "success": bool(rollout["success"]),
+        "terminated": bool(rollout.get("terminated", rollout["success"])),
+        "truncated": bool(rollout["truncated"]),
+        "num_steps": int(rollout["num_steps"]),
+        "collision": bool(rollout["collision"]),
+        "out_of_bounds": bool(rollout["out_of_bounds"]),
+        "start": _float_list(rollout["start"]),
+        "goal": _float_list(rollout["goal"]),
+        "inspection_target": _float_list(rollout["inspection_target"]),
+        "ground_station": _float_list(rollout["ground_station"]),
+        "states": [_float_list(s) for s in rollout["states"]],
+        "actions": [_float_list(a) for a in rollout["actions"]],
+        "rewards": [float(r) for r in rollout["rewards"]],
+        "task_flags": [bool(v) for v in rollout["task_flags"]],
+        "initial_info": _json_safe(rollout["initial_info"]),
+        "final_info": _json_safe(rollout["final_info"]),
+        "step_infos": [_json_safe(info) for info in rollout["step_infos"]],
+        "high_level_events": _json_safe(rollout.get("high_level_events", [])),
+    }
+
+
+def _save_rollout_raw_data(
+    rollout: Dict[str, Any],
+    *,
+    execution_mode: str,
+    episode_index: int,
+    json_path: Path,
+    csv_path: Path,
+) -> None:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _rollout_to_raw_payload(
+        rollout,
+        execution_mode=execution_mode,
+        episode_index=episode_index,
+    )
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    states = [np.asarray(s, dtype=np.float32).reshape(3) for s in rollout["states"]]
+    actions = [np.asarray(a, dtype=np.float32).reshape(-1) for a in rollout["actions"]]
+    rewards = [float(r) for r in rollout["rewards"]]
+    step_infos = list(rollout["step_infos"])
+    task_flags = [bool(v) for v in rollout["task_flags"]]
+    with open(csv_path, "w", encoding="utf-8", newline="") as f:
+        fieldnames = [
+            "step",
+            "x",
+            "y",
+            "theta",
+            "omega",
+            "reward",
+            "task_feasible",
+            "observation_feasible",
+            "communication_feasible",
+            "distance_to_goal",
+            "heading_error",
+            "distance_to_target",
+            "distance_to_ground_station",
+            "obs_margin",
+            "comm_margin",
+            "task_score",
+            "collision",
+            "out_of_bounds",
+            "success",
+        ]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for step, state in enumerate(states):
+            info = step_infos[step - 1] if step > 0 and step - 1 < len(step_infos) else {}
+            action = actions[step - 1] if step > 0 and step - 1 < len(actions) else None
+            row = {
+                "step": int(step),
+                "x": float(state[0]),
+                "y": float(state[1]),
+                "theta": float(state[2]),
+                "omega": float(action[0]) if action is not None and len(action) > 0 else "",
+                "reward": rewards[step - 1] if step > 0 and step - 1 < len(rewards) else "",
+                "task_feasible": bool(task_flags[step]) if step < len(task_flags) else "",
+                "observation_feasible": info.get("observation_feasible", ""),
+                "communication_feasible": info.get("communication_feasible", ""),
+                "distance_to_goal": info.get("distance_to_goal", ""),
+                "heading_error": info.get("heading_error", ""),
+                "distance_to_target": info.get("distance_to_target", ""),
+                "distance_to_ground_station": info.get("distance_to_ground_station", ""),
+                "obs_margin": info.get("obs_margin", ""),
+                "comm_margin": info.get("comm_margin", ""),
+                "task_score": info.get("task_score", ""),
+                "collision": info.get("collision", ""),
+                "out_of_bounds": info.get("out_of_bounds", ""),
+                "success": info.get("success", ""),
+            }
+            writer.writerow(row)
+
+
 def _save_rollout_visualization(
     env: CommInspectionDubinsUAV2D,
     rollout: Dict[str, Any],
@@ -869,6 +990,8 @@ def _save_rollout_visualization(
     stem = f"episode_{episode_index:03d}_seed_{int(rollout['seed'])}_{status}"
     png_path = category_dir / f"{stem}.png"
     gif_path = category_dir / f"{stem}.gif"
+    raw_json_path = category_dir / f"{stem}_trajectory.json"
+    raw_csv_path = category_dir / f"{stem}_trajectory.csv"
 
     _plot_rollout_png(
         env,
@@ -876,6 +999,13 @@ def _save_rollout_visualization(
         png_path,
         execution_mode=execution_mode,
         episode_index=episode_index,
+    )
+    _save_rollout_raw_data(
+        rollout,
+        execution_mode=execution_mode,
+        episode_index=episode_index,
+        json_path=raw_json_path,
+        csv_path=raw_csv_path,
     )
 
     gif_error: Optional[str] = None
@@ -905,11 +1035,14 @@ def _save_rollout_visualization(
         "seed": int(rollout["seed"]),
         "mode": execution_mode,
         "success": bool(rollout["success"]),
+        "terminated": bool(rollout.get("terminated", rollout["success"])),
         "truncated": bool(rollout["truncated"]),
         "num_steps": int(rollout["num_steps"]),
         "collision": bool(rollout["collision"]),
         "out_of_bounds": bool(rollout["out_of_bounds"]),
         "png": os.path.relpath(png_path, base_output_dir),
+        "trajectory_json": os.path.relpath(raw_json_path, base_output_dir),
+        "trajectory_csv": os.path.relpath(raw_csv_path, base_output_dir),
         "gif": os.path.relpath(gif_path, base_output_dir) if gif_saved else None,
         "gif_error": gif_error,
         "start": [float(v) for v in np.asarray(rollout["start"], dtype=np.float32)],
@@ -1183,8 +1316,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--comm-threshold", type=float, default=0.5)
     parser.add_argument("--require-ground-station-los", action="store_true")
     parser.add_argument("--goal-sampling-mode", type=str, default="task_feasible", choices=["task_feasible", "valid"])
-    parser.add_argument("--goal-position-tolerance", type=float, default=0.15)
-    parser.add_argument("--goal-heading-tolerance", type=float, default=0.2)
+    parser.add_argument("--goal-position-tolerance", type=float, default=0.25)
+    parser.add_argument("--goal-heading-tolerance", type=float, default=0.3)
     parser.add_argument("--collision-cost", type=float, default=10.0)
     parser.add_argument("--out-of-bounds-cost", type=float, default=10.0)
     parser.add_argument("--communication-break-cost", type=float, default=1.0)

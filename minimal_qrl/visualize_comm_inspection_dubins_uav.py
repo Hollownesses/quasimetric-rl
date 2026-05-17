@@ -91,7 +91,7 @@ def rollout(
         states.append(env.state.copy())
         task_flags.append(bool(info["task_feasible"]))
         if terminated:
-            success = True
+            success = bool(info.get("success", False))
             break
         if truncated:
             break

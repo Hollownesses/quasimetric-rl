@@ -88,8 +88,8 @@ fi
   --comm-threshold "${COMM_THRESHOLD:-0.5}" \
   ${REQUIRE_GROUND_STATION_LOS_FLAG} \
   --goal-sampling-mode "${GOAL_SAMPLING_MODE:-task_feasible}" \
-  --goal-position-tolerance "${GOAL_POS_TOL:-0.15}" \
-  --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.2}" \
+  --goal-position-tolerance "${GOAL_POS_TOL:-0.25}" \
+  --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.3}" \
   --collision-cost "${COLLISION_COST:-10.0}" \
   --out-of-bounds-cost "${OUT_OF_BOUNDS_COST:-10.0}" \
   --communication-break-cost "${COMM_BREAK_COST:-1.0}" \

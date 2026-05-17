@@ -32,8 +32,8 @@ def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
         comm_threshold=1.0,
         require_ground_station_los=False,
         goal_sampling_mode="task_feasible",
-        goal_position_tolerance=0.2,
-        goal_heading_tolerance=0.25,
+        goal_position_tolerance=0.25,
+        goal_heading_tolerance=0.3,
     )
     default.update(kwargs)
     return CommInspectionDubinsUAV2D(**default)
@@ -116,7 +116,10 @@ def test_collision_penalty_is_negative():
         goal=(6.0, 5.0, 0.0),
     )
     env.reset(seed=0)
-    _, reward, _, _, info = env.step(np.array([0.0], dtype=np.float32))
+    _, reward, terminated, truncated, info = env.step(np.array([0.0], dtype=np.float32))
+    assert terminated
+    assert not truncated
+    assert not info["success"]
     assert info["collision"]
     assert info["cost_collision"] >= 10.0
     assert reward < -1.0
@@ -131,7 +134,10 @@ def test_out_of_bounds_penalty_is_negative():
         ground_station=(0.2, 0.2),
     )
     env.reset(seed=0)
-    _, reward, _, _, info = env.step(np.array([0.0], dtype=np.float32))
+    _, reward, terminated, truncated, info = env.step(np.array([0.0], dtype=np.float32))
+    assert terminated
+    assert not truncated
+    assert not info["success"]
     assert info["out_of_bounds"]
     assert info["cost_oob"] >= 10.0
     assert reward < -1.0
