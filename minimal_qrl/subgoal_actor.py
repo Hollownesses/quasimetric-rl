@@ -273,7 +273,7 @@ def train_subgoal_actor(
         for _ in range(int(cfg.batch_size)):
             seed = int(rng.integers(0, 1_000_000_000))
             obs, _ = env.reset(seed=seed)
-            goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
+            goal_obs = env.abstract_goal_observation()
             teacher = select_teacher_subgoal(
                 actor,
                 agent,

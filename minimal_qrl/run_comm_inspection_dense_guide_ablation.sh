@@ -59,7 +59,7 @@ if [[ "${RUN_TRAIN:-auto}" == "1" || ( "${RUN_TRAIN:-auto}" == "auto" && ! -f "$
     --batch-size "${BATCH_SIZE:-256}" \
     --total-steps "${TOTAL_STEPS:-20000}" \
     --num-critics "${NUM_CRITICS:-2}" \
-    --qrl-cost-source fixed \
+    --qrl-cost-source negative_reward \
     --log-interval "${LOG_INTERVAL:-100}" \
     --save-interval "${SAVE_INTERVAL:-2000}" \
     --eval-interval "${EVAL_INTERVAL:-1000}" \

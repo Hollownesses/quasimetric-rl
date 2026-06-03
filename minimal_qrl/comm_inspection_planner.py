@@ -47,7 +47,20 @@ def _build_candidate_omegas(
     )
     if n_bias > 0:
         bias = np.zeros((n_bias, horizon), dtype=np.float32)
-        desired = subgoal_state if subgoal_state is not None else np.asarray(env.goal, dtype=np.float32)
+        if subgoal_state is not None:
+            desired = np.asarray(subgoal_state, dtype=np.float32)
+        elif hasattr(env, "sample_task_terminal_state"):
+            best = None
+            best_cost = float("inf")
+            for _ in range(max(1, n_bias)):
+                cand = env.sample_task_terminal_state()
+                cost = env.compute_goal_reaching_cost_estimate(env.state, cand)
+                if cost < best_cost:
+                    best = cand
+                    best_cost = float(cost)
+            desired = np.asarray(best if best is not None else env.state, dtype=np.float32)
+        else:
+            desired = np.asarray(env.state, dtype=np.float32)
         dx = float(desired[0] - env.state[0])
         dy = float(desired[1] - env.state[1])
         err = env._normalize_angle(float(np.arctan2(dy, dx) - env.state[2]))

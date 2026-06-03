@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 
 from minimal_qrl.envs import CircleObstacle, CommInspectionDubinsUAV2D
+from minimal_qrl.dataset import collect_goal_set_comm_episode_pair
 
 
 def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
@@ -31,9 +32,8 @@ def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
         comm_occlusion_penalty=8.0,
         comm_threshold=1.0,
         require_ground_station_los=False,
-        goal_sampling_mode="task_feasible",
-        goal_position_tolerance=0.25,
-        goal_heading_tolerance=0.3,
+        randomize_inspection_target=False,
+        randomize_ground_station=False,
     )
     default.update(kwargs)
     return CommInspectionDubinsUAV2D(**default)
@@ -43,45 +43,57 @@ def test_task_context_observation_matches_space():
     env = make_env()
     obs, _ = env.reset(seed=42)
     assert obs.shape == env.observation_space.shape
-    assert obs.shape == (20,)
+    assert obs.shape == (28,)
+    assert obs[-1] == 0.0
+    abstract = env.abstract_goal_observation()
+    assert abstract.shape == obs.shape
+    assert abstract[-1] == 1.0
 
 
-def test_reset_sets_task_entities_and_goal():
+def test_reset_sets_task_context_and_abstract_goal():
     env = make_env()
     obs, info = env.reset(seed=42)
     assert obs.shape == env.observation_space.shape
     assert env.inspection_target is not None
     assert env.ground_station is not None
-    assert env.goal is not None
-    assert env.is_task_feasible(np.asarray(env.goal, dtype=np.float32))
+    assert env.goal is None
     assert tuple(info["inspection_target"]) == tuple(env.inspection_target)
     assert tuple(info["ground_station"]) == tuple(env.ground_station)
-    assert tuple(info["goal"]) == tuple(env.goal)
+    assert "abstract_goal_observation" in info
     assert info["observation_mode"] == "task_context"
+    assert not env.is_terminal_goal_state(env.state)
 
 
-def test_sample_task_feasible_goal_is_valid():
+def test_sample_task_terminal_state_is_valid():
     env = make_env()
-    env.reset(seed=0)
-    goal = env.sample_task_feasible_goal(seed=1)
-    assert env.is_valid_state(goal)
-    assert env.is_observation_feasible(goal)
-    assert env.is_communication_feasible(goal)
-    assert env.is_task_feasible(goal)
+    env._ensure_valid_task_entities(seed=0)
+    terminal = env.sample_task_terminal_state(seed=1)
+    assert env.is_valid_state(terminal)
+    assert env.is_observation_feasible(terminal)
+    assert env.is_communication_feasible(terminal)
+    assert env.is_terminal_goal_state(terminal)
 
 
-def test_reset_resamples_start_and_goal_when_not_fixed():
-    env = make_env()
+def test_random_context_changes_abstract_goal():
+    env = make_env(randomize_inspection_target=True, randomize_ground_station=True)
     env.reset(seed=0)
     start1 = tuple(float(v) for v in env.start)
-    goal1 = tuple(float(v) for v in env.goal)
+    abstract1 = env.abstract_goal_observation().copy()
 
     env.reset(seed=1)
     start2 = tuple(float(v) for v in env.start)
-    goal2 = tuple(float(v) for v in env.goal)
+    abstract2 = env.abstract_goal_observation().copy()
 
     assert start1 != start2
-    assert goal1 != goal2
+    assert not np.allclose(abstract1, abstract2)
+
+
+def test_random_context_start_is_not_inspection_target():
+    env = make_env(randomize_inspection_target=True, randomize_ground_station=True)
+    env.reset(seed=0)
+    start_xy = np.asarray(env.start[:2], dtype=np.float32)
+    target_xy = np.asarray(env.inspection_target, dtype=np.float32)
+    assert float(np.linalg.norm(start_xy - target_xy)) >= env.min_start_target_distance
 
 
 def test_observation_score_direction():
@@ -100,9 +112,8 @@ def test_communication_score_direction():
         comm_bias=3.0,
         comm_threshold=1.5,
         require_ground_station_los=False,
-        goal_sampling_mode="valid",
     )
-    env.reset(seed=0)
+    env._ensure_valid_task_entities(seed=0)
     near_station = np.array([1.4, 1.0, 0.0], dtype=np.float32)
     far_station = np.array([9.0, 9.0, 0.0], dtype=np.float32)
     assert env.compute_communication_score(near_station) > env.compute_communication_score(far_station)
@@ -113,7 +124,6 @@ def test_collision_penalty_is_negative():
     env = make_env(
         obstacles=[obstacle],
         start=(4.0, 5.0, 0.0),
-        goal=(6.0, 5.0, 0.0),
     )
     env.reset(seed=0)
     _, reward, terminated, truncated, info = env.step(np.array([0.0], dtype=np.float32))
@@ -129,7 +139,6 @@ def test_out_of_bounds_penalty_is_negative():
     env = make_env(
         bounds=(0.0, 0.0, 1.0, 1.0),
         start=(0.95, 0.95, 0.0),
-        goal=(0.95, 0.95, 0.0),
         inspection_target=(0.8, 0.8),
         ground_station=(0.2, 0.2),
     )
@@ -143,58 +152,47 @@ def test_out_of_bounds_penalty_is_negative():
     assert reward < -1.0
 
 
-def test_success_trigger_near_exact_goal():
-    env = make_env(
-        goal_position_tolerance=0.15,
-        goal_heading_tolerance=0.1,
-    )
-    goal = (4.0, 5.0, 0.0)
+def test_success_trigger_on_task_terminal_set():
+    env = make_env()
     start = (3.9, 5.0, 0.0)
-    env.reset(seed=0, options={"start": start, "goal": goal})
+    env.reset(seed=0, options={"start": start})
     _, _, terminated, _, info = env.step(np.array([0.0], dtype=np.float32))
     assert terminated
     assert info["success"]
-    assert info["distance_to_goal"] <= env.goal_position_tolerance
-    assert info["heading_error"] <= env.goal_heading_tolerance
+    assert env.is_terminal_goal_state(env.state)
 
 
-def test_goal_reached_but_not_task_feasible_is_not_success():
+def test_nonterminal_state_is_not_success():
     env = make_env(
-        goal_position_tolerance=0.15,
-        goal_heading_tolerance=0.1,
         observation_radius=1.0,
     )
-    goal = (4.0, 5.0, 0.0)
-    start = (3.9, 5.0, 0.0)
-    env.reset(seed=0, options={"start": start, "goal": goal})
-    env.inspection_target = (9.0, 9.0)
+    start = (2.0, 5.0, 0.0)
+    env.reset(seed=0, options={"start": start})
     _, _, terminated, _, info = env.step(np.array([0.0], dtype=np.float32))
     assert not env.is_task_feasible(env.state)
     assert not terminated
     assert not info["success"]
-    assert info["distance_to_goal"] <= env.goal_position_tolerance
-    assert info["heading_error"] <= env.goal_heading_tolerance
 
 
-def test_task_feasible_not_equal_success():
+def test_task_feasible_equals_success():
     env = make_env()
-    goal = (8.0, 8.0, 0.0)
     feasible_state = (4.0, 5.0, 0.0)
-    env.reset(seed=0, options={"start": feasible_state, "goal": goal})
+    env.reset(seed=0, options={"start": feasible_state})
     _, _, terminated, _, info = env.step(np.array([0.0], dtype=np.float32))
     assert info["task_feasible"]
-    assert not terminated
+    assert terminated
+    assert info["success"]
     assert info["ever_task_feasible"]
-    assert info["first_task_feasible_step"] == 1
+    assert info["first_task_feasible_step"] in (0, 1)
 
 
 def test_zero_communication_break_cost_disables_fixed_penalty():
     env = make_env(
-        goal_sampling_mode="valid",
-        comm_threshold=4.0,
+        comm_threshold=1.0,
         communication_break_cost=0.0,
     )
     env.reset(seed=0)
+    env.state = np.array([9.0, 9.0, 0.0], dtype=np.float32)
     step_terms = env.compute_step_terms(
         new_state=env.state,
         collision=False,
@@ -214,7 +212,7 @@ def test_zero_communication_break_cost_disables_fixed_penalty():
 def test_feasible_state_has_zero_violation_costs():
     env = make_env()
     feasible_state = np.array([4.0, 5.0, 0.0], dtype=np.float32)
-    env.reset(seed=0, options={"start": feasible_state, "goal": feasible_state})
+    env.reset(seed=0, options={"start": feasible_state})
     step_terms = env.compute_step_terms(
         new_state=env.state,
         collision=False,
@@ -227,7 +225,7 @@ def test_feasible_state_has_zero_violation_costs():
 
 
 def test_taskscore_clips_and_normalizes_margins():
-    env = make_env(goal_sampling_mode="valid")
+    env = make_env()
     env.reset(seed=0)
     assert env.normalize_task_margin(3.0) == 1.0
     assert env.normalize_task_margin(-3.0) == -1.0
@@ -238,7 +236,6 @@ def test_repair_state_keeps_geometric_validity_without_forcing_task_feasible():
     env = make_env(
         bounds=(0.0, 0.0, 10.0, 10.0),
         observation_radius=0.5,
-        goal_sampling_mode="valid",
         obstacles=[CircleObstacle(x=5.0, y=5.0, radius=0.7)],
     )
     env.reset(seed=0)
@@ -259,6 +256,37 @@ def test_legacy_modes_reset_and_step():
         assert isinstance(reward, float)
         assert isinstance(terminated, bool)
         assert isinstance(truncated, bool)
+
+
+def test_goal_set_dataset_adds_abstract_edge_for_success():
+    env = make_env(
+        start=(3.9, 5.0, 0.0),
+        max_steps=5,
+    )
+    episode, abstract_episode = collect_goal_set_comm_episode_pair(env, max_steps=5, seed=0)
+    assert episode.transition_infos["abstract_goal_edge"].shape[0] == episode.num_transitions
+    assert not bool(episode.transition_infos["abstract_goal_edge"].any())
+    assert abstract_episode is not None
+    assert bool(abstract_episode.transition_infos["abstract_goal_edge"][0])
+    assert bool(abstract_episode.transition_infos["source_terminal_goal_state"][0])
+    assert float(abstract_episode.rewards[0]) == 0.0
+    assert float(abstract_episode.all_observations[-1, -1]) == 1.0
+
+
+def test_goal_set_dataset_adds_abstract_edge_without_rollout_success():
+    env = make_env(
+        start=(2.0, 5.0, 0.0),
+        max_steps=1,
+    )
+    episode, abstract_episode = collect_goal_set_comm_episode_pair(env, max_steps=1, seed=0)
+    assert not bool(episode.terminals[0])
+    assert abstract_episode is not None
+    assert bool(abstract_episode.transition_infos["abstract_goal_edge"][0])
+    assert bool(abstract_episode.transition_infos["source_terminal_goal_state"][0])
+    terminal_state = env.observation_to_state(abstract_episode.all_observations[0])
+    assert env.is_terminal_goal_state(terminal_state)
+    assert float(abstract_episode.rewards[0]) == 0.0
+    assert float(abstract_episode.all_observations[-1, -1]) == 1.0
 
 
 def test_visualize_script_smoke():
@@ -283,20 +311,23 @@ def test_visualize_script_smoke():
 
 if __name__ == "__main__":
     test_task_context_observation_matches_space()
-    test_reset_sets_task_entities_and_goal()
-    test_sample_task_feasible_goal_is_valid()
-    test_reset_resamples_start_and_goal_when_not_fixed()
+    test_reset_sets_task_context_and_abstract_goal()
+    test_sample_task_terminal_state_is_valid()
+    test_random_context_changes_abstract_goal()
+    test_random_context_start_is_not_inspection_target()
     test_observation_score_direction()
     test_communication_score_direction()
     test_collision_penalty_is_negative()
     test_out_of_bounds_penalty_is_negative()
-    test_success_trigger_near_exact_goal()
-    test_goal_reached_but_not_task_feasible_is_not_success()
-    test_task_feasible_not_equal_success()
+    test_success_trigger_on_task_terminal_set()
+    test_nonterminal_state_is_not_success()
+    test_task_feasible_equals_success()
     test_zero_communication_break_cost_disables_fixed_penalty()
     test_feasible_state_has_zero_violation_costs()
     test_taskscore_clips_and_normalizes_margins()
     test_repair_state_keeps_geometric_validity_without_forcing_task_feasible()
     test_legacy_modes_reset_and_step()
+    test_goal_set_dataset_adds_abstract_edge_for_success()
+    test_goal_set_dataset_adds_abstract_edge_without_rollout_success()
     test_visualize_script_smoke()
     print("All comm inspection Dubins UAV tests passed.")

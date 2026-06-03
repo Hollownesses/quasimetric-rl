@@ -72,21 +72,19 @@ def make_env(obstacles: Optional[List] = None, **kwargs) -> CommInspectionDubins
 def rollout(
     env: CommInspectionDubinsUAV2D,
     start: Tuple[float, float, float],
-    goal: Tuple[float, float, float],
     max_steps: int = 220,
 ) -> Tuple[List[np.ndarray], List[bool], bool]:
-    env.reset(options={"start": start, "goal": goal})
+    env.reset(options={"start": start})
     states = [env.state.copy()]
     task_flags = [env.is_task_feasible(env.state)]
     success = False
     for _ in range(max_steps):
         x, y, theta = env.state
-        gx, gy, gtheta = env.goal
+        gx, gy = env.inspection_target
         dx, dy = gx - x, gy - y
         target_theta = np.arctan2(dy, dx)
         err = _normalize_angle(target_theta - theta)
-        goal_heading_err = _normalize_angle(gtheta - theta)
-        omega = np.clip(1.5 * err + 0.3 * goal_heading_err, -env.omega_max, env.omega_max)
+        omega = np.clip(1.5 * err, -env.omega_max, env.omega_max)
         _, _, terminated, truncated, info = env.step(np.array([omega], dtype=np.float32))
         states.append(env.state.copy())
         task_flags.append(bool(info["task_feasible"]))
@@ -131,9 +129,10 @@ def plot_environment(
 ) -> Path:
     os.makedirs(out_path.parent, exist_ok=True)
     start = states[0]
-    goal = np.asarray(env.goal, dtype=np.float32)
+    first_feasible_idx = next((i for i, flag in enumerate(task_flags) if flag), None)
+    theta_slice = float(states[first_feasible_idx][2]) if first_feasible_idx is not None else float(states[-1][2])
 
-    xs, ys, obs_mask, comm_mask, task_mask = compute_feasibility_masks(env, theta=float(goal[2]))
+    xs, ys, obs_mask, comm_mask, task_mask = compute_feasibility_masks(env, theta=theta_slice)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharex=True, sharey=True)
     titles = [
@@ -189,10 +188,8 @@ def plot_environment(
                 zorder=4,
             )
         ax.scatter(start[0], start[1], c="green", s=80, label="start", zorder=5)
-        ax.scatter(goal[0], goal[1], c="red", s=120, marker="*", label="task terminal goal", zorder=5)
         ax.scatter(env.inspection_target[0], env.inspection_target[1], c="gold", s=90, marker="X", label="inspection target", zorder=5)
         ax.scatter(env.ground_station[0], env.ground_station[1], c="navy", s=90, marker="s", label="ground station", zorder=5)
-        first_feasible_idx = next((i for i, flag in enumerate(task_flags) if flag), None)
         if first_feasible_idx is not None:
             feasible_state = states[first_feasible_idx]
             ax.scatter(
@@ -218,17 +215,6 @@ def plot_environment(
 
         arrow_len = 0.45
         ax.arrow(
-            goal[0],
-            goal[1],
-            arrow_len * np.cos(goal[2]),
-            arrow_len * np.sin(goal[2]),
-            head_width=0.15,
-            head_length=0.12,
-            fc="red",
-            ec="red",
-            zorder=6,
-        )
-        ax.arrow(
             start[0],
             start[1],
             arrow_len * np.cos(start[2]),
@@ -252,7 +238,7 @@ def plot_environment(
 def main():
     parser = argparse.ArgumentParser(description="Visualize task-conditioned comm-aware inspection Dubins UAV environment")
     parser.add_argument("--start", type=float, nargs=3, default=[1.5, 1.5, 0.0])
-    parser.add_argument("--goal", type=float, nargs=3, default=None)
+    parser.add_argument("--goal", type=float, nargs=3, default=None, help="Legacy argument ignored in goal-set mode")
     parser.add_argument("--inspection-target", type=float, nargs=2, default=[7.5, 6.5])
     parser.add_argument("--ground-station", type=float, nargs=2, default=[1.5, 2.0])
     parser.add_argument("--circle-obstacles", type=float, nargs="*", default=None)
@@ -268,11 +254,10 @@ def main():
     )
 
     env.reset(seed=42)
-    goal = tuple(args.goal) if args.goal is not None else tuple(env.sample_task_feasible_goal(seed=7))
-    states, task_flags, success = rollout(env, tuple(args.start), goal)
+    states, task_flags, success = rollout(env, tuple(args.start))
     out_path = plot_environment(env, states, task_flags, Path(args.out))
     print(f"Saved visualization to: {out_path}")
-    print(f"Task terminal goal: {goal}")
+    print(f"Task context: inspection_target={env.inspection_target}, ground_station={env.ground_station}")
     print(f"Success: {success}")
 
 

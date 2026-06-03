@@ -40,6 +40,66 @@ def evaluate_quasimetric(
     Returns:
         评估指标字典
     """
+    if hasattr(env, "abstract_goal_observation") and hasattr(env, "sample_task_terminal_state"):
+        rng = np.random.default_rng(seed)
+        states_raw = []
+        goal_obs = []
+        gt_dists = []
+        u = getattr(env, "unwrapped", env)
+        for i in range(n_pairs):
+            u.reset(seed=None if seed is None else int(seed + i))
+            s = u.sample_nonterminal_valid_state(seed=int(rng.integers(0, 1_000_000_000)))
+            states_raw.append(s)
+            goal_obs.append(u.abstract_goal_observation())
+            terminal_candidates = []
+            for _ in range(64):
+                try:
+                    terminal_candidates.append(
+                        u.sample_task_terminal_state(seed=int(rng.integers(0, 1_000_000_000)))
+                    )
+                except RuntimeError:
+                    continue
+                if len(terminal_candidates) >= 16:
+                    break
+            if not terminal_candidates:
+                raise RuntimeError("未能为当前评估上下文采样到任务可行目标状态")
+            gt_dists.append(
+                min(float(u.compute_goal_reaching_cost_estimate(s, g)) for g in terminal_candidates)
+            )
+        states = np.asarray([u.state_to_observation(s) for s in states_raw], dtype=np.float32)
+        goals = np.asarray(goal_obs, dtype=np.float32)
+        states_t = torch.tensor(states, device=device, dtype=torch.float32)
+        goals_t = torch.tensor(goals, device=device, dtype=torch.float32)
+        critic = agent.critics[0]
+        with torch.no_grad():
+            zx = critic.encoder(states_t)
+            zy = critic.encoder(goals_t)
+            pred_dists = critic.quasimetric_model(zx, zy).cpu().numpy()
+        scale = u.get_distance_scale() if hasattr(u, "get_distance_scale") else None
+        if scale is not None:
+            pred_dists = pred_dists * scale
+        pred_dists_flat = pred_dists.flatten()
+        gt_dists_flat = np.asarray(gt_dists, dtype=np.float32).flatten()
+        mse = float(np.mean((pred_dists_flat - gt_dists_flat) ** 2))
+        mae = float(np.mean(np.abs(pred_dists_flat - gt_dists_flat)))
+        spearman_corr, spearman_p = spearmanr(pred_dists_flat, gt_dists_flat)
+        pred_centered = pred_dists_flat - pred_dists_flat.mean()
+        gt_centered = gt_dists_flat - gt_dists_flat.mean()
+        pearson_num = np.sum(pred_centered * gt_centered)
+        pearson_den = np.sqrt(np.sum(pred_centered ** 2) * np.sum(gt_centered ** 2)) + 1e-12
+        return {
+            'mse': mse,
+            'mae': mae,
+            'spearman_corr': float(spearman_corr),
+            'spearman_p': float(spearman_p),
+            'pearson_corr': float(pearson_num / pearson_den),
+            'relative_error': float(np.mean(np.abs(pred_dists_flat - gt_dists_flat) / (gt_dists_flat + 1e-6))),
+            'pred_mean': float(pred_dists_flat.mean()),
+            'pred_std': float(pred_dists_flat.std()),
+            'gt_mean': float(gt_dists_flat.mean()),
+            'gt_std': float(gt_dists_flat.std()),
+        }
+
     # 采样状态-目标对（确保状态合法）；对 Dubins 等为内部状态 (x,y,theta)
     states_raw, goals_raw = sample_state_goal_pairs(env, n_pairs=n_pairs, seed=seed)
     
@@ -150,7 +210,9 @@ def visualize_distance_field_heatmap(
     if _is_dubins_like(env):
         # Dubins: 地图为 bounds，状态 (x, y, theta)；固定 theta=0 画 2D 时间代价场
         x_min, y_min, x_max, y_max = u.bounds
-        if goal is None:
+        if hasattr(u, "abstract_goal_observation"):
+            goal_3d = None
+        elif goal is None:
             goal_3d = np.array(u.goal, dtype=np.float32) if hasattr(u, 'goal') and u.goal is not None else u.sample_valid_state()
         else:
             goal_3d = np.asarray(goal, dtype=np.float32).reshape(3)
@@ -167,7 +229,7 @@ def visualize_distance_field_heatmap(
         ], axis=1)
         valid_mask = np.array([u.is_valid_state(s) for s in states_3d])
         states_obs = np.array([u.state_to_observation(s) for s in states_3d], dtype=np.float32)
-        goal_obs = u.state_to_observation(goal_3d)
+        goal_obs = u.abstract_goal_observation() if hasattr(u, "abstract_goal_observation") else u.state_to_observation(goal_3d)
         states_t = torch.tensor(states_obs, device=device_obj, dtype=torch.float32)
         goal_t = torch.tensor(goal_obs, device=device_obj, dtype=torch.float32).unsqueeze(0).expand(len(states_obs), -1)
         critic = agent.critics[0]
@@ -184,11 +246,25 @@ def visualize_distance_field_heatmap(
         for i in range(h):
             for j in range(w):
                 s = np.array([x_coords[i], y_coords[j], theta_fixed], dtype=np.float32)
-                gt_dists[i, j] = compute_ground_truth_distance(env, s, goal_3d)
+                if goal_3d is None and hasattr(u, "sample_task_terminal_state"):
+                    candidates = []
+                    for k in range(32):
+                        try:
+                            candidates.append(u.sample_task_terminal_state(seed=1000 + i * w + j + k))
+                        except RuntimeError:
+                            continue
+                        if len(candidates) >= 8:
+                            break
+                    if not candidates:
+                        gt_dists[i, j] = np.nan
+                        continue
+                    gt_dists[i, j] = min(float(u.compute_goal_reaching_cost_estimate(s, g)) for g in candidates)
+                else:
+                    gt_dists[i, j] = compute_ground_truth_distance(env, s, goal_3d)
         gt_dists[invalid] = np.nan
         extent = [y_min, y_max, x_min, x_max]
         xlabel, ylabel = 'y', 'x'
-        goal_plot_xy = (goal_3d[1], goal_3d[0])
+        goal_plot_xy = None if goal_3d is None else (goal_3d[1], goal_3d[0])
         title_suffix = ' (Time-to-Go, theta=0)'
     else:
         # 2D 环境（SimpleGrid / ContinuousObstacle）
@@ -249,7 +325,8 @@ def visualize_distance_field_heatmap(
     ax1.set_ylabel(ylabel)
     ax1.set_title(f'Predicted Distance to Goal (Step {step}){title_suffix}')
     plt.colorbar(im1, ax=ax1, label='Distance')
-    ax1.plot(goal_plot_xy[0], goal_plot_xy[1], 'r*', markersize=20, label='Goal')
+    if goal_plot_xy is not None:
+        ax1.plot(goal_plot_xy[0], goal_plot_xy[1], 'r*', markersize=20, label='Goal')
     ax1.legend()
 
     ax2 = fig.add_subplot(132)
@@ -258,7 +335,8 @@ def visualize_distance_field_heatmap(
     ax2.set_ylabel(ylabel)
     ax2.set_title('Ground Truth (Shortest Path / Time-to-Go)' + title_suffix)
     plt.colorbar(im2, ax=ax2, label='Distance')
-    ax2.plot(goal_plot_xy[0], goal_plot_xy[1], 'r*', markersize=20, label='Goal')
+    if goal_plot_xy is not None:
+        ax2.plot(goal_plot_xy[0], goal_plot_xy[1], 'r*', markersize=20, label='Goal')
     ax2.legend()
 
     ax3 = fig.add_subplot(133)
@@ -268,7 +346,8 @@ def visualize_distance_field_heatmap(
     ax3.set_ylabel(ylabel)
     ax3.set_title('Absolute Error')
     plt.colorbar(im3, ax=ax3, label='|Pred - GT|')
-    ax3.plot(goal_plot_xy[0], goal_plot_xy[1], 'r*', markersize=20, label='Goal')
+    if goal_plot_xy is not None:
+        ax3.plot(goal_plot_xy[0], goal_plot_xy[1], 'r*', markersize=20, label='Goal')
     ax3.legend()
 
     plt.tight_layout()

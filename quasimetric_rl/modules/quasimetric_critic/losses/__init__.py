@@ -34,6 +34,7 @@ class CriticLossBase(LossBase):
 from .global_push import GlobalPushLoss
 from .local_constraint import LocalConstraintLoss
 from .latent_dynamics import LatentDynamicsLoss
+from .abstract_goal_edge import AbstractGoalEdgeLoss
 
 
 class QuasimetricCriticLosses(CriticLossBase):
@@ -42,6 +43,7 @@ class QuasimetricCriticLosses(CriticLossBase):
         global_push: GlobalPushLoss.Conf = GlobalPushLoss.Conf()
         local_constraint: LocalConstraintLoss.Conf = LocalConstraintLoss.Conf()
         latent_dynamics: LatentDynamicsLoss.Conf = LatentDynamicsLoss.Conf()
+        abstract_goal_edge: AbstractGoalEdgeLoss.Conf = AbstractGoalEdgeLoss.Conf()
 
         critic_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-4)
         lagrange_mult_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-2)
@@ -53,6 +55,7 @@ class QuasimetricCriticLosses(CriticLossBase):
                 global_push=self.global_push.make(),
                 local_constraint=self.local_constraint.make(),
                 latent_dynamics=self.latent_dynamics.make(),
+                abstract_goal_edge=self.abstract_goal_edge.make(),
                 critic_optim_spec=self.critic_optim.make(),
                 lagrange_mult_optim_spec=self.lagrange_mult_optim.make(),
             )
@@ -60,6 +63,7 @@ class QuasimetricCriticLosses(CriticLossBase):
     global_push: GlobalPushLoss
     local_constraint: LocalConstraintLoss
     latent_dynamics: LatentDynamicsLoss
+    abstract_goal_edge: AbstractGoalEdgeLoss
 
     critic_optim: OptimWrapper
     critic_sched: torch.optim.lr_scheduler._LRScheduler
@@ -68,11 +72,13 @@ class QuasimetricCriticLosses(CriticLossBase):
 
     def __init__(self, critic: QuasimetricCritic, *, total_optim_steps: int, global_push: GlobalPushLoss,
                  local_constraint: LocalConstraintLoss, latent_dynamics: LatentDynamicsLoss,
+                 abstract_goal_edge: AbstractGoalEdgeLoss,
                  critic_optim_spec: AdamWSpec, lagrange_mult_optim_spec: AdamWSpec):
         super().__init__()
         self.global_push = global_push
         self.local_constraint = local_constraint
         self.latent_dynamics = latent_dynamics
+        self.abstract_goal_edge = abstract_goal_edge
 
         self.critic_optim, self.critic_sched = critic_optim_spec.create_optim_scheduler(
             critic.parameters(), total_optim_steps)
@@ -90,6 +96,7 @@ class QuasimetricCriticLosses(CriticLossBase):
                 global_push=self.global_push(data, critic_batch_info),
                 local_constraint=self.local_constraint(data, critic_batch_info),
                 latent_dynamics=self.latent_dynamics(data, critic_batch_info),
+                abstract_goal_edge=self.abstract_goal_edge(data, critic_batch_info),
             ))
             result.loss.backward()
 

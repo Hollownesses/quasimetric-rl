@@ -67,7 +67,7 @@ if [[ "${RUN_QRL_TRAIN:-auto}" == "1" || ( "${RUN_QRL_TRAIN:-auto}" == "auto" &&
     --batch-size "${QRL_BATCH_SIZE:-256}" \
     --total-steps "${QRL_TOTAL_STEPS:-20000}" \
     --num-critics "${NUM_CRITICS:-2}" \
-    --qrl-cost-source "${QRL_COST_SOURCE:-fixed}" \
+    --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
     --log-interval "${LOG_INTERVAL:-100}" \
     --save-interval "${SAVE_INTERVAL:-2000}" \
     --eval-interval "${EVAL_INTERVAL:-1000}" \

@@ -17,11 +17,15 @@ cd "$(dirname "$0")/.."
 
 if [[ -x "./.venv/bin/python" ]]; then
   PYTHON_BIN="./.venv/bin/python"
+elif [[ -x "../quasimetric-rl/.venv/bin/python" ]]; then
+  PYTHON_BIN="../quasimetric-rl/.venv/bin/python"
 else
   PYTHON_BIN="python3"
 fi
 
-OUTPUT_DIR="${OUTPUT_DIR:-./results/minimal_qrl_inspection_dubins}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/private/tmp/matplotlib}"
+
+OUTPUT_DIR="${OUTPUT_DIR:-./results/goalset_qrl_comm_inspection}"
 CHECKPOINT="${CHECKPOINT:-$OUTPUT_DIR/checkpoint_final.pth}"
 
 BOUNDS="${BOUNDS:-0 0 10 10}"
@@ -58,6 +62,10 @@ if [[ "${VIZ_SAVE_GIF:-0}" == "1" ]]; then
 fi
 
 echo "评估通信巡检 Dubins UAV 执行成功率..."
+
+if [[ "${CLEAR_OLD_VISUALIZATIONS:-1}" == "1" ]]; then
+  rm -rf "$OUTPUT_DIR/eval_results/visualizations"
+fi
 
 "$PYTHON_BIN" minimal_qrl/eval/comm_inspection_execution_eval.py \
   --checkpoint "$CHECKPOINT" \

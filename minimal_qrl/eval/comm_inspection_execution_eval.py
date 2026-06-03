@@ -3,8 +3,8 @@
 通信感知巡检 Dubins 环境下的 QRL 执行成功率离线评估脚本。
 
 默认评估口径：
-- 固定 inspection target / ground station / obstacle 配置
-- 每个 episode 随机起点、随机 task terminal goal
+- 每个 episode 固定一个 task context xi，可随机 inspection target / ground station
+- 每个 episode 随机非终态起点，目标为抽象集合 G_task(xi)
 - 同时比较 greedy 与 lookahead 两种执行方式
 - 可选保存执行轨迹 PNG / GIF
 """
@@ -139,10 +139,11 @@ def make_comm_inspection_env(args) -> CommInspectionDubinsUAV2D:
         taskscore_margin_clip=float(args.taskscore_margin_clip),
     )
     try:
-        env.sample_goal(seed=int(args.seed))
+        env.reset(seed=int(args.seed))
+        env.sample_task_terminal_state(seed=int(args.seed))
     except RuntimeError as exc:
         raise ValueError(
-            "当前通信巡检环境配置下不存在可采样的 task terminal goal。"
+            "当前通信巡检环境配置下不存在可采样的 task terminal state。"
             "请检查 inspection_target / ground_station / obstacle_config / "
             "observation_radius / fov_angle / comm_threshold 等参数。"
         ) from exc
@@ -311,7 +312,7 @@ def rollout_execution_episode(
 
     np.random.seed(int(episode_seed))
     obs, reset_info = env.reset(seed=int(episode_seed))
-    goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
+    goal_obs = env.abstract_goal_observation()
     rng = np.random.default_rng(int(episode_seed))
 
     states: List[np.ndarray] = [env.state.copy()]
@@ -426,7 +427,7 @@ def rollout_execution_episode(
         "initial_info": dict(reset_info),
         "final_info": dict(final_info),
         "start": np.asarray(env.start, dtype=np.float32).copy(),
-        "goal": np.asarray(env.goal, dtype=np.float32).copy(),
+        "abstract_goal_observation": np.asarray(goal_obs, dtype=np.float32).copy(),
         "inspection_target": np.asarray(env.inspection_target, dtype=np.float32).copy(),
         "ground_station": np.asarray(env.ground_station, dtype=np.float32).copy(),
         "high_level_events": high_level_events,
@@ -522,10 +523,8 @@ def _draw_environment_base(ax, env: CommInspectionDubinsUAV2D, rollout: Dict[str
     inspection_target = np.asarray(rollout["inspection_target"], dtype=np.float32)
     ground_station = np.asarray(rollout["ground_station"], dtype=np.float32)
     start = np.asarray(rollout["start"], dtype=np.float32)
-    goal = np.asarray(rollout["goal"], dtype=np.float32)
 
     ax.scatter(start[0], start[1], c="green", s=80, label="start", zorder=5)
-    ax.scatter(goal[0], goal[1], c="red", s=120, marker="*", label="task terminal goal", zorder=5)
     ax.scatter(
         inspection_target[0],
         inspection_target[1],
@@ -556,7 +555,6 @@ def _draw_environment_base(ax, env: CommInspectionDubinsUAV2D, rollout: Dict[str
     )
     ax.add_patch(obs_circle)
     _add_heading_arrow(ax, start, "green")
-    _add_heading_arrow(ax, goal, "red")
 
 
 def _make_rollout_title(
@@ -604,8 +602,8 @@ def _plot_rollout_png(
     traj_x = [float(s[0]) for s in states]
     traj_y = [float(s[1]) for s in states]
 
-    goal = np.asarray(rollout["goal"], dtype=np.float32)
-    theta_slice = float(goal[2])
+    first_feasible_idx = next((i for i, flag in enumerate(task_flags) if flag), None)
+    theta_slice = float(states[first_feasible_idx][2]) if first_feasible_idx is not None else float(states[-1][2])
     _, _, obs_mask, comm_mask, task_mask = _compute_feasibility_masks(env, theta_slice)
 
     fig, axes = plt.subplots(1, 3, figsize=(18.0, 6.2), sharex=True, sharey=True)
@@ -616,7 +614,6 @@ def _plot_rollout_png(
     ]
 
     end_state = np.asarray(states[-1], dtype=np.float32)
-    first_feasible_idx = next((i for i, flag in enumerate(task_flags) if flag), None)
 
     for panel_idx, (ax, (panel_title, mask, cmap)) in enumerate(zip(axes, panel_specs)):
         _draw_feasibility_mask(ax, env, mask, cmap=cmap)
@@ -704,7 +701,7 @@ def _plot_rollout_png(
 
     fig.suptitle(
         _make_rollout_title(rollout, execution_mode=execution_mode, episode_index=episode_index)
-        + f"\nfeasible-region slice uses goal heading theta={theta_slice:.2f} rad",
+        + f"\nfeasible-region slice uses trajectory heading theta={theta_slice:.2f} rad",
         fontsize=14,
         y=0.98,
     )
@@ -728,8 +725,8 @@ def _plot_rollout_gif(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     states = rollout["states"]
     task_flags = rollout["task_flags"]
-    goal = np.asarray(rollout["goal"], dtype=np.float32)
-    theta_slice = float(goal[2])
+    first_feasible_idx = next((i for i, flag in enumerate(task_flags) if flag), None)
+    theta_slice = float(states[first_feasible_idx][2]) if first_feasible_idx is not None else float(states[-1][2])
     _, _, _obs_mask, _comm_mask, task_mask = _compute_feasibility_masks(env, theta_slice)
 
     fig, ax = plt.subplots(figsize=(8.5, 8.0))
@@ -757,7 +754,6 @@ def _plot_rollout_gif(
         zorder=7,
     )
 
-    first_feasible_idx = next((i for i, flag in enumerate(task_flags) if flag), None)
     first_feasible_marker = None
     if first_feasible_idx is not None:
         feasible_state = np.asarray(states[first_feasible_idx], dtype=np.float32)
@@ -799,7 +795,7 @@ def _plot_rollout_gif(
                 episode_index=episode_index,
                 frame_index=0,
             )
-            + f"\nJoint task feasible slice at goal theta={theta_slice:.2f} rad"
+            + f"\nJoint task feasible slice at theta={theta_slice:.2f} rad"
         )
         current_point.set_offsets(np.asarray([[states[0][0], states[0][1]]], dtype=np.float32))
         current_arrow.set_offsets(np.asarray([[states[0][0], states[0][1]]], dtype=np.float32))
@@ -834,7 +830,7 @@ def _plot_rollout_gif(
                 episode_index=episode_index,
                 frame_index=frame_idx,
             )
-            + f"\nJoint task feasible slice at goal theta={theta_slice:.2f} rad"
+            + f"\nJoint task feasible slice at theta={theta_slice:.2f} rad"
         )
         artists = [*segment_artists, current_point, current_arrow, *event_artists]
         if first_feasible_marker is not None:
@@ -888,7 +884,7 @@ def _rollout_to_raw_payload(rollout: Dict[str, Any], *, execution_mode: str, epi
         "collision": bool(rollout["collision"]),
         "out_of_bounds": bool(rollout["out_of_bounds"]),
         "start": _float_list(rollout["start"]),
-        "goal": _float_list(rollout["goal"]),
+        "abstract_goal_observation": _float_list(rollout["abstract_goal_observation"]),
         "inspection_target": _float_list(rollout["inspection_target"]),
         "ground_station": _float_list(rollout["ground_station"]),
         "states": [_float_list(s) for s in rollout["states"]],
@@ -935,8 +931,6 @@ def _save_rollout_raw_data(
             "task_feasible",
             "observation_feasible",
             "communication_feasible",
-            "distance_to_goal",
-            "heading_error",
             "distance_to_target",
             "distance_to_ground_station",
             "obs_margin",
@@ -961,8 +955,6 @@ def _save_rollout_raw_data(
                 "task_feasible": bool(task_flags[step]) if step < len(task_flags) else "",
                 "observation_feasible": info.get("observation_feasible", ""),
                 "communication_feasible": info.get("communication_feasible", ""),
-                "distance_to_goal": info.get("distance_to_goal", ""),
-                "heading_error": info.get("heading_error", ""),
                 "distance_to_target": info.get("distance_to_target", ""),
                 "distance_to_ground_station": info.get("distance_to_ground_station", ""),
                 "obs_margin": info.get("obs_margin", ""),
@@ -1046,7 +1038,9 @@ def _save_rollout_visualization(
         "gif": os.path.relpath(gif_path, base_output_dir) if gif_saved else None,
         "gif_error": gif_error,
         "start": [float(v) for v in np.asarray(rollout["start"], dtype=np.float32)],
-        "goal": [float(v) for v in np.asarray(rollout["goal"], dtype=np.float32)],
+        "abstract_goal_observation": [
+            float(v) for v in np.asarray(rollout["abstract_goal_observation"], dtype=np.float32)
+        ],
         "inspection_target": [float(v) for v in np.asarray(rollout["inspection_target"], dtype=np.float32)],
         "ground_station": [float(v) for v in np.asarray(rollout["ground_station"], dtype=np.float32)],
         "final_comm_margin": _safe_float(final_info.get("comm_margin")),
@@ -1304,8 +1298,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--inspection-target", type=float, nargs=2, default=[3.0, 7.5])
     parser.add_argument("--ground-station", type=float, nargs=2, default=[1.5, 2.0])
-    parser.add_argument("--randomize-inspection-target", action="store_true")
-    parser.add_argument("--randomize-ground-station", action="store_true")
+    parser.add_argument("--randomize-inspection-target", dest="randomize_inspection_target", action="store_true", default=True)
+    parser.add_argument("--no-randomize-inspection-target", dest="randomize_inspection_target", action="store_false")
+    parser.add_argument("--randomize-ground-station", dest="randomize_ground_station", action="store_true", default=True)
+    parser.add_argument("--no-randomize-ground-station", dest="randomize_ground_station", action="store_false")
     parser.add_argument("--observation-radius", type=float, default=1.8)
     parser.add_argument("--fov-angle", type=float, default=float(np.pi / 2.0))
     parser.add_argument("--require-target-los", dest="require_target_los", action="store_true", default=True)

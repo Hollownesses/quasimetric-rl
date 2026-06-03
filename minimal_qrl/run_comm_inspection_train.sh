@@ -68,7 +68,10 @@ fi
   --batch-size "${BATCH_SIZE:-256}" \
   --total-steps "${TOTAL_STEPS:-20000}" \
   --num-critics "${NUM_CRITICS:-2}" \
-  --qrl-cost-source "${QRL_COST_SOURCE:-fixed}" \
+  --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
+  --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.8}" \
+  --global-push-state-goal-ratio "${GLOBAL_PUSH_STATE_GOAL_RATIO:-0.2}" \
+  --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
   --log-interval "${LOG_INTERVAL:-100}" \
   --save-interval "${SAVE_INTERVAL:-2000}" \
   --eval-interval "${EVAL_INTERVAL:-1000}" \

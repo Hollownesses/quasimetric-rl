@@ -36,8 +36,24 @@ class LatentDynamicsLoss(CriticLossBase):
         self.weight = weight
 
     def forward(self, data: BatchData, critic_batch_info: CriticBatchInfo) -> LossResult:
-        pred_zy = critic_batch_info.critic.latent_dynamics(critic_batch_info.zx, data.actions)
-        dists = critic_batch_info.critic.quasimetric_model(pred_zy, critic_batch_info.zy, bidirectional=True)
+        zx = critic_batch_info.zx
+        zy = critic_batch_info.zy
+        actions = data.actions
+        abstract_mask = data.transition_infos.get("abstract_goal_edge") if data.transition_infos else None
+        if abstract_mask is not None:
+            normal_mask = ~abstract_mask.to(device=zx.device, dtype=torch.bool)
+            if not bool(normal_mask.any()):
+                zero = zx.sum() * 0.0
+                return LossResult(
+                    loss=zero,
+                    info=dict(sq_dists=zero.detach(), dist_p2n=zero.detach(), dist_n2p=zero.detach()),
+                )
+            zx = zx[normal_mask]
+            zy = zy[normal_mask]
+            actions = actions[normal_mask]
+
+        pred_zy = critic_batch_info.critic.latent_dynamics(zx, actions)
+        dists = critic_batch_info.critic.quasimetric_model(pred_zy, zy, bidirectional=True)
         sq_dists = dists.square().mean()
 
         dist_p2n, dist_n2p = dists.unbind(-1)

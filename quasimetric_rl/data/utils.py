@@ -43,14 +43,19 @@ class TensorCollectionAttrsMixin(abc.ABC):
 
     @staticmethod
     def is_nested_tensor_mapping_type(ty):
+        orig = get_origin(ty)
+        args = get_args(ty)
+        if orig is None or len(args) != 2:
+            return False
         try:
-            orig = get_origin(ty)
-            args = get_args(ty)
-            return (
-                (issubclass(orig, NestedMapping) and issubclass(args)[0], torch.Tensor)
-                or
-                (issubclass(orig, Mapping) and args[0] == str and issubclass(args, torch.Tensor))
-            )
+            is_mapping = issubclass(orig, (NestedMapping, Mapping))
+        except TypeError:
+            return False
+        if not is_mapping or args[0] is not str:
+            return False
+        value_ty = args[1]
+        try:
+            return issubclass(value_ty, torch.Tensor)
         except TypeError:
             return False
 

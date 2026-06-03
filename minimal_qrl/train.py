@@ -45,6 +45,7 @@ from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLo
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.latent_dynamics import LatentDynamicsLoss
+from quasimetric_rl.modules.quasimetric_critic.losses.abstract_goal_edge import AbstractGoalEdgeLoss
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
 from minimal_qrl.envs import (
     SimpleGrid2D,
@@ -390,8 +391,9 @@ def train(args):
     if args.env_type == 'comm_inspection_dubins_uav':
         precheck_env = CommInspectionDubinsUAV2D(**env_kwargs)
         try:
-            probe_goal = precheck_env.sample_goal(seed=args.seed)
-            logger.info(f"通信巡检环境预检查通过，示例任务可行目标: {probe_goal}")
+            precheck_env.reset(seed=args.seed)
+            probe_goal = precheck_env.sample_task_terminal_state(seed=args.seed)
+            logger.info(f"通信巡检 goal-set 环境预检查通过，示例 G_task(xi) 终态: {probe_goal}")
         except RuntimeError as e:
             raise ValueError(
                 "当前通信巡检环境配置下不存在可采样的任务可行目标。"
@@ -493,19 +495,25 @@ def train(args):
         )
     elif args.env_type == 'comm_inspection_dubins_uav':
         # negative_reward: reward=-cost_total，用逐 transition 非负任务 cost 锚定 QRL local constraint。
-        # fixed: 恢复 geometry-only 对照实验的固定一步代价。
         step_cost = 1.0
         qrl_cost_source = str(args.qrl_cost_source)
+        if qrl_cost_source != "negative_reward":
+            raise ValueError("goal-set 通信巡检 QRL 必须使用 --qrl-cost-source negative_reward")
         logger.info(f"通信巡检 QRL local cost source: {qrl_cost_source}")
         agent_conf = QRLConf(
             actor=None,
             num_critics=args.num_critics,
             quasimetric_critic=QuasimetricCriticConf(
                 losses=QuasimetricCriticLosses.Conf(
+                    global_push=GlobalPushLoss.Conf(
+                        abstract_goal_ratio=float(args.global_push_abstract_goal_ratio),
+                        state_goal_ratio=float(args.global_push_state_goal_ratio),
+                    ),
                     local_constraint=LocalConstraintLoss.Conf(
                         step_cost=step_cost,
                         cost_source=qrl_cost_source,
                     ),
+                    abstract_goal_edge=AbstractGoalEdgeLoss.Conf(weight=float(args.abstract_goal_edge_loss_weight)),
                     critic_optim=AdamWSpec.Conf(lr=5e-5),
                     lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
                 )
@@ -1022,10 +1030,14 @@ def main():
     parser.add_argument('--ground-station', type=float, nargs=2, default=None,
                         metavar=('X_BS', 'Y_BS'),
                         help='地面站位置，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--randomize-inspection-target', action='store_true',
+    parser.add_argument('--randomize-inspection-target', dest='randomize_inspection_target', action='store_true', default=True,
                         help='每次 reset 随机采样巡检目标位置')
-    parser.add_argument('--randomize-ground-station', action='store_true',
+    parser.add_argument('--no-randomize-inspection-target', dest='randomize_inspection_target', action='store_false',
+                        help='固定使用 --inspection-target')
+    parser.add_argument('--randomize-ground-station', dest='randomize_ground_station', action='store_true', default=True,
                         help='每次 reset 随机采样地面站位置')
+    parser.add_argument('--no-randomize-ground-station', dest='randomize_ground_station', action='store_false',
+                        help='固定使用 --ground-station')
     parser.add_argument('--observation-radius', type=float, default=1.5,
                         help='观测半径，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--fov-angle', type=float, default=float(np.pi / 2.0),
@@ -1072,10 +1084,16 @@ def main():
                         help='TaskScore 中 task feasible bonus 的权重')
     parser.add_argument('--taskscore-margin-clip', type=float, default=2.0,
                         help='TaskScore 对 obs/comm margin 的对称裁剪阈值')
-    parser.add_argument('--qrl-cost-source', type=str, default='fixed',
+    parser.add_argument('--qrl-cost-source', type=str, default='negative_reward',
                         choices=['negative_reward', 'fixed'],
                         help='comm_inspection_dubins_uav 的 QRL local constraint 单步代价来源：'
                              'negative_reward 使用环境 task cost；fixed 使用原始固定 step_cost=1.0')
+    parser.add_argument('--global-push-abstract-goal-ratio', type=float, default=0.8,
+                        help='goal-set GlobalPush 主项权重：普通状态到当前上下文抽象 G_task')
+    parser.add_argument('--global-push-state-goal-ratio', type=float, default=0.2,
+                        help='goal-set GlobalPush 辅助项权重：同上下文普通 state-state 几何结构')
+    parser.add_argument('--abstract-goal-edge-loss-weight', type=float, default=1.0,
+                        help='抽象零代价边 d(s_terminal, G_task)^2 的损失权重')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')

@@ -3,11 +3,20 @@
 """
 import numpy as np
 import random
-from typing import Iterator, Optional
+from typing import Iterator, Optional, List, Tuple
 import gym
 
 from quasimetric_rl.data import EpisodeData
 from minimal_qrl.envs.base import BaseNavigationEnv
+
+
+def _actions_to_array(actions: List) -> np.ndarray:
+    if len(actions) > 0:
+        first_action = actions[0]
+        if isinstance(first_action, (int, np.integer)):
+            return np.array(actions, dtype=np.int64)
+        return np.array(actions, dtype=np.float32)
+    return np.array([], dtype=np.int64)
 
 
 def collect_random_episode(
@@ -89,20 +98,7 @@ def collect_random_episode(
         if terminated or truncated:
             break
     
-    # 转换为 EpisodeData
-    # 处理动作数组
-    # 检查动作类型：如果所有动作都是标量，使用 int64；否则使用 float32
-    if len(actions) > 0:
-        first_action = actions[0]
-        if isinstance(first_action, (int, np.integer)):
-            # 离散动作
-            actions_array = np.array(actions, dtype=np.int64)
-        else:
-            # 连续动作
-            actions_array = np.array(actions, dtype=np.float32)
-    else:
-        # 空动作列表（不应该发生）
-        actions_array = np.array([], dtype=np.int64)
+    actions_array = _actions_to_array(actions)
     
     return EpisodeData.from_simple_trajectory(
         observations=np.array(observations[:-1], dtype=np.float32),  # 去掉最后一个
@@ -112,6 +108,103 @@ def collect_random_episode(
         terminals=np.array(terminals, dtype=np.bool_),
         timeouts=np.array(timeouts, dtype=np.bool_),
     )
+
+
+def collect_goal_set_comm_episode_pair(
+    env: gym.Env,
+    max_steps: int = 200,
+    seed: Optional[int] = None,
+    context_id: int = 0,
+) -> Tuple[EpisodeData, Optional[EpisodeData]]:
+    """
+    Collect one communication-inspection goal-set episode plus one abstract
+    zero-cost transition terminal_state -> G_task(xi).
+
+    The abstract edge is part of the augmented MDP for every task context. It
+    does not require the random rollout to discover the terminal set.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+        random.seed(seed)
+
+    obs, _ = env.reset(seed=seed)
+    task_goal_obs = env.abstract_goal_observation().astype(np.float32)
+
+    observations = [obs.copy()]
+    actions = []
+    next_observations = []
+    rewards = []
+    terminals = []
+    timeouts = []
+    final_info = {}
+
+    for _ in range(max_steps):
+        action = env.action_space.sample()
+        next_obs, reward, terminated, truncated, info = env.step(action)
+
+        if isinstance(action, (int, np.integer)):
+            actions.append(int(action))
+        else:
+            actions.append(np.asarray(action, dtype=np.float32))
+        observations.append(next_obs.copy())
+        next_observations.append(next_obs.copy())
+        rewards.append(float(reward))
+        terminals.append(bool(terminated))
+        timeouts.append(bool(truncated))
+        final_info = dict(info)
+        obs = next_obs
+        if terminated or truncated:
+            break
+
+    actions_array = _actions_to_array(actions)
+    n = len(actions)
+    transition_infos = {
+        "abstract_goal_edge": np.zeros((n,), dtype=np.bool_),
+        "source_terminal_goal_state": np.zeros((n,), dtype=np.bool_),
+        "task_goal_observations": np.repeat(task_goal_obs[None, :], n, axis=0).astype(np.float32),
+        "context_id": np.full((n,), int(context_id), dtype=np.int64),
+    }
+    episode = EpisodeData.from_simple_trajectory(
+        observations=np.array(observations[:-1], dtype=np.float32),
+        actions=actions_array,
+        next_observations=np.array(next_observations, dtype=np.float32),
+        rewards=np.array(rewards, dtype=np.float32),
+        terminals=np.array(terminals, dtype=np.bool_),
+        timeouts=np.array(timeouts, dtype=np.bool_),
+        transition_infos=transition_infos,
+    )
+
+    abstract_episode = None
+    try:
+        terminal_obs = np.asarray(obs, dtype=np.float32)
+        if not (bool(final_info.get("success", False)) and n > 0):
+            terminal_state = env.sample_task_terminal_state(
+                seed=None if seed is None else int(seed + 104729)
+            )
+            terminal_obs = env.state_to_observation(terminal_state).astype(np.float32)
+
+        action_template = actions_array[-1] if n > 0 else env.action_space.sample()
+        zero_action = np.zeros_like(np.asarray(action_template, dtype=np.float32))
+        action_dtype = actions_array.dtype if n > 0 else np.float32
+        if zero_action.shape == ():
+            zero_action = np.asarray(0, dtype=action_dtype)
+        abstract_episode = EpisodeData.from_simple_trajectory(
+            observations=terminal_obs[None, :].astype(np.float32),
+            actions=np.asarray([zero_action], dtype=action_dtype),
+            next_observations=task_goal_obs[None, :].astype(np.float32),
+            rewards=np.array([0.0], dtype=np.float32),
+            terminals=np.array([True], dtype=np.bool_),
+            timeouts=np.array([False], dtype=np.bool_),
+            transition_infos={
+                "abstract_goal_edge": np.array([True], dtype=np.bool_),
+                "source_terminal_goal_state": np.array([True], dtype=np.bool_),
+                "task_goal_observations": task_goal_obs[None, :].astype(np.float32),
+                "context_id": np.array([int(context_id)], dtype=np.int64),
+            },
+        )
+    except RuntimeError:
+        abstract_episode = None
+    return episode, abstract_episode
 
 
 def create_dataset(
@@ -144,6 +237,20 @@ def create_dataset(
                 terminals=np.array([done], dtype=np.bool_),
                 timeouts=np.array([False], dtype=np.bool_),
             )
+        return
+
+    if hasattr(env, "abstract_goal_observation") and hasattr(env, "is_terminal_goal_state"):
+        for i in range(num_episodes):
+            episode_seed = (seed + i) if seed is not None else None
+            episode, abstract_episode = collect_goal_set_comm_episode_pair(
+                env,
+                max_steps=max_steps_per_episode,
+                seed=episode_seed,
+                context_id=i,
+            )
+            yield episode
+            if abstract_episode is not None:
+                yield abstract_episode
         return
 
     for i in range(num_episodes):

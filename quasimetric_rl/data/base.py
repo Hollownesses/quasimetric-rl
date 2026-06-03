@@ -32,6 +32,7 @@ class BatchData(TensorCollectionAttrsMixin):  # TensorCollectionAttrsMixin has s
     timeouts: torch.Tensor
 
     future_observations: torch.Tensor  # sampled!
+    transition_infos: Mapping[str, torch.Tensor] = attrs.Factory(dict)
 
     @property
     def device(self) -> torch.device:
@@ -117,7 +118,10 @@ class EpisodeData(MultiEpisodeData):
                                next_observations: Union[np.ndarray, torch.Tensor],
                                rewards: Union[np.ndarray, torch.Tensor],
                                terminals: Union[np.ndarray, torch.Tensor],
-                               timeouts: Union[np.ndarray, torch.Tensor]):
+                               timeouts: Union[np.ndarray, torch.Tensor],
+                               *,
+                               observation_infos: Optional[Mapping[str, Union[np.ndarray, torch.Tensor]]] = None,
+                               transition_infos: Optional[Mapping[str, Union[np.ndarray, torch.Tensor]]] = None):
         observations = torch.tensor(observations)
         next_observations=torch.tensor(next_observations)
         all_observations = torch.cat([observations, next_observations[-1:]], dim=0)
@@ -128,6 +132,14 @@ class EpisodeData(MultiEpisodeData):
             rewards=torch.tensor(rewards),
             terminals=torch.tensor(terminals),
             timeouts=torch.tensor(timeouts),
+            observation_infos={
+                k: torch.tensor(v)
+                for k, v in (observation_infos or {}).items()
+            },
+            transition_infos={
+                k: torch.tensor(v)
+                for k, v in (transition_infos or {}).items()
+            },
         )
 
 
@@ -283,6 +295,10 @@ class Dataset:
             rewards=self.raw_data.rewards[indices],
             terminals=terminals,
             timeouts=self.raw_data.timeouts[indices],
+            transition_infos={
+                k: v[indices]
+                for k, v in self.raw_data.transition_infos.items()
+            },
         )
 
     def __len__(self):

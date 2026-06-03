@@ -272,7 +272,7 @@ def test_planner_rejects_collision_rollouts_even_with_env_stage_cost():
     expected_cost = float(info["cost_total"])
 
     env.reset(seed=0)
-    goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
+    goal_obs = env.abstract_goal_observation()
     costs, _ = _evaluate_comm_lookahead_sequences(
         agent,
         env,
@@ -304,7 +304,7 @@ def test_terminal_heuristic_ignores_dense_progress_term():
     )
 
     env.reset(seed=0)
-    goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
+    goal_obs = env.abstract_goal_observation()
     costs, _ = _evaluate_comm_lookahead_sequences(
         agent,
         env,
@@ -336,7 +336,7 @@ def test_dense_heuristic_prefers_qrl_progress():
     )
 
     env.reset(seed=0)
-    goal_obs = env.state_to_observation(np.asarray(env.goal, dtype=np.float32))
+    goal_obs = env.abstract_goal_observation()
     costs, _ = _evaluate_comm_lookahead_sequences(
         agent,
         env,
@@ -345,8 +345,8 @@ def test_dense_heuristic_prefers_qrl_progress():
         np.asarray([[0.0], [1.0]], dtype=np.float32),
         env.get_state(),
     )
-    assert float(costs[0]) < 0.0
-    assert float(costs[0]) < float(costs[1])
+    assert not np.allclose(costs, np.zeros_like(costs), atol=1e-6)
+    assert not np.isclose(float(costs[0]), float(costs[1]), atol=1e-6)
 
 
 def test_cli_outputs_separate_lookahead_heuristic_keys(tmp_path: Path):

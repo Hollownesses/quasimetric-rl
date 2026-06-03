@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Group 2: ablate task-aware QRL loss on the communication-inspection Dubins task.
+# Legacy ablation entrypoint retained for convenience.
 #
-# This script trains/evaluates two QRL critics under the same environment and
-# planner settings:
-#   1. Original QRL:     --qrl-cost-source fixed
-#   2. Task-aware QRL:   --qrl-cost-source negative_reward
+# Goal-set communication-inspection QRL requires --qrl-cost-source negative_reward.
+# The old fixed-cost point-goal ablation is no longer valid on this branch.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,7 +14,7 @@ else
 fi
 
 OUTPUT_DIR="${OUTPUT_DIR:-./results/experiments/comm_inspection_task_aware_ablation}"
-ORIGINAL_DIR="${ORIGINAL_DIR:-$OUTPUT_DIR/qrl_original_fixed_cost}"
+ORIGINAL_DIR="${ORIGINAL_DIR:-$OUTPUT_DIR/qrl_goalset_default_a}"
 TASK_AWARE_DIR="${TASK_AWARE_DIR:-$OUTPUT_DIR/qrl_task_aware_reward_cost}"
 mkdir -p "$OUTPUT_DIR"
 
@@ -177,18 +175,18 @@ eval_qrl() {
     --viz-gif-fps "${VIZ_GIF_FPS:-8}"
 }
 
-train_qrl "$ORIGINAL_DIR" fixed
+train_qrl "$ORIGINAL_DIR" negative_reward
 train_qrl "$TASK_AWARE_DIR" negative_reward
 
-eval_qrl "qrl_fixed_cost" "$ORIGINAL_DIR/checkpoint_final.pth" "$OUTPUT_DIR/eval_fixed_cost"
+eval_qrl "qrl_goalset_default_a" "$ORIGINAL_DIR/checkpoint_final.pth" "$OUTPUT_DIR/eval_goalset_default_a"
 eval_qrl "qrl_task_aware" "$TASK_AWARE_DIR/checkpoint_final.pth" "$OUTPUT_DIR/eval_task_aware"
 
 "$PYTHON_BIN" minimal_qrl/summarize_comm_inspection_results.py \
-  --input "qrl_fixed_cost=$OUTPUT_DIR/eval_fixed_cost/comm_inspection_execution_eval.json" \
+  --input "qrl_goalset_default_a=$OUTPUT_DIR/eval_goalset_default_a/comm_inspection_execution_eval.json" \
   --input "qrl_task_aware=$OUTPUT_DIR/eval_task_aware/comm_inspection_execution_eval.json" \
   --output-csv "$OUTPUT_DIR/task_aware_ablation_summary.csv"
 
 echo "[task_ablation] Results:"
-echo "  $OUTPUT_DIR/eval_fixed_cost/comm_inspection_execution_eval.json"
+echo "  $OUTPUT_DIR/eval_goalset_default_a/comm_inspection_execution_eval.json"
 echo "  $OUTPUT_DIR/eval_task_aware/comm_inspection_execution_eval.json"
 echo "  $OUTPUT_DIR/task_aware_ablation_summary.csv"

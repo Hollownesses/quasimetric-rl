@@ -1,11 +1,13 @@
 """
-Task-conditioned point-goal communication-aware inspection Dubins UAV 2D environment.
+Context-conditioned goal-set communication-aware inspection Dubins UAV 2D environment.
 
-该环境保留 point-goal 训练形式：每个 episode 仍使用单个目标状态 g=(x, y, theta)，
-但该 goal 的语义不再是普通几何终点，而是在给定 inspection target / ground
-station 任务上下文下采样得到的 task-conditioned terminal state。
+每个 episode 先固定任务上下文 xi=(inspection target, ground station, ...)，
+该上下文诱导一个终态集合 G_task(xi)。episode 成功不再要求到达某个采样点，
+而是进入 G_task(xi)：几何状态合法、巡检目标可观测、通信链路可行。
+QRL 训练通过 abstract_goal_observation() 表示抽象任务完成节点 o_G(xi)。
 """
 import math
+import warnings
 from typing import Dict, List, Optional, Tuple, Union
 
 import gym
@@ -30,7 +32,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
     - observation_mode="task_context" 时，agent 会接收任务实体和任务可行性上下文
     """
 
-    TASK_CONTEXT_DIM = 20
+    TASK_CONTEXT_DIM = 28
 
     def __init__(
         self,
@@ -45,9 +47,10 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         goal: Optional[Tuple[float, float, float]] = None,
         inspection_target: Optional[Tuple[float, float]] = None,
         ground_station: Optional[Tuple[float, float]] = None,
-        randomize_inspection_target: bool = False,
-        randomize_ground_station: bool = False,
+        randomize_inspection_target: bool = True,
+        randomize_ground_station: bool = True,
         min_entity_separation: float = 0.5,
+        min_start_target_distance: Optional[float] = None,
         observation_radius: float = 1.5,
         fov_angle: float = np.pi / 2.0,
         require_target_los: bool = True,
@@ -99,6 +102,9 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         self.randomize_inspection_target = bool(randomize_inspection_target)
         self.randomize_ground_station = bool(randomize_ground_station)
         self.min_entity_separation = float(min_entity_separation)
+        self.min_start_target_distance = float(
+            self.min_entity_separation if min_start_target_distance is None else min_start_target_distance
+        )
 
         self.observation_radius = float(observation_radius)
         self.fov_angle = float(fov_angle)
@@ -110,6 +116,8 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         self.comm_threshold = float(comm_threshold)
         self.require_ground_station_los = bool(require_ground_station_los)
 
+        # Kept as a legacy attribute for old scripts, but point-goal sampling is no
+        # longer used by the communication-inspection task.
         self.goal_sampling_mode = str(goal_sampling_mode)
         self.goal_position_tolerance = float(goal_position_tolerance)
         self.goal_heading_tolerance = float(goal_heading_tolerance)
@@ -126,6 +134,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         self.taskscore_margin_clip = max(float(taskscore_margin_clip), 1e-6)
 
         self.sample_max_attempts = int(sample_max_attempts)
+        self._last_context_rejection_count = 0
         self._ever_task_feasible = False
         self._first_task_feasible_step: Optional[int] = None
 
@@ -142,11 +151,17 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                     self.y_min,
                     -1.0,
                     -1.0,
+                    self.x_min,
+                    self.y_min,
+                    self.x_min,
+                    self.y_min,
                     -max_dx,
                     -max_dy,
                     0.0,
                     -1.0,
                     -1.0,
+                    -50.0,
+                    0.0,
                     -max_dx,
                     -max_dy,
                     0.0,
@@ -156,7 +171,9 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                     -50.0,
                     0.0,
                     0.0,
-                    -50.0,
+                    0.0,
+                    0.0,
+                    0.0,
                     0.0,
                 ],
                 dtype=np.float32,
@@ -167,11 +184,17 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                     self.y_max,
                     1.0,
                     1.0,
+                    self.x_max,
+                    self.y_max,
+                    self.x_max,
+                    self.y_max,
                     max_dx,
                     max_dy,
                     max_dist,
                     1.0,
                     1.0,
+                    50.0,
+                    1.0,
                     max_dx,
                     max_dy,
                     max_dist,
@@ -181,7 +204,9 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                     50.0,
                     1.0,
                     1.0,
-                    50.0,
+                    1.0,
+                    1.0,
+                    1.0,
                     1.0,
                 ],
                 dtype=np.float32,
@@ -319,18 +344,60 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                 )
                 self.ground_station = (float(sampled[0]), float(sampled[1]))
 
+    def sample_task_context(self, seed: Optional[int] = None) -> Dict[str, Tuple[float, float]]:
+        """
+        Sample and set the episode task context xi.
+
+        The context is fixed within one episode. When randomization flags are
+        disabled, this validates the configured entities and keeps them fixed.
+        Random contexts are rejection-sampled so G_task(xi) is non-empty.
+        """
+        rng = self._get_rng(seed)
+        original_target = self.inspection_target
+        original_station = self.ground_station
+        self._last_context_rejection_count = 0
+        max_context_attempts = max(1, min(self.sample_max_attempts, 200))
+
+        for _ in range(max_context_attempts):
+            if self.randomize_inspection_target:
+                sampled = self._sample_valid_point(seed=int(rng.integers(0, 1_000_000_000)))
+                self.inspection_target = (float(sampled[0]), float(sampled[1]))
+            if self.randomize_ground_station:
+                sampled = self._sample_distinct_valid_point(
+                    reference=self.inspection_target,
+                    min_distance=self.min_entity_separation,
+                    seed=int(rng.integers(0, 1_000_000_000)),
+                )
+                self.ground_station = (float(sampled[0]), float(sampled[1]))
+            self._ensure_valid_task_entities(seed=int(rng.integers(0, 1_000_000_000)))
+
+            try:
+                _ = self.sample_task_terminal_state(seed=int(rng.integers(0, 1_000_000_000)))
+            except RuntimeError:
+                self._last_context_rejection_count += 1
+                continue
+
+            if self._last_context_rejection_count > 0:
+                warnings.warn(
+                    "Rejected "
+                    f"{self._last_context_rejection_count} infeasible task context(s) before sampling a feasible xi.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            return {
+                "inspection_target": tuple(self.inspection_target),
+                "ground_station": tuple(self.ground_station),
+            }
+
+        self.inspection_target = original_target
+        self.ground_station = original_station
+        raise RuntimeError(
+            "Failed to sample a feasible task context xi with non-empty G_task(xi). "
+            f"Rejected {self._last_context_rejection_count} context(s)."
+        )
+
     def _sample_entities(self, seed: Optional[int] = None) -> None:
-        if self.randomize_inspection_target:
-            sampled = self._sample_valid_point(seed=seed)
-            self.inspection_target = (float(sampled[0]), float(sampled[1]))
-        if self.randomize_ground_station:
-            sampled = self._sample_distinct_valid_point(
-                reference=self.inspection_target,
-                min_distance=self.min_entity_separation,
-                seed=None if seed is None else seed + 701,
-            )
-            self.ground_station = (float(sampled[0]), float(sampled[1]))
-        self._ensure_valid_task_entities(seed=seed)
+        self.sample_task_context(seed=seed)
 
     def compute_observation_score(self, state: np.ndarray) -> float:
         if self.inspection_target is None:
@@ -403,6 +470,9 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
     def is_task_feasible(self, state: np.ndarray) -> bool:
         state = np.asarray(state, dtype=np.float32).reshape(3)
         return self.is_valid_state(state) and self.is_observation_feasible(state) and self.is_communication_feasible(state)
+
+    def is_terminal_goal_state(self, state: np.ndarray) -> bool:
+        return bool(self.is_task_feasible(state))
 
     def clip_task_margin(self, margin: float) -> float:
         clip = float(self.taskscore_margin_clip)
@@ -502,8 +572,75 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         repair_info = self.repair_state_with_info(state)
         return np.asarray(repair_info["repaired_state"], dtype=np.float32)
 
-    def sample_task_feasible_goal(self, seed: Optional[int] = None) -> np.ndarray:
+    def sample_task_terminal_state(self, seed: Optional[int] = None) -> np.ndarray:
         rng = self._get_rng(seed)
+        if self.inspection_target is None or self.ground_station is None:
+            self._ensure_valid_task_entities(seed=seed)
+
+        target = np.asarray(self.inspection_target, dtype=np.float32)
+        max_radius = max(float(self.observation_radius), 1e-6)
+
+        # Task-aware proposal: sample a UAV position inside the inspection
+        # disk and orient it toward the target within the FOV. This avoids the
+        # very low hit rate of uniform sampling over (x, y, theta).
+        for _ in range(self.sample_max_attempts):
+            radius = max_radius * np.sqrt(float(rng.uniform(0.0, 1.0)))
+            bearing_from_target = float(rng.uniform(-np.pi, np.pi))
+            pos = target + radius * np.array(
+                [np.cos(bearing_from_target), np.sin(bearing_from_target)],
+                dtype=np.float32,
+            )
+            if not (self.x_min <= float(pos[0]) <= self.x_max and self.y_min <= float(pos[1]) <= self.y_max):
+                continue
+            heading_to_target = float(np.arctan2(target[1] - pos[1], target[0] - pos[0]))
+            theta = self._normalize_angle(
+                heading_to_target + float(rng.uniform(-0.5 * self.fov_angle, 0.5 * self.fov_angle))
+            )
+            state = np.array(
+                [
+                    pos[0],
+                    pos[1],
+                    theta,
+                ],
+                dtype=np.float32,
+            )
+            if self.is_terminal_goal_state(state):
+                return state
+
+        # Deterministic fallback for narrow feasible regions. Random sampling
+        # can miss a thin LOS/communication slice even when G_task(xi) is non-empty.
+        ring_count = 18
+        bearing_count = 96
+        heading_offsets = [
+            0.0,
+            -0.25 * self.fov_angle,
+            0.25 * self.fov_angle,
+            -0.45 * self.fov_angle,
+            0.45 * self.fov_angle,
+        ]
+        for radius in np.linspace(0.05 * max_radius, max_radius, ring_count, dtype=np.float32):
+            for bearing_from_target in np.linspace(-np.pi, np.pi, bearing_count, endpoint=False, dtype=np.float32):
+                pos = target + float(radius) * np.array(
+                    [np.cos(float(bearing_from_target)), np.sin(float(bearing_from_target))],
+                    dtype=np.float32,
+                )
+                if not (self.x_min <= float(pos[0]) <= self.x_max and self.y_min <= float(pos[1]) <= self.y_max):
+                    continue
+                heading_to_target = float(np.arctan2(target[1] - pos[1], target[0] - pos[0]))
+                for offset in heading_offsets:
+                    state = np.array(
+                        [
+                            pos[0],
+                            pos[1],
+                            self._normalize_angle(heading_to_target + float(offset)),
+                        ],
+                        dtype=np.float32,
+                    )
+                    if self.is_terminal_goal_state(state):
+                        return state
+
+        # Fallback for unusual contexts where the local proposal repeatedly
+        # hits obstacles or communication shadows.
         for _ in range(self.sample_max_attempts):
             state = np.array(
                 [
@@ -513,20 +650,85 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                 ],
                 dtype=np.float32,
             )
-            if self.is_task_feasible(state):
+            if self.is_terminal_goal_state(state):
                 return state
         raise RuntimeError("未能在给定尝试次数内采样到任务可行目标状态")
 
+    def sample_task_feasible_goal(self, seed: Optional[int] = None) -> np.ndarray:
+        return self.sample_task_terminal_state(seed=seed)
+
+    def sample_nonterminal_valid_state(self, seed: Optional[int] = None) -> np.ndarray:
+        rng = self._get_rng(seed)
+        best_state: Optional[np.ndarray] = None
+        best_target_distance = -np.inf
+        for _ in range(self.sample_max_attempts):
+            state = self.sample_valid_state(seed=int(rng.integers(0, 1_000_000_000)))
+            if self.is_terminal_goal_state(state):
+                continue
+            target_distance = np.inf
+            if self.inspection_target is not None:
+                target_distance = float(np.linalg.norm(state[:2] - np.asarray(self.inspection_target, dtype=np.float32)))
+                if target_distance > best_target_distance:
+                    best_target_distance = target_distance
+                    best_state = state.astype(np.float32)
+            else:
+                return state.astype(np.float32)
+            if target_distance >= self.min_start_target_distance:
+                return state.astype(np.float32)
+        if best_state is not None:
+            return best_state.astype(np.float32)
+        # Fallback: prefer validity over failing reset. The caller can still
+        # terminate immediately if the task set covers the whole valid space.
+        return self.sample_valid_state(seed=None if seed is None else int(seed) + 7919).astype(np.float32)
+
     def sample_goal(self, seed: Optional[int] = None) -> np.ndarray:
         if self.goal_sampling_mode == "task_feasible":
-            return self.sample_task_feasible_goal(seed=seed)
+            return self.sample_task_terminal_state(seed=seed)
         if self.goal_sampling_mode == "valid":
             return self.sample_valid_state(seed=seed)
         raise ValueError(f"未知的 goal_sampling_mode: {self.goal_sampling_mode}")
 
-    def _build_task_context_observation(self, state: np.ndarray) -> np.ndarray:
+    def _build_task_context_observation(self, state: np.ndarray, *, abstract_goal: bool = False) -> np.ndarray:
         state = np.asarray(state, dtype=np.float32).reshape(3)
         x, y, theta = float(state[0]), float(state[1]), float(state[2])
+        if self.inspection_target is None or self.ground_station is None:
+            self._ensure_valid_task_entities()
+
+        if abstract_goal:
+            return np.array(
+                [
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    float(self.inspection_target[0]),
+                    float(self.inspection_target[1]),
+                    float(self.ground_station[0]),
+                    float(self.ground_station[1]),
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    max(float(self.comm_threshold), 0.0),
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                ],
+                dtype=np.float32,
+            )
+
         dx_t = float(self.inspection_target[0] - x)
         dy_t = float(self.inspection_target[1] - y)
         dist_t = float(np.hypot(dx_t, dy_t))
@@ -541,6 +743,9 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         obs_margin = self.compute_observation_margin(state)
         target_los = float(self._segment_has_los(tuple(state[:2]), self.inspection_target))
         station_los = float(comm["has_los"])
+        valid_state = float(self.is_valid_state(state))
+        observation_feasible = float(self.is_observation_feasible(state))
+        communication_feasible = float(self.is_communication_feasible(state))
         task_feasible = float(self.is_task_feasible(state))
 
         return np.array(
@@ -549,11 +754,17 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                 y,
                 np.cos(theta),
                 np.sin(theta),
+                self.inspection_target[0],
+                self.inspection_target[1],
+                self.ground_station[0],
+                self.ground_station[1],
                 dx_t,
                 dy_t,
                 dist_t,
                 np.sin(bearing_err_t),
                 np.cos(bearing_err_t),
+                obs_margin,
+                target_los,
                 dx_gs,
                 dy_gs,
                 dist_gs,
@@ -561,10 +772,12 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
                 np.cos(bearing_err_gs),
                 comm["quality"],
                 comm["margin"],
-                target_los,
                 station_los,
-                obs_margin,
+                valid_state,
+                observation_feasible,
+                communication_feasible,
                 task_feasible,
+                0.0,
             ],
             dtype=np.float32,
         )
@@ -572,7 +785,19 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
     def _get_obs(self) -> np.ndarray:
         return self.state_to_observation(self.state)
 
-    def state_to_observation(self, state: np.ndarray) -> np.ndarray:
+    def abstract_goal_observation(self) -> np.ndarray:
+        if self.observation_mode == "task_context":
+            return self._build_task_context_observation(
+                np.zeros((3,), dtype=np.float32),
+                abstract_goal=True,
+            )
+        if self.observation_mode in {"cos_sin", "xycs"}:
+            return np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32)
+        return np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
+    def state_to_observation(self, state: np.ndarray, *, abstract_goal: bool = False) -> np.ndarray:
+        if abstract_goal:
+            return self.abstract_goal_observation()
         state = np.asarray(state, dtype=np.float32).reshape(3)
         x, y, theta = state[0], state[1], state[2]
         if self.observation_mode == "task_context":
@@ -608,11 +833,9 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         target_has_los = True
         if self.inspection_target is not None:
             target_has_los = self._segment_has_los(tuple(state[:2]), self.inspection_target)
-        distance_to_goal = self._distance_to_point(state, self.goal[:2]) if self.goal is not None else 0.0
-        heading_error = abs(self._normalize_angle(float(state[2]) - float(self.goal[2]))) if self.goal is not None else 0.0
         observation_feasible = self.is_observation_feasible(state)
         communication_feasible = self.is_communication_feasible(state)
-        task_feasible = observation_feasible and communication_feasible
+        task_feasible = self.is_terminal_goal_state(state)
         info: Dict[str, Union[bool, float, int, None]] = {
             "success": bool(success),
             "is_success": bool(success),
@@ -627,14 +850,10 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             "comm_margin": float(comm["margin"]),
             "comm_has_los": bool(comm["has_los"]),
             "target_has_los": bool(target_has_los),
-            "distance_to_goal": float(distance_to_goal),
-            "heading_error": float(heading_error),
             "distance_to_target": float(self._distance_to_point(state, self.inspection_target)),
             "distance_to_ground_station": float(comm["distance"]),
             "obs_margin": float(self.compute_observation_margin(state)),
             "task_score": float(self.compute_task_score(state)),
-            "pos_dist": float(distance_to_goal),
-            "theta_diff": float(heading_error),
         }
         if step_terms is not None:
             info.update({k: float(v) for k, v in step_terms.items()})
@@ -683,37 +902,30 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         if "ground_station" in options:
             self.ground_station = tuple(options["ground_station"])
 
-        self._sample_entities(seed=seed)
+        self.sample_task_context(seed=seed)
 
         start_override = options.get("start", self._fixed_start)
-        goal_override = options.get("goal", self._fixed_goal)
 
         if start_override is not None:
             start_state = np.asarray(start_override, dtype=np.float32).reshape(3)
             start_state[2] = self._normalize_angle(float(start_state[2]))
         else:
-            start_state = self.sample_valid_state(seed=seed)
-
-        if goal_override is not None:
-            goal_state = np.asarray(goal_override, dtype=np.float32).reshape(3)
-            goal_state[2] = self._normalize_angle(float(goal_state[2]))
-        else:
-            goal_seed = None if seed is None else seed + 1000
-            goal_state = self.sample_goal(seed=goal_seed)
+            start_seed = None if seed is None else int(seed) + 9176
+            start_state = self.sample_nonterminal_valid_state(seed=start_seed)
 
         self.start = tuple(float(v) for v in start_state)
-        self.goal = tuple(float(v) for v in goal_state)
+        self.goal = None
         self.state = start_state.copy()
         self._t = 0
-        self._ever_task_feasible = False
-        self._first_task_feasible_step = None
+        initial_task_feasible = self.is_terminal_goal_state(self.state)
+        self._ever_task_feasible = bool(initial_task_feasible)
+        self._first_task_feasible_step = 0 if initial_task_feasible else None
 
         info = self._build_info(self.state, success=False, collision=False, out_of_bounds=False)
         info["inspection_target"] = tuple(self.inspection_target)
         info["ground_station"] = tuple(self.ground_station)
-        info["goal"] = tuple(self.goal)
+        info["abstract_goal_observation"] = tuple(float(v) for v in self.abstract_goal_observation())
         info["observation_mode"] = self.observation_mode
-        info["goal_sampling_mode"] = self.goal_sampling_mode
         return self._get_obs(), info
 
     def step(self, action: np.ndarray):
@@ -748,17 +960,11 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         self.state = np.array([x_new, y_new, theta_new], dtype=np.float32)
         self._t += 1
 
-        distance_to_goal = self._distance_to_point(self.state, self.goal[:2])
-        heading_error = abs(self._normalize_angle(float(self.state[2]) - float(self.goal[2])))
-        reached_goal = (
-            distance_to_goal <= self.goal_position_tolerance
-            and heading_error <= self.goal_heading_tolerance
-        )
-        success = reached_goal and self.is_task_feasible(self.state)
+        success = self.is_terminal_goal_state(self.state)
         terminated = bool(success or collision or out_of_bounds)
         truncated = bool(self._t >= self.max_episode_steps and not terminated)
 
-        if self.is_task_feasible(self.state):
+        if success:
             self._ever_task_feasible = True
             if self._first_task_feasible_step is None:
                 self._first_task_feasible_step = self._t
@@ -806,6 +1012,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
 
     def set_state(self, state: dict) -> None:
         super().set_state(state)
+        self.goal = None
         if state.get("inspection_target") is not None:
             self.inspection_target = tuple(state["inspection_target"])
         if state.get("ground_station") is not None:
@@ -826,7 +1033,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         info = self._build_info(self.state, success=False, collision=False, out_of_bounds=False)
         print(f"Step {self._t}:")
         print(f"  State: x={self.state[0]:.2f}, y={self.state[1]:.2f}, theta={self.state[2]:.3f}")
-        print(f"  Goal (task terminal state): x={self.goal[0]:.2f}, y={self.goal[1]:.2f}, theta={self.goal[2]:.3f}")
+        print("  Goal: abstract task terminal set G_task(xi)")
         print(f"  Inspection target: x={self.inspection_target[0]:.2f}, y={self.inspection_target[1]:.2f}")
         print(f"  Ground station: x={self.ground_station[0]:.2f}, y={self.ground_station[1]:.2f}")
         print(
@@ -836,8 +1043,7 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
             f" task={info['task_feasible']}"
         )
         print(
-            f"  Distances: goal={info['distance_to_goal']:.3f},"
-            f" target={info['distance_to_target']:.3f},"
+            f"  Distances: target={info['distance_to_target']:.3f},"
             f" station={info['distance_to_ground_station']:.3f}"
         )
         print(f"  Comm quality: {info['comm_quality']:.3f} (margin={info['comm_margin']:.3f})")
