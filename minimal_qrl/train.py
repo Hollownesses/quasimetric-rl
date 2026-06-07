@@ -417,6 +417,11 @@ def train(args):
                 max_steps_per_episode=args.max_steps_per_episode,
                 sample_valid_states=True,
                 seed=args.seed,
+                task_aware_teacher_ratio=(
+                    float(args.task_aware_teacher_ratio)
+                    if args.env_type == 'comm_inspection_dubins_uav'
+                    else 0.0
+                ),
             )
         
         register_offline_env(
@@ -682,7 +687,7 @@ def train(args):
                 logger.info(loss_str)
             
             # 评估和可视化
-            if optim_steps % args.eval_interval == 0:
+            if args.eval_interval > 0 and optim_steps % args.eval_interval == 0:
                 logger.info(f"Step {optim_steps}: 开始评估...")
                 agent.eval()
                 # MPS 时临时迁到 CPU 做评估与热力图，避免 Metal buffer 错误
@@ -1088,12 +1093,15 @@ def main():
                         choices=['negative_reward', 'fixed'],
                         help='comm_inspection_dubins_uav 的 QRL local constraint 单步代价来源：'
                              'negative_reward 使用环境 task cost；fixed 使用原始固定 step_cost=1.0')
-    parser.add_argument('--global-push-abstract-goal-ratio', type=float, default=0.8,
+    parser.add_argument('--global-push-abstract-goal-ratio', type=float, default=0.6,
                         help='goal-set GlobalPush 主项权重：普通状态到当前上下文抽象 G_task')
-    parser.add_argument('--global-push-state-goal-ratio', type=float, default=0.2,
+    parser.add_argument('--global-push-state-goal-ratio', type=float, default=0.4,
                         help='goal-set GlobalPush 辅助项权重：同上下文普通 state-state 几何结构')
     parser.add_argument('--abstract-goal-edge-loss-weight', type=float, default=1.0,
                         help='抽象零代价边 d(s_terminal, G_task)^2 的损失权重')
+    parser.add_argument('--task-aware-teacher-ratio', type=float, default=1.0,
+                        help='通信巡检 goal-set 数据中额外追加的 Dubins guidance 成功轨迹比例；'
+                             '1.0 表示每个 random rollout 额外收集 1 条 teacher 轨迹')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')

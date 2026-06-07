@@ -11,8 +11,8 @@
 #   OBSTACLE_CONFIG=medium \
 #   bash minimal_qrl/run_comm_inspection_train.sh
 #
-# 若希望 reset 时随机采样巡检目标 / 地面站，可设置：
-#   RANDOMIZE_INSPECTION_TARGET=1 RANDOMIZE_GROUND_STATION=1 bash minimal_qrl/run_comm_inspection_train.sh
+# reset 时默认随机采样巡检目标 / 地面站；若需固定上下文，可设置：
+#   RANDOMIZE_INSPECTION_TARGET=0 RANDOMIZE_GROUND_STATION=0 bash minimal_qrl/run_comm_inspection_train.sh
 #
 # QRL local constraint 单步代价来源：
 #   QRL_COST_SOURCE=fixed            # 默认：使用原始固定 step_cost=1.0
@@ -23,11 +23,14 @@ cd "$(dirname "$0")/.."
 
 if [[ -x "./.venv/bin/python" ]]; then
   PYTHON_BIN="./.venv/bin/python"
+elif [[ -x "../quasimetric-rl/.venv/bin/python" ]]; then
+  PYTHON_BIN="../quasimetric-rl/.venv/bin/python"
 else
-  PYTHON_BIN="python3"
+  echo "未找到可用的 .venv Python：请先创建 ./.venv 或 ../quasimetric-rl/.venv" >&2
+  exit 1
 fi
 
-OUTPUT_DIR="${OUTPUT_DIR:-./results/minimal_qrl_inspection_dubins}"
+OUTPUT_DIR="${OUTPUT_DIR:-./results/goalset_qrl_comm_inspection}"
 mkdir -p "$OUTPUT_DIR"
 
 BOUNDS="${BOUNDS:-0 0 10 10}"
@@ -40,10 +43,10 @@ RANDOMIZE_GROUND_STATION_FLAG=""
 REQUIRE_TARGET_LOS_FLAG=""
 REQUIRE_GROUND_STATION_LOS_FLAG=""
 
-if [[ "${RANDOMIZE_INSPECTION_TARGET:-0}" == "1" ]]; then
+if [[ "${RANDOMIZE_INSPECTION_TARGET:-1}" == "1" ]]; then
   RANDOMIZE_INSPECTION_TARGET_FLAG="--randomize-inspection-target"
 fi
-if [[ "${RANDOMIZE_GROUND_STATION:-0}" == "1" ]]; then
+if [[ "${RANDOMIZE_GROUND_STATION:-1}" == "1" ]]; then
   RANDOMIZE_GROUND_STATION_FLAG="--randomize-ground-station"
 fi
 if [[ "${REQUIRE_TARGET_LOS:-1}" == "1" ]]; then
@@ -54,7 +57,7 @@ if [[ "${REQUIRE_GROUND_STATION_LOS:-0}" == "1" ]]; then
 fi
 
 "$PYTHON_BIN" minimal_qrl/train.py \
-  --device auto \
+  --device "${DEVICE:-cpu}" \
   --env-type comm_inspection_dubins_uav \
   --output-dir "$OUTPUT_DIR" \
   --bounds ${BOUNDS} \
@@ -63,15 +66,16 @@ fi
   --dt "${DT:-0.1}" \
   --observation-mode task_context \
   --obstacle-config "$OBSTACLE_CONFIG" \
-  --num-episodes "${NUM_EPISODES:-180}" \
+  --num-episodes "${NUM_EPISODES:-500}" \
   --max-steps-per-episode "${MAX_STEPS_PER_EPISODE:-180}" \
   --batch-size "${BATCH_SIZE:-256}" \
-  --total-steps "${TOTAL_STEPS:-20000}" \
+  --total-steps "${TOTAL_STEPS:-30000}" \
   --num-critics "${NUM_CRITICS:-2}" \
   --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
-  --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.8}" \
-  --global-push-state-goal-ratio "${GLOBAL_PUSH_STATE_GOAL_RATIO:-0.2}" \
+  --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.6}" \
+  --global-push-state-goal-ratio "${GLOBAL_PUSH_STATE_GOAL_RATIO:-0.4}" \
   --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
+  --task-aware-teacher-ratio "${TASK_AWARE_TEACHER_RATIO:-1.0}" \
   --log-interval "${LOG_INTERVAL:-100}" \
   --save-interval "${SAVE_INTERVAL:-2000}" \
   --eval-interval "${EVAL_INTERVAL:-1000}" \

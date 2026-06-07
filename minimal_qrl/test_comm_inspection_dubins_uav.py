@@ -11,7 +11,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 
 from minimal_qrl.envs import CircleObstacle, CommInspectionDubinsUAV2D
-from minimal_qrl.dataset import collect_goal_set_comm_episode_pair
+from minimal_qrl.dataset import (
+    collect_goal_set_comm_episode_pair,
+    collect_task_aware_comm_teacher_episode_pair,
+    create_dataset,
+)
 
 
 def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
@@ -289,6 +293,68 @@ def test_goal_set_dataset_adds_abstract_edge_without_rollout_success():
     assert float(abstract_episode.all_observations[-1, -1]) == 1.0
 
 
+def test_task_aware_teacher_collects_success_chain():
+    env = make_env(
+        start=(2.0, 5.0, 0.0),
+        omega_max=3.0,
+        max_steps=80,
+        obstacles=[],
+    )
+    episode, abstract_episode = collect_task_aware_comm_teacher_episode_pair(
+        env,
+        max_steps=80,
+        seed=3,
+        context_id=7,
+    )
+    assert episode is not None
+    assert abstract_episode is not None
+    assert bool(episode.terminals[-1])
+    assert bool(episode.transition_infos["teacher_guided"].all())
+    assert not bool(episode.transition_infos["abstract_goal_edge"].any())
+    final_state = env.observation_to_state(episode.all_observations[-1])
+    assert env.is_terminal_goal_state(final_state)
+    assert bool(abstract_episode.transition_infos["abstract_goal_edge"][0])
+    assert bool(abstract_episode.transition_infos["source_terminal_goal_state"][0])
+    assert float(abstract_episode.rewards[0]) == 0.0
+    assert int(abstract_episode.transition_infos["context_id"][0]) == 7
+
+
+def test_dataset_teacher_shares_random_context_id():
+    num_episodes = 3
+    env = make_env(
+        randomize_inspection_target=True,
+        randomize_ground_station=True,
+        omega_max=3.0,
+        max_steps=80,
+        obstacles=[],
+    )
+    episodes = list(
+        create_dataset(
+            env,
+            num_episodes=num_episodes,
+            max_steps_per_episode=80,
+            seed=11,
+            task_aware_teacher_ratio=1.0,
+        )
+    )
+
+    teacher_contexts = set()
+    random_contexts = set()
+    for episode in episodes:
+        infos = episode.transition_infos
+        if "context_id" not in infos:
+            continue
+        context_ids = set(int(v) for v in infos["context_id"].tolist())
+        assert context_ids <= set(range(num_episodes))
+        if bool(infos.get("teacher_guided", np.array([False])).any()):
+            teacher_contexts.update(context_ids)
+        elif not bool(infos.get("abstract_goal_edge", np.array([False])).any()):
+            random_contexts.update(context_ids)
+
+    assert teacher_contexts
+    assert teacher_contexts <= random_contexts
+
+
 def test_visualize_script_smoke():
     repo_root = Path(__file__).parent.parent
     out_path = repo_root / "results" / "minimal_qrl_inspection_dubins" / "comm_inspection_dubins_uav_vis" / "smoke_test.png"
@@ -329,5 +395,7 @@ if __name__ == "__main__":
     test_legacy_modes_reset_and_step()
     test_goal_set_dataset_adds_abstract_edge_for_success()
     test_goal_set_dataset_adds_abstract_edge_without_rollout_success()
+    test_task_aware_teacher_collects_success_chain()
+    test_dataset_teacher_shares_random_context_id()
     test_visualize_script_smoke()
     print("All comm inspection Dubins UAV tests passed.")
