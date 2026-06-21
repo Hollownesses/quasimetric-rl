@@ -241,3 +241,21 @@ python minimal_qrl/train.py \
 - 可以调整 QRL 超参数（通过 `QRLConf`）
 - 可以使用 Planning / Reachability 评估分析 QRL 在 obstacle navigation 中的表现
 
+## Goal-set 通信巡检 Baseline
+
+统一 benchmark 包含 Hybrid A*、model-only MPPI、goal-set SAC、QRL greedy 和 QRL+MPPI：
+
+```bash
+# 快速闭环检查
+STAGE=smoke bash minimal_qrl/run_comm_inspection_baselines.sh
+
+# 单 seed pilot；默认训练 SAC 300k 环境步并评估 50 个共同任务
+STAGE=pilot bash minimal_qrl/run_comm_inspection_baselines.sh
+
+# 正式实验；QRL_CHECKPOINTS 用空格分隔多个训练 seed 的 checkpoint
+STAGE=final \
+QRL_CHECKPOINTS="path/to/qrl_seed0.pth path/to/qrl_seed1.pth path/to/qrl_seed2.pth path/to/qrl_seed3.pth path/to/qrl_seed4.pth" \
+bash minimal_qrl/run_comm_inspection_baselines.sh
+```
+
+结果写入 `baseline_results.json` 和 `baseline_results.csv`，包含逐 episode 指标、均值、标准差、bootstrap 95% 区间、相对 QRL greedy 的配对比较和规划计算预算。

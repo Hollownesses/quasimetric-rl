@@ -40,11 +40,15 @@ REQUIRE_GROUND_STATION_LOS_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
 VIZ_SAVE_GIF_FLAG=""
 
-if [[ "${RANDOMIZE_INSPECTION_TARGET:-0}" == "1" ]]; then
+if [[ "${RANDOMIZE_INSPECTION_TARGET:-1}" == "1" ]]; then
   RANDOMIZE_INSPECTION_TARGET_FLAG="--randomize-inspection-target"
+else
+  RANDOMIZE_INSPECTION_TARGET_FLAG="--no-randomize-inspection-target"
 fi
-if [[ "${RANDOMIZE_GROUND_STATION:-0}" == "1" ]]; then
+if [[ "${RANDOMIZE_GROUND_STATION:-1}" == "1" ]]; then
   RANDOMIZE_GROUND_STATION_FLAG="--randomize-ground-station"
+else
+  RANDOMIZE_GROUND_STATION_FLAG="--no-randomize-ground-station"
 fi
 if [[ "${REQUIRE_TARGET_LOS:-1}" == "1" ]]; then
   REQUIRE_TARGET_LOS_FLAG="--require-target-los"
@@ -105,12 +109,12 @@ fi
   --execution-modes "${EXECUTION_MODES:-greedy,lookahead}" \
   --lookahead-horizon "${LOOKAHEAD_HORIZON:-10}" \
   --lookahead-num-sequences "${LOOKAHEAD_NUM_SEQUENCES:-128}" \
-  --lookahead-heuristics "${LOOKAHEAD_HEURISTICS:-terminal}" \
+  --lookahead-heuristics "${LOOKAHEAD_HEURISTICS:-dense}" \
   --lookahead-step-cost-weight "${LOOKAHEAD_STEP_COST_WEIGHT:-0.0}" \
   --lookahead-collision-penalty "${LOOKAHEAD_COLLISION_PENALTY:-0.0}" \
   --lookahead-biased-sequences "${LOOKAHEAD_BIASED_SEQUENCES:-24}" \
   --lookahead-bias-kp "${LOOKAHEAD_BIAS_KP:-2.0}" \
-  --planner-qrl-progress-alpha "${PLANNER_QRL_PROGRESS_ALPHA:-0.0}" \
+  --planner-qrl-progress-alpha "${PLANNER_QRL_PROGRESS_ALPHA:-1.0}" \
   ${SAVE_VISUALIZATIONS_FLAG} \
   --viz-max-successes "${VIZ_MAX_SUCCESSES:-10}" \
   --viz-max-failures "${VIZ_MAX_FAILURES:-10}" \
