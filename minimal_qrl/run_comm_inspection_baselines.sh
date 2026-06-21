@@ -19,6 +19,7 @@ STAGE="${STAGE:-pilot}"
 OUTPUT_DIR="${OUTPUT_DIR:-./results/experiments/comm_inspection_baselines_${STAGE}}"
 QRL_CHECKPOINTS="${QRL_CHECKPOINTS:-./results/goalset_qrl_comm_inspection/checkpoint_final.pth}"
 METHODS="${METHODS:-hybrid_astar,model_mppi,goal_set_sac,qrl_greedy,qrl_mppi}"
+N_TRIALS="${N_TRIALS:-}"
 
 TRAIN_SAC_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
@@ -37,7 +38,7 @@ fi
 if [[ "${RANDOMIZE_GROUND_STATION:-1}" == "1" ]]; then
   RANDOMIZE_STATION_FLAG="--randomize-ground-station"
 fi
-if [[ -n "${N_TRIALS:-}" ]]; then
+if [[ -n "$N_TRIALS" ]]; then
   EXTRA_ARGS+=(--n-trials "$N_TRIALS")
 fi
 if [[ -n "${SAC_TOTAL_ENV_STEPS:-}" ]]; then
