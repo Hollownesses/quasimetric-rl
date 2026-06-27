@@ -190,14 +190,19 @@ class MPPIController(BaselineController):
         qrl_agent: Optional[GoalConditionedAgentBase] = None,
     ) -> None:
         super().__init__()
-        if terminal_mode not in {"model", "qrl"}:
+        if terminal_mode not in {"none", "model", "qrl"}:
             raise ValueError(f"Unknown MPPI terminal mode: {terminal_mode}")
         if terminal_mode == "qrl" and qrl_agent is None:
             raise ValueError("qrl terminal mode requires qrl_agent")
         self.cfg = cfg
         self.terminal_mode = terminal_mode
         self.qrl_agent = qrl_agent
-        self.name = "model_mppi" if terminal_mode == "model" else "qrl_mppi"
+        if terminal_mode == "none":
+            self.name = "mppi_no_terminal"
+        elif terminal_mode == "model":
+            self.name = "model_mppi"
+        else:
+            self.name = "qrl_mppi"
         self._nominal = np.zeros((max(1, int(cfg.horizon)),), dtype=np.float32)
         self._rng = np.random.default_rng(0)
         self._terminal_states = np.zeros((0, 3), dtype=np.float32)
@@ -224,6 +229,8 @@ class MPPIController(BaselineController):
         return {"terminal_sample_count": int(len(self._terminal_states))}
 
     def _terminal_cost(self, env: CommInspectionDubinsUAV2D, states: np.ndarray) -> np.ndarray:
+        if self.terminal_mode == "none":
+            return np.zeros((states.shape[0],), dtype=np.float32)
         if self.terminal_mode == "qrl":
             if self.goal_obs is None or self.qrl_agent is None:
                 raise RuntimeError("MPPI controller was not initialized for the episode")
@@ -261,7 +268,7 @@ class MPPIController(BaselineController):
         rollout = simulate_action_sequences(env, env.state, candidates)
         costs = rollout["costs"].astype(np.float64)
         unfinished = ~(rollout["success"] | rollout["invalid"])
-        if np.any(unfinished):
+        if np.any(unfinished) and self.terminal_mode != "none" and float(self.cfg.terminal_weight) != 0.0:
             costs[unfinished] += float(self.cfg.terminal_weight) * self._terminal_cost(
                 env, rollout["final_states"][unfinished]
             )

@@ -38,7 +38,7 @@ from minimal_qrl.eval.comm_inspection_execution_eval import (  # noqa: E402
 from minimal_qrl.eval.utils import auto_device  # noqa: E402
 
 
-METHODS = {"hybrid_astar", "model_mppi", "goal_set_sac", "qrl_greedy", "qrl_mppi"}
+METHODS = {"hybrid_astar", "mppi_no_terminal", "model_mppi", "goal_set_sac", "qrl_greedy", "qrl_mppi"}
 SCALAR_METRICS = (
     "success",
     "num_steps",
@@ -304,7 +304,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--astar-primitive-steps", type=int, default=5)
     parser.add_argument("--astar-heuristic-weight", type=float, default=1.0)
     parser.add_argument("--astar-max-expansions", type=int, default=50_000)
-    parser.add_argument("--astar-timeout-sec", type=float, default=10.0)
+    parser.add_argument("--astar-timeout-sec", type=float, default=30.0)
+    parser.add_argument("--astar-terminal-samples", type=int, default=128)
 
     parser.add_argument("--mppi-horizon", type=int, default=20)
     parser.add_argument("--mppi-num-samples", type=int, default=256)
@@ -349,6 +350,7 @@ def main() -> None:
         heuristic_weight=args.astar_heuristic_weight,
         max_expansions=args.astar_max_expansions,
         timeout_sec=args.astar_timeout_sec,
+        terminal_samples=args.astar_terminal_samples,
     )
     mppi_cfg = MPPIConfig(
         horizon=args.mppi_horizon,
@@ -363,6 +365,12 @@ def main() -> None:
         env = make_comm_inspection_env(args)
         records.extend(_evaluate_controller(
             "hybrid_astar", HybridAStarController(astar_cfg), env, episode_seeds,
+            model_run="model", output_dir=output_dir, viz_cfg=viz_cfg, counters=counters,
+        ))
+    if "mppi_no_terminal" in methods:
+        env = make_comm_inspection_env(args)
+        records.extend(_evaluate_controller(
+            "mppi_no_terminal", MPPIController(mppi_cfg, terminal_mode="none"), env, episode_seeds,
             model_run="model", output_dir=output_dir, viz_cfg=viz_cfg, counters=counters,
         ))
     if "model_mppi" in methods:

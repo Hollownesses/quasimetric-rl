@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Unified Hybrid A*, model MPPI, goal-set SAC, QRL greedy, and QRL+MPPI benchmark.
+# Unified Hybrid A*, no-terminal/model/QRL MPPI, goal-set SAC, and QRL greedy benchmark.
 #
 # STAGE: smoke, pilot, final
 # STAGE=smoke：SAC 训练 200 环境步,评估 3 个 episode
-# STAGE=pilot：训练一个 SAC seed，共 300000 步，并评估 50 个共同任务
-# STAGE=final：训练 5 个 SAC seeds
+# STAGE=pilot：训练一个 SAC seed，共 300000 步，并默认评估 50 个共同任务
+# STAGE=final：训练 5 个 SAC seeds；可用 N_TRIALS 覆盖评估任务数
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -18,7 +18,7 @@ fi
 STAGE="${STAGE:-pilot}"
 OUTPUT_DIR="${OUTPUT_DIR:-./results/experiments/comm_inspection_baselines_${STAGE}}"
 QRL_CHECKPOINTS="${QRL_CHECKPOINTS:-./results/goalset_qrl_comm_inspection/checkpoint_final.pth}"
-METHODS="${METHODS:-hybrid_astar,model_mppi,goal_set_sac,qrl_greedy,qrl_mppi}"
+METHODS="${METHODS:-hybrid_astar,mppi_no_terminal,model_mppi,goal_set_sac,qrl_greedy,qrl_mppi}"
 N_TRIALS="${N_TRIALS:-}"
 
 TRAIN_SAC_FLAG=""
@@ -92,7 +92,8 @@ fi
   --comm-threshold "${COMM_THRESHOLD:-0.5}" \
   --mppi-horizon "${MPPI_HORIZON:-10}" \
   --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \
-  --astar-timeout-sec "${ASTAR_TIMEOUT_SEC:-10}" \
+  --astar-timeout-sec "${ASTAR_TIMEOUT_SEC:-30}" \
+  --astar-terminal-samples "${ASTAR_TERMINAL_SAMPLES:-128}" \
   ${SAVE_VISUALIZATIONS_FLAG} \
   --viz-max-successes 10 \
   --viz-max-failures 10 \

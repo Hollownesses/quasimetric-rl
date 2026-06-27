@@ -61,7 +61,7 @@ def test_formal_baselines_do_not_require_point_goal():
     goal_obs = env.abstract_goal_observation()
 
     astar = HybridAStarController(
-        HybridAStarConfig(max_expansions=5000, timeout_sec=2.0)
+        HybridAStarConfig(max_expansions=5000, timeout_sec=2.0, terminal_samples=8)
     )
     diagnostics = astar.begin_episode(env, goal_obs, seed=3)
     assert diagnostics["planner_success"]
@@ -109,6 +109,7 @@ def test_hybrid_astar_and_dijkstra_find_same_straight_path_cost():
         primitive_steps=4,
         max_expansions=10_000,
         timeout_sec=3.0,
+        terminal_samples=0,
     )
     astar = HybridAStarController(HybridAStarConfig(**common, heuristic_weight=1.0))
     dijkstra = HybridAStarController(HybridAStarConfig(**common, heuristic_weight=0.0))
@@ -133,10 +134,12 @@ def test_hybrid_astar_path_does_not_cross_obstacle():
             primitive_steps=4,
             max_expansions=30_000,
             timeout_sec=5.0,
+            terminal_samples=16,
         )
     )
     result = controller.begin_episode(env, env.abstract_goal_observation(), seed=0)
     assert result["planner_success"]
+    assert result["terminal_sample_count"] == 16
     done = truncated = False
     while not (done or truncated):
         action, _ = controller.act(obs, env)
@@ -173,11 +176,14 @@ def test_mppi_variants_use_identical_rollout_budget():
     cfg = MPPIConfig(horizon=4, num_samples=11, terminal_samples=5)
     model = MPPIController(cfg, terminal_mode="model")
     qrl = MPPIController(cfg, terminal_mode="qrl", qrl_agent=ZeroValueAgent())
+    none = MPPIController(cfg, terminal_mode="none")
     model.begin_episode(env, goal_obs, seed=8)
     qrl.begin_episode(env, goal_obs, seed=8)
+    none.begin_episode(env, goal_obs, seed=8)
     _action, model_diag = model.act(obs, env)
     _action, qrl_diag = qrl.act(obs, env)
-    assert model_diag["model_rollouts"] == qrl_diag["model_rollouts"] == 11
+    _action, none_diag = none.act(obs, env)
+    assert model_diag["model_rollouts"] == qrl_diag["model_rollouts"] == none_diag["model_rollouts"] == 11
 
 
 def test_goal_set_sac_action_update_and_abstract_goal_replay():

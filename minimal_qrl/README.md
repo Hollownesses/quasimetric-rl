@@ -243,7 +243,7 @@ python minimal_qrl/train.py \
 
 ## Goal-set 通信巡检 Baseline
 
-统一 benchmark 包含 Hybrid A*、model-only MPPI、goal-set SAC、QRL greedy 和 QRL+MPPI：
+统一 benchmark 包含 Hybrid A*、no-terminal MPPI、model-only MPPI、goal-set SAC、QRL greedy 和 QRL+MPPI：
 
 ```bash
 # 快速闭环检查
@@ -258,4 +258,4 @@ QRL_CHECKPOINTS="path/to/qrl_seed0.pth path/to/qrl_seed1.pth path/to/qrl_seed2.p
 bash minimal_qrl/run_comm_inspection_baselines.sh
 ```
 
-结果写入 `baseline_results.json` 和 `baseline_results.csv`，包含逐 episode 指标、均值、标准差、bootstrap 95% 区间、相对 QRL greedy 的配对比较和规划计算预算。
+结果写入 `baseline_results.json` 和 `baseline_results.csv`，包含逐 episode 指标、均值、标准差、bootstrap 95% 区间、相对 QRL greedy 的配对比较和规划计算预算。`mppi_no_terminal`、`model_mppi` 和 `qrl_mppi` 使用相同 rollout 预算，只改变 terminal guidance；Hybrid A* 默认使用 task-feasible terminal samples 构造几何时间启发式，默认搜索超时为 30 秒。

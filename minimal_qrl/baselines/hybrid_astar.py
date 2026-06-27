@@ -19,7 +19,8 @@ class HybridAStarConfig:
     primitive_scales: tuple[float, ...] = (-1.0, -0.5, 0.0, 0.5, 1.0)
     heuristic_weight: float = 1.0
     max_expansions: int = 50_000
-    timeout_sec: float = 10.0
+    timeout_sec: float = 30.0
+    terminal_samples: int = 128
 
 
 @dataclass
@@ -39,6 +40,7 @@ class HybridAStarController(BaselineController):
         self.cfg = cfg
         self._actions: list[np.ndarray] = []
         self._cursor = 0
+        self._terminal_states = np.zeros((0, 3), dtype=np.float32)
 
     def _key(self, env: CommInspectionDubinsUAV2D, state: np.ndarray) -> tuple[int, int, int]:
         x_bin = int(np.floor((float(state[0]) - env.x_min) / self.cfg.position_resolution + 0.5))
@@ -48,10 +50,34 @@ class HybridAStarController(BaselineController):
         return x_bin, y_bin, theta_bin
 
     def _heuristic(self, env: CommInspectionDubinsUAV2D, state: np.ndarray) -> float:
+        if self._terminal_states.size > 0:
+            state = np.asarray(state, dtype=np.float32).reshape(3)
+            delta = self._terminal_states[:, :2] - state[None, :2]
+            position_time = np.linalg.norm(delta, axis=1) / max(float(env.v), 1e-8)
+            angle_diff = np.abs(
+                (self._terminal_states[:, 2] - float(state[2]) + np.pi) % (2.0 * np.pi) - np.pi
+            )
+            angle_time = angle_diff / max(float(env.omega_max), 1e-8)
+            return float(np.min(position_time + angle_time))
+
         target = np.asarray(env.inspection_target, dtype=np.float32)
         distance = float(np.linalg.norm(np.asarray(state[:2]) - target))
         remaining_distance = max(0.0, distance - float(env.observation_radius))
         return remaining_distance / max(float(env.v), 1e-8)
+
+    def _sample_terminal_states(self, env: CommInspectionDubinsUAV2D, seed: int) -> np.ndarray:
+        n = max(0, int(self.cfg.terminal_samples))
+        if n <= 0:
+            return np.zeros((0, 3), dtype=np.float32)
+        samples = []
+        for i in range(n):
+            try:
+                samples.append(
+                    env.sample_task_terminal_state(seed=int(seed) * 100_003 + i + 1)
+                )
+            except RuntimeError:
+                break
+        return np.asarray(samples, dtype=np.float32).reshape((-1, 3)) if samples else np.zeros((0, 3), dtype=np.float32)
 
     def _simulate_primitive(
         self,
@@ -162,6 +188,7 @@ class HybridAStarController(BaselineController):
             "generated_nodes": int(generated),
             "planned_action_count": int(len(self._actions)),
             "planned_cost": path_cost,
+            "terminal_sample_count": int(len(self._terminal_states)),
         }
 
     def begin_episode(
@@ -171,6 +198,7 @@ class HybridAStarController(BaselineController):
         seed: int,
     ) -> Dict[str, Any]:
         super().begin_episode(env, goal_obs, seed)
+        self._terminal_states = self._sample_terminal_states(env, int(seed))
         diagnostics = self._plan(env)
         self._episode_diagnostics.update(diagnostics)
         return diagnostics
