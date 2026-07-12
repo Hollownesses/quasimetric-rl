@@ -216,32 +216,21 @@ def get_env_kwargs(args) -> dict:
         return kwargs
     elif args.env_type == 'comm_inspection_dubins_uav':
         obstacles = _dubins_obstacles_from_args(args)
-        observation_mode = getattr(args, 'observation_mode', None)
-        if not observation_mode:
-            observation_mode = 'cos_sin' if getattr(args, 'use_cos_sin_obs', True) else 'state'
+        if not getattr(args, 'device_catalog', None):
+            raise ValueError("comm_inspection_dubins_uav requires --device-catalog")
         kwargs = {
+            'device_catalog': args.device_catalog,
             'max_steps': args.max_steps_per_episode,
             'bounds': tuple(args.bounds) if (hasattr(args, 'bounds') and args.bounds) else (0.0, 0.0, 10.0, 10.0),
             'omega_max': args.omega_max if (hasattr(args, 'omega_max') and args.omega_max is not None) else 3.0,
             'v': args.v if (hasattr(args, 'v') and args.v is not None) else 1.0,
             'dt': args.dt if (hasattr(args, 'dt') and args.dt is not None) else 0.1,
             'obstacles': obstacles,
-            'observation_mode': observation_mode,
-            'inspection_target': tuple(args.inspection_target) if getattr(args, 'inspection_target', None) else None,
-            'ground_station': tuple(args.ground_station) if getattr(args, 'ground_station', None) else None,
-            'randomize_inspection_target': getattr(args, 'randomize_inspection_target', False),
-            'randomize_ground_station': getattr(args, 'randomize_ground_station', False),
-            'observation_radius': getattr(args, 'observation_radius', 1.5),
-            'fov_angle': getattr(args, 'fov_angle', np.pi / 2.0),
-            'require_target_los': getattr(args, 'require_target_los', False),
             'comm_alpha': getattr(args, 'comm_alpha', 2.0),
             'comm_bias': getattr(args, 'comm_bias', 5.0),
             'comm_occlusion_penalty': getattr(args, 'comm_occlusion_penalty', 6.0),
             'comm_threshold': getattr(args, 'comm_threshold', 0.0),
             'require_ground_station_los': getattr(args, 'require_ground_station_los', False),
-            'goal_sampling_mode': getattr(args, 'goal_sampling_mode', 'task_feasible'),
-            'goal_position_tolerance': getattr(args, 'goal_position_tolerance', 0.25),
-            'goal_heading_tolerance': getattr(args, 'goal_heading_tolerance', 0.3),
             'collision_cost': abs(getattr(args, 'collision_cost', 10.0)),
             'out_of_bounds_cost': abs(getattr(args, 'out_of_bounds_cost', 10.0)),
             'communication_break_cost': abs(getattr(args, 'communication_break_cost', 1.0)),
@@ -397,9 +386,7 @@ def train(args):
         except RuntimeError as e:
             raise ValueError(
                 "当前通信巡检环境配置下不存在可采样的任务可行目标。"
-                "请检查 inspection_target / ground_station / obstacle_config / "
-                "observation_radius / fov_angle / require_target_los / "
-                "comm_threshold 等参数是否过于严格。"
+                "请检查 device_catalog / obstacle_config / comm_threshold 等参数。"
             ) from e
     
     # 创建环境工厂函数
@@ -1029,26 +1016,8 @@ def main():
                         help='禁用 cos/sin 观测，使用 (x,y,θ)')
 
     # 通信感知巡检 Dubins 环境特定参数
-    parser.add_argument('--inspection-target', type=float, nargs=2, default=None,
-                        metavar=('X_T', 'Y_T'),
-                        help='巡检目标位置，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--ground-station', type=float, nargs=2, default=None,
-                        metavar=('X_BS', 'Y_BS'),
-                        help='地面站位置，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--randomize-inspection-target', dest='randomize_inspection_target', action='store_true', default=True,
-                        help='每次 reset 随机采样巡检目标位置')
-    parser.add_argument('--no-randomize-inspection-target', dest='randomize_inspection_target', action='store_false',
-                        help='固定使用 --inspection-target')
-    parser.add_argument('--randomize-ground-station', dest='randomize_ground_station', action='store_true', default=True,
-                        help='每次 reset 随机采样地面站位置')
-    parser.add_argument('--no-randomize-ground-station', dest='randomize_ground_station', action='store_false',
-                        help='固定使用 --ground-station')
-    parser.add_argument('--observation-radius', type=float, default=1.5,
-                        help='观测半径，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--fov-angle', type=float, default=float(np.pi / 2.0),
-                        help='视场角全角（弧度），仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--require-target-los', action='store_true',
-                        help='要求到巡检目标具有 LOS，仅用于 comm_inspection_dubins_uav')
+    parser.add_argument('--device-catalog', type=str, default=None,
+                        help='工业设备目录 JSON；comm_inspection_dubins_uav 必需')
     parser.add_argument('--comm-alpha', type=float, default=2.0,
                         help='通信对数路径损耗系数 alpha，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--comm-bias', type=float, default=5.0,
@@ -1059,16 +1028,6 @@ def main():
                         help='通信可行性阈值，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--require-ground-station-los', action='store_true',
                         help='要求到地面站具有 LOS，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--observation-mode', type=str, default='task_context',
-                        choices=['task_context', 'cos_sin', 'state'],
-                        help='通信巡检 Dubins 的观测模式，默认 task_context')
-    parser.add_argument('--goal-sampling-mode', type=str, default='task_feasible',
-                        choices=['task_feasible', 'valid'],
-                        help='目标采样方式，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--goal-position-tolerance', type=float, default=0.25,
-                        help='目标位置容差，仅用于 comm_inspection_dubins_uav')
-    parser.add_argument('--goal-heading-tolerance', type=float, default=0.3,
-                        help='目标朝向容差，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--collision-cost', type=float, default=10.0,
                         help='碰撞阶段代价，仅用于 comm_inspection_dubins_uav')
     parser.add_argument('--out-of-bounds-cost', type=float, default=10.0,

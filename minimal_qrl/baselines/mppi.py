@@ -63,11 +63,28 @@ def _segment_hits_obstacle(
     )
 
 
-def _los_to_point(env: CommInspectionDubinsUAV2D, states: np.ndarray, point) -> np.ndarray:
+def _los_to_point(
+    env: CommInspectionDubinsUAV2D,
+    states: np.ndarray,
+    point,
+    *,
+    allow_endpoint_contact: bool = False,
+) -> np.ndarray:
     point = np.asarray(point, dtype=np.float32)
     result = np.ones((states.shape[0],), dtype=bool)
     x2 = np.full((states.shape[0],), float(point[0]), dtype=np.float32)
     y2 = np.full((states.shape[0],), float(point[1]), dtype=np.float32)
+    if allow_endpoint_contact:
+        dx = x2 - states[:, 0]
+        dy = y2 - states[:, 1]
+        length = np.hypot(dx, dy)
+        eps = np.minimum(
+            1e-4 * max(float(env.x_max - env.x_min), float(env.y_max - env.y_min), 1.0),
+            0.1 * length,
+        )
+        valid = length > 1e-9
+        x2[valid] -= eps[valid] * dx[valid] / length[valid]
+        y2[valid] -= eps[valid] * dy[valid] / length[valid]
     for obstacle in env.obstacles:
         result &= ~_segment_hits_obstacle(states[:, 0], states[:, 1], x2, y2, obstacle)
     return result
@@ -80,27 +97,40 @@ def _state_terms(
     out_of_bounds: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     target = np.asarray(env.inspection_target, dtype=np.float32)
+    anchor = np.asarray(env.observation_anchor, dtype=np.float32)
     station = np.asarray(env.ground_station, dtype=np.float32)
 
-    target_delta = target[None, :] - states[:, :2]
-    target_distance = np.linalg.norm(target_delta, axis=1)
-    target_bearing = np.arctan2(target_delta[:, 1], target_delta[:, 0])
-    heading_error = np.abs(_normalize_angle(target_bearing - states[:, 2]))
-    obs_margin = np.minimum(
-        float(env.observation_radius) - target_distance,
-        0.5 * float(env.fov_angle) - heading_error,
+    device_to_uav = states[:, :2] - target[None, :]
+    target_distance = np.linalg.norm(device_to_uav, axis=1)
+    position_bearing = np.arctan2(device_to_uav[:, 1], device_to_uav[:, 0])
+    sector_error = np.abs(_normalize_angle(position_bearing - float(env.preferred_bearing)))
+    anchor_delta = anchor[None, :] - states[:, :2]
+    anchor_bearing = np.arctan2(anchor_delta[:, 1], anchor_delta[:, 0])
+    heading_error = np.abs(_normalize_angle(anchor_bearing - states[:, 2]))
+    distance_margin = np.minimum(
+        target_distance - float(env.observation_min_distance),
+        float(env.observation_max_distance) - target_distance,
     )
-    target_los = _los_to_point(env, states, target)
+    sector_margin = float(env.bearing_tolerance) - sector_error
+    heading_margin = 0.5 * float(env.fov_angle) - heading_error
+    obs_margin = np.minimum(np.minimum(distance_margin, sector_margin), heading_margin)
+    target_los = _los_to_point(env, states, anchor, allow_endpoint_contact=True)
     if env.require_target_los:
-        obs_margin = obs_margin - (~target_los).astype(np.float32)
+        obs_margin = np.minimum(obs_margin, np.where(target_los, np.inf, -1.0))
     observation_feasible = (
-        (target_distance <= float(env.observation_radius))
-        & (heading_error <= 0.5 * float(env.fov_angle))
+        (distance_margin >= 0.0)
+        & (sector_margin >= 0.0)
+        & (heading_margin >= 0.0)
         & (target_los | (not env.require_target_los))
     )
 
     station_distance = np.linalg.norm(station[None, :] - states[:, :2], axis=1)
-    station_los = _los_to_point(env, states, station)
+    station_los = _los_to_point(
+        env,
+        states,
+        env.ground_station_los_anchor,
+        allow_endpoint_contact=True,
+    )
     comm_quality = float(env.comm_bias) - float(env.comm_alpha) * np.log(station_distance + 1e-6)
     comm_quality = comm_quality - (~station_los).astype(np.float32) * float(env.comm_occlusion_penalty)
     comm_margin = comm_quality - float(env.comm_threshold)
@@ -108,7 +138,7 @@ def _state_terms(
     if env.require_ground_station_los:
         communication_feasible &= station_los
 
-    obs_shortfall = np.maximum(0.0, -obs_margin) / max(float(env.observation_radius), 1e-6)
+    obs_shortfall = np.maximum(0.0, -obs_margin) / max(float(env.observation_max_distance), 1e-6)
     comm_shortfall = np.maximum(0.0, -comm_margin) / max(abs(float(env.comm_threshold)) + 1.0, 1.0)
     costs = np.full((states.shape[0],), float(env.dt), dtype=np.float32)
     costs += float(env.observation_violation_cost_weight) * obs_shortfall

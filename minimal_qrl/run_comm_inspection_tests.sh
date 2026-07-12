@@ -11,10 +11,10 @@ else
 fi
 
 echo "[1/3] 运行 task-aware QRL loss 测试..."
-"$PYTHON_BIN" minimal_qrl/test_task_aware_qrl_loss.py
+"$PYTHON_BIN" -m pytest -q minimal_qrl/test_task_aware_qrl_loss.py
 
 echo "[2/3] 运行环境测试..."
-"$PYTHON_BIN" minimal_qrl/test_comm_inspection_dubins_uav.py
+"$PYTHON_BIN" -m pytest -q minimal_qrl/test_comm_inspection_dubins_uav.py
 
 echo "[3/3] 运行可视化 smoke test..."
 "$PYTHON_BIN" -m minimal_qrl.visualize_comm_inspection_dubins_uav \

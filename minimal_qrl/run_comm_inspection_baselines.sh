@@ -3,14 +3,17 @@
 #
 # STAGE: smoke, pilot, final
 # STAGE=smoke：SAC 训练 200 环境步,评估 3 个 episode
-# STAGE=pilot：训练一个 SAC seed，共 300000 步，并默认评估 50 个共同任务
-# STAGE=final：训练 5 个 SAC seeds；可用 N_TRIALS 覆盖评估任务数
+# STAGE=pilot：训练一个 SAC seed，共 300000 步
+# STAGE=final：训练 5 个 SAC seeds
+# STARTS_PER_DEVICE：每台设备的随机起点数，默认 25，可通过环境变量覆盖
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [[ -x "./.venv/bin/python" ]]; then
   PYTHON_BIN="${PYTHON_BIN:-./.venv/bin/python}"
+elif [[ -x "../quasimetric-rl/.venv/bin/python" ]]; then
+  PYTHON_BIN="${PYTHON_BIN:-../quasimetric-rl/.venv/bin/python}"
 else
   PYTHON_BIN="${PYTHON_BIN:-python3}"
 fi
@@ -19,12 +22,10 @@ STAGE="${STAGE:-pilot}"
 OUTPUT_DIR="${OUTPUT_DIR:-./results/experiments/comm_inspection_baselines_${STAGE}}"
 QRL_CHECKPOINTS="${QRL_CHECKPOINTS:-./results/goalset_qrl_comm_inspection/checkpoint_final.pth}"
 METHODS="${METHODS:-hybrid_astar,mppi_no_terminal,model_mppi,goal_set_sac,qrl_greedy,qrl_mppi}"
-N_TRIALS="${N_TRIALS:-}"
+STARTS_PER_DEVICE="${STARTS_PER_DEVICE:-25}"
 
 TRAIN_SAC_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
-RANDOMIZE_TARGET_FLAG=""
-RANDOMIZE_STATION_FLAG=""
 EXTRA_ARGS=()
 if [[ "${TRAIN_SAC:-1}" == "1" ]]; then
   TRAIN_SAC_FLAG="--train-sac"
@@ -32,15 +33,7 @@ fi
 if [[ "${SAVE_VISUALIZATIONS:-0}" == "1" ]]; then
   SAVE_VISUALIZATIONS_FLAG="--save-visualizations"
 fi
-if [[ "${RANDOMIZE_INSPECTION_TARGET:-1}" == "1" ]]; then
-  RANDOMIZE_TARGET_FLAG="--randomize-inspection-target"
-fi
-if [[ "${RANDOMIZE_GROUND_STATION:-1}" == "1" ]]; then
-  RANDOMIZE_STATION_FLAG="--randomize-ground-station"
-fi
-if [[ -n "$N_TRIALS" ]]; then
-  EXTRA_ARGS+=(--n-trials "$N_TRIALS")
-fi
+EXTRA_ARGS+=(--starts-per-device "$STARTS_PER_DEVICE")
 if [[ -n "${SAC_TOTAL_ENV_STEPS:-}" ]]; then
   EXTRA_ARGS+=(--sac-total-env-steps "$SAC_TOTAL_ENV_STEPS")
 fi
@@ -69,6 +62,15 @@ if [[ "${TRAIN_SAC:-1}" != "1" ]]; then
   fi
 fi
 
+echo "通信巡检 baseline 评估配置："
+echo "  stage=$STAGE"
+echo "  methods=$METHODS"
+echo "  starts_per_device=$STARTS_PER_DEVICE"
+echo "  device_catalog=${DEVICE_CATALOG:-./minimal_qrl/configs/industrial_site_devices.json}"
+echo "  output_dir=$OUTPUT_DIR"
+echo "  incremental_csv=$OUTPUT_DIR/baseline_results.partial.csv"
+echo "  incremental_jsonl=$OUTPUT_DIR/baseline_results.partial.jsonl"
+
 "$PYTHON_BIN" minimal_qrl/eval/comm_inspection_baseline_eval.py \
   --stage "$STAGE" \
   --methods "$METHODS" \
@@ -83,12 +85,7 @@ fi
   --dt "${DT:-0.1}" \
   --max-episode-steps "${MAX_STEPS_PER_EPISODE:-180}" \
   --obstacle-config "${OBSTACLE_CONFIG:-medium}" \
-  --inspection-target ${INSPECTION_TARGET:-3.0 7.5} \
-  --ground-station ${GROUND_STATION:-1.5 2.0} \
-  ${RANDOMIZE_TARGET_FLAG} \
-  ${RANDOMIZE_STATION_FLAG} \
-  --observation-radius "${OBS_RADIUS:-1.8}" \
-  --fov-angle "${FOV_ANGLE:-1.5707963267948966}" \
+  --device-catalog "${DEVICE_CATALOG:-./minimal_qrl/configs/industrial_site_devices.json}" \
   --comm-threshold "${COMM_THRESHOLD:-0.5}" \
   --mppi-horizon "${MPPI_HORIZON:-10}" \
   --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \

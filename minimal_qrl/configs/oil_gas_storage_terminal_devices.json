@@ -1,0 +1,152 @@
+{
+  "ground_station": {
+    "position": [9.5, 5.0],
+    "los_anchor": [9.5, 5.0]
+  },
+  "devices": [
+    {
+      "id": "crude_oil_tank_tk101",
+      "position": [8.0, 2.4],
+      "observation_anchor": [8.2, 2.4],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "gasoline_tank_tk102",
+      "position": [2.9, 1.2],
+      "observation_anchor": [3.1, 1.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "diesel_tank_tk103",
+      "position": [4.3, 1.2],
+      "observation_anchor": [4.5, 1.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "naphtha_tank_tk104",
+      "position": [5.7, 1.2],
+      "observation_anchor": [5.9, 1.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "lpg_sphere_v105",
+      "position": [7.1, 1.2],
+      "observation_anchor": [7.3, 1.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "slop_tank_tk106",
+      "position": [8.5, 1.2],
+      "observation_anchor": [8.7, 1.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "marine_loading_arm_la01",
+      "position": [8.0, 4.6],
+      "observation_anchor": [8.2, 4.6],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "marine_loading_arm_la02",
+      "position": [8.0, 5.4],
+      "observation_anchor": [8.2, 5.4],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "truck_loading_esd_valve",
+      "position": [7.8, 7.2],
+      "observation_anchor": [8.0, 7.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "rail_unloading_manifold",
+      "position": [5.7, 3.9],
+      "observation_anchor": [5.9, 3.9],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "transfer_pump_p201a",
+      "position": [7.1, 3.9],
+      "observation_anchor": [7.3, 3.9],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "transfer_pump_p201b",
+      "position": [8.5, 3.9],
+      "observation_anchor": [8.7, 3.9],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "booster_pump_p202",
+      "position": [8.0, 7.8],
+      "observation_anchor": [8.2, 7.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "custody_metering_skid_ms01",
+      "position": [6.5, 8.2],
+      "observation_anchor": [6.7, 8.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "custody_flowmeter_ft01",
+      "position": [4.3, 6.2],
+      "observation_anchor": [4.5, 6.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "inlet_separator_v301",
+      "position": [5.7, 6.2],
+      "observation_anchor": [5.9, 6.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "vapor_recovery_unit_vru01",
+      "position": [7.1, 6.2],
+      "observation_anchor": [7.3, 6.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "vapor_blower_k301",
+      "position": [8.5, 6.2],
+      "observation_anchor": [8.7, 6.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "terminal_inlet_esdv",
+      "position": [1.5, 8.8],
+      "observation_anchor": [1.7, 8.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "terminal_outlet_esdv",
+      "position": [2.9, 8.8],
+      "observation_anchor": [3.1, 8.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "firewater_monitor_fw01",
+      "position": [4.3, 8.8],
+      "observation_anchor": [4.5, 8.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "tank_foam_chamber_fc01",
+      "position": [5.7, 8.8],
+      "observation_anchor": [5.9, 8.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "hydrocarbon_leak_detector_ld01",
+      "position": [7.1, 8.8],
+      "observation_anchor": [7.3, 8.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "pressure_safety_valve_psv301",
+      "position": [8.5, 8.8],
+      "observation_anchor": [8.7, 8.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 0.0, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    }
+  ]
+}

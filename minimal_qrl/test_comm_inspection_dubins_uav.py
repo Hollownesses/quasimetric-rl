@@ -1,401 +1,225 @@
-#!/usr/bin/env python3
-"""
-轻量测试：task-conditioned 通信感知巡检 Dubins UAV 环境。
-"""
-import subprocess
-import sys
-from pathlib import Path
+"""Tests for the device-catalog industrial inspection environment."""
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from __future__ import annotations
+
+import math
 
 import numpy as np
+import pytest
 
-from minimal_qrl.envs import CircleObstacle, CommInspectionDubinsUAV2D
-from minimal_qrl.dataset import (
-    collect_goal_set_comm_episode_pair,
-    collect_task_aware_comm_teacher_episode_pair,
-    create_dataset,
+from minimal_qrl.dataset import collect_goal_set_comm_episode_pair, create_dataset
+from minimal_qrl.envs import (
+    CircleObstacle,
+    CommInspectionDubinsUAV2D,
+    DeviceTaskSpec,
+    IndustrialInspectionCatalog,
+    TaskContextInfeasibleError,
 )
 
 
+def catalog_dict(*, require_los: bool = False):
+    return {
+        "ground_station": {"position": [0.5, 0.5], "los_anchor": [0.5, 0.5]},
+        "devices": [
+            {
+                "id": "tank_01",
+                "position": [5.0, 5.0],
+                "observation_anchor": [5.0, 5.0],
+                "observation": {
+                    "min_distance": 1.0,
+                    "max_distance": 2.0,
+                    "preferred_bearing_rad": math.pi,
+                    "bearing_tolerance_rad": 0.5,
+                    "fov_angle_rad": math.pi / 2.0,
+                    "require_los": require_los,
+                },
+            },
+            {
+                "id": "pipe_02",
+                "position": [7.0, 7.0],
+                "observation_anchor": [7.0, 7.0],
+                "observation": {
+                    "min_distance": 0.8,
+                    "max_distance": 1.5,
+                    "preferred_bearing_rad": -math.pi / 2.0,
+                    "bearing_tolerance_rad": 0.4,
+                    "fov_angle_rad": math.pi / 2.0,
+                    "require_los": require_los,
+                },
+            },
+        ],
+    }
+
+
 def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
-    default = dict(
+    defaults = dict(
+        device_catalog=catalog_dict(),
         bounds=(0.0, 0.0, 10.0, 10.0),
-        omega_max=1.0,
+        omega_max=3.0,
         v=1.0,
         dt=0.1,
         max_steps=100,
-        observation_mode="task_context",
-        inspection_target=(5.0, 5.0),
-        ground_station=(1.0, 5.0),
-        observation_radius=2.0,
-        fov_angle=np.pi / 2.0,
-        require_target_los=True,
-        comm_alpha=2.0,
-        comm_bias=5.0,
-        comm_occlusion_penalty=8.0,
-        comm_threshold=1.0,
-        require_ground_station_los=False,
-        randomize_inspection_target=False,
-        randomize_ground_station=False,
+        comm_bias=20.0,
+        comm_threshold=0.0,
     )
-    default.update(kwargs)
-    return CommInspectionDubinsUAV2D(**default)
+    defaults.update(kwargs)
+    return CommInspectionDubinsUAV2D(**defaults)
 
 
-def test_task_context_observation_matches_space():
+def test_catalog_validation_rejects_duplicates_and_bad_angles():
+    duplicate = catalog_dict()
+    duplicate["devices"][1]["id"] = "tank_01"
+    with pytest.raises(ValueError, match="duplicate device"):
+        IndustrialInspectionCatalog.from_dict(duplicate)
+
+    bad = catalog_dict()
+    bad["devices"][0]["observation"]["bearing_tolerance_rad"] = 0.0
+    with pytest.raises(ValueError, match="bearing_tolerance"):
+        IndustrialInspectionCatalog.from_dict(bad)
+
+
+def test_named_task_context_and_abstract_goal():
     env = make_env()
-    obs, _ = env.reset(seed=42)
+    obs, info = env.reset(seed=3, options={"device_id": "tank_01"})
+    assert obs.shape == (len(env.TASK_CONTEXT_FIELDS),)
     assert obs.shape == env.observation_space.shape
-    assert obs.shape == (28,)
-    assert obs[-1] == 0.0
-    abstract = env.abstract_goal_observation()
-    assert abstract.shape == obs.shape
-    assert abstract[-1] == 1.0
+    assert obs[env.task_context_indices["abstract_goal"]] == 0.0
+    goal = env.abstract_goal_observation()
+    assert goal[env.task_context_indices["abstract_goal"]] == 1.0
+    assert info["device_id"] == "tank_01"
 
 
-def test_reset_sets_task_context_and_abstract_goal():
+def test_fixed_ground_station_and_uniform_catalog_sampling():
     env = make_env()
-    obs, info = env.reset(seed=42)
-    assert obs.shape == env.observation_space.shape
-    assert env.inspection_target is not None
-    assert env.ground_station is not None
-    assert env.goal is None
-    assert tuple(info["inspection_target"]) == tuple(env.inspection_target)
-    assert tuple(info["ground_station"]) == tuple(env.ground_station)
-    assert "abstract_goal_observation" in info
-    assert info["observation_mode"] == "task_context"
-    assert not env.is_terminal_goal_state(env.state)
+    station = env.ground_station
+    sampled = set()
+    for seed in range(20):
+        _, info = env.reset(seed=seed)
+        sampled.add(info["device_id"])
+        assert env.ground_station == station
+    assert sampled == set(env.device_ids)
 
 
-def test_sample_task_terminal_state_is_valid():
+def test_explicit_device_and_task_context_are_never_overwritten():
     env = make_env()
-    env._ensure_valid_task_entities(seed=0)
+    for seed in range(5):
+        env.reset(seed=seed, options={"device_id": "pipe_02"})
+        assert env.active_device_id == "pipe_02"
+
+    custom = DeviceTaskSpec.from_dict(
+        {
+            "id": "alarm_exact",
+            "position": [4.0, 4.0],
+            "observation_anchor": [4.0, 4.0],
+            "observation": {
+                "min_distance": 0.5,
+                "max_distance": 1.0,
+                "preferred_bearing_rad": 0.0,
+                "bearing_tolerance_rad": 0.4,
+                "fov_angle_rad": 1.2,
+                "require_los": False,
+            },
+        }
+    )
+    env.reset(seed=9, options={"task_context": custom})
+    assert env.active_device_id == "alarm_exact"
+    assert env.inspection_target == (4.0, 4.0)
+
+
+def test_annular_sector_heading_and_terminal_communication_conditions():
+    env = make_env()
+    env.reset(seed=0, options={"device_id": "tank_01"})
+    good = np.array([3.5, 5.0, 0.0], dtype=np.float32)
+    too_close = np.array([4.5, 5.0, 0.0], dtype=np.float32)
+    wrong_sector = np.array([6.5, 5.0, math.pi], dtype=np.float32)
+    wrong_heading = np.array([3.5, 5.0, math.pi], dtype=np.float32)
+    assert env.is_observation_feasible(good)
+    assert env.is_task_feasible(good)
+    assert not env.is_observation_feasible(too_close)
+    assert not env.is_observation_feasible(wrong_sector)
+    assert not env.is_observation_feasible(wrong_heading)
+
+    env.comm_threshold = 100.0
+    assert env.is_observation_feasible(good)
+    assert not env.is_task_feasible(good)
+
+
+def test_semantic_device_can_be_inside_obstacle_and_surface_los_is_open_ended():
+    obstacle = CircleObstacle(5.0, 5.0, 1.0)
+    catalog = catalog_dict(require_los=True)
+    device = catalog["devices"][0]
+    device["observation_anchor"] = [4.0, 5.0]
+    device["observation"]["min_distance"] = 1.1
+    env = make_env(device_catalog=catalog, obstacles=[obstacle])
+    env.reset(seed=0, options={"device_id": "tank_01"})
+
+    near_side = np.array([3.5, 5.0, 0.0], dtype=np.float32)
+    far_side = np.array([6.5, 5.0, math.pi], dtype=np.float32)
+    assert obstacle.contains(*env.inspection_target)
+    assert env.is_valid_state(near_side)
+    assert not env.is_valid_state(np.array([5.0, 5.0, 0.0], dtype=np.float32))
+    assert env._segment_has_los(tuple(near_side[:2]), env.observation_anchor, allow_endpoint_contact=True)
+    assert not env._segment_has_los(tuple(far_side[:2]), env.observation_anchor, allow_endpoint_contact=True)
+
+
+def test_infeasible_device_fails_with_device_id():
+    catalog = catalog_dict()
+    catalog["devices"] = [catalog["devices"][0]]
+    catalog["devices"][0]["observation"]["min_distance"] = 0.1
+    catalog["devices"][0]["observation"]["max_distance"] = 0.2
+    with pytest.raises(TaskContextInfeasibleError, match="tank_01"):
+        make_env(
+            device_catalog=catalog,
+            obstacles=[CircleObstacle(5.0, 5.0, 1.0)],
+            sample_max_attempts=20,
+        )
+
+
+def test_terminal_sampling_and_step_cost_semantics():
+    env = make_env(communication_break_cost=1.25)
+    env.reset(seed=0, options={"device_id": "tank_01"})
     terminal = env.sample_task_terminal_state(seed=1)
-    assert env.is_valid_state(terminal)
-    assert env.is_observation_feasible(terminal)
-    assert env.is_communication_feasible(terminal)
-    assert env.is_terminal_goal_state(terminal)
+    assert env.is_task_feasible(terminal)
+
+    env.comm_threshold = 100.0
+    terms = env.compute_step_terms(terminal, collision=False, out_of_bounds=False)
+    assert terms["cost_comm_break"] == 1.25
+    assert terms["cost_time"] == env.dt
 
 
-def test_random_context_changes_abstract_goal():
-    env = make_env(randomize_inspection_target=True, randomize_ground_station=True)
-    env.reset(seed=0)
-    start1 = tuple(float(v) for v in env.start)
-    abstract1 = env.abstract_goal_observation().copy()
-
-    env.reset(seed=1)
-    start2 = tuple(float(v) for v in env.start)
-    abstract2 = env.abstract_goal_observation().copy()
-
-    assert start1 != start2
-    assert not np.allclose(abstract1, abstract2)
-
-
-def test_random_context_start_is_not_inspection_target():
-    env = make_env(randomize_inspection_target=True, randomize_ground_station=True)
-    env.reset(seed=0)
-    start_xy = np.asarray(env.start[:2], dtype=np.float32)
-    target_xy = np.asarray(env.inspection_target, dtype=np.float32)
-    assert float(np.linalg.norm(start_xy - target_xy)) >= env.min_start_target_distance
-
-
-def test_observation_score_direction():
-    env = make_env()
-    env.reset(seed=0)
-    good = np.array([4.0, 5.0, 0.0], dtype=np.float32)
-    bad = np.array([2.5, 5.0, np.pi], dtype=np.float32)
-    assert env.compute_observation_score(good) > env.compute_observation_score(bad)
-
-
-def test_communication_score_direction():
-    env = make_env(
-        ground_station=(1.0, 1.0),
-        inspection_target=(5.0, 5.0),
-        comm_alpha=2.0,
-        comm_bias=3.0,
-        comm_threshold=1.5,
-        require_ground_station_los=False,
+def test_dataset_contains_independent_global_push_pairs():
+    env = make_env(max_steps=5)
+    episode, abstract_episode = collect_goal_set_comm_episode_pair(env, max_steps=5, seed=11, context_id=4)
+    infos = episode.transition_infos
+    assert bool(infos["global_push_pair_mask"].all())
+    assert infos["global_push_source_observations"].shape == episode.all_observations[:-1].shape
+    assert infos["global_push_goal_observations"].shape == episode.all_observations[:-1].shape
+    assert not np.allclose(
+        infos["global_push_source_observations"],
+        infos["global_push_goal_observations"],
     )
-    env._ensure_valid_task_entities(seed=0)
-    near_station = np.array([1.4, 1.0, 0.0], dtype=np.float32)
-    far_station = np.array([9.0, 9.0, 0.0], dtype=np.float32)
-    assert env.compute_communication_score(near_station) > env.compute_communication_score(far_station)
-
-
-def test_collision_penalty_is_negative():
-    obstacle = CircleObstacle(x=4.16, y=5.0, radius=0.12)
-    env = make_env(
-        obstacles=[obstacle],
-        start=(4.0, 5.0, 0.0),
-    )
-    env.reset(seed=0)
-    _, reward, terminated, truncated, info = env.step(np.array([0.0], dtype=np.float32))
-    assert terminated
-    assert not truncated
-    assert not info["success"]
-    assert info["collision"]
-    assert info["cost_collision"] >= 10.0
-    assert reward < -1.0
-
-
-def test_out_of_bounds_penalty_is_negative():
-    env = make_env(
-        bounds=(0.0, 0.0, 1.0, 1.0),
-        start=(0.95, 0.95, 0.0),
-        inspection_target=(0.8, 0.8),
-        ground_station=(0.2, 0.2),
-    )
-    env.reset(seed=0)
-    _, reward, terminated, truncated, info = env.step(np.array([0.0], dtype=np.float32))
-    assert terminated
-    assert not truncated
-    assert not info["success"]
-    assert info["out_of_bounds"]
-    assert info["cost_oob"] >= 10.0
-    assert reward < -1.0
-
-
-def test_success_trigger_on_task_terminal_set():
-    env = make_env()
-    start = (3.9, 5.0, 0.0)
-    env.reset(seed=0, options={"start": start})
-    _, _, terminated, _, info = env.step(np.array([0.0], dtype=np.float32))
-    assert terminated
-    assert info["success"]
-    assert env.is_terminal_goal_state(env.state)
-
-
-def test_nonterminal_state_is_not_success():
-    env = make_env(
-        observation_radius=1.0,
-    )
-    start = (2.0, 5.0, 0.0)
-    env.reset(seed=0, options={"start": start})
-    _, _, terminated, _, info = env.step(np.array([0.0], dtype=np.float32))
-    assert not env.is_task_feasible(env.state)
-    assert not terminated
-    assert not info["success"]
-
-
-def test_task_feasible_equals_success():
-    env = make_env()
-    feasible_state = (4.0, 5.0, 0.0)
-    env.reset(seed=0, options={"start": feasible_state})
-    _, _, terminated, _, info = env.step(np.array([0.0], dtype=np.float32))
-    assert info["task_feasible"]
-    assert terminated
-    assert info["success"]
-    assert info["ever_task_feasible"]
-    assert info["first_task_feasible_step"] in (0, 1)
-
-
-def test_zero_communication_break_cost_disables_fixed_penalty():
-    env = make_env(
-        comm_threshold=1.0,
-        communication_break_cost=0.0,
-    )
-    env.reset(seed=0)
-    env.state = np.array([9.0, 9.0, 0.0], dtype=np.float32)
-    step_terms = env.compute_step_terms(
-        new_state=env.state,
-        collision=False,
-        out_of_bounds=False,
-    )
-    assert step_terms["cost_comm_break"] == 0.0
-
-    env.communication_break_cost = 1.25
-    step_terms = env.compute_step_terms(
-        new_state=env.state,
-        collision=False,
-        out_of_bounds=False,
-    )
-    assert step_terms["cost_comm_break"] == 1.25
-
-
-def test_feasible_state_has_zero_violation_costs():
-    env = make_env()
-    feasible_state = np.array([4.0, 5.0, 0.0], dtype=np.float32)
-    env.reset(seed=0, options={"start": feasible_state})
-    step_terms = env.compute_step_terms(
-        new_state=env.state,
-        collision=False,
-        out_of_bounds=False,
-    )
-    assert step_terms["cost_obs_violation"] == 0.0
-    assert step_terms["cost_comm_violation"] == 0.0
-    assert step_terms["cost_obs_fail"] == 0.0
-    assert step_terms["cost_comm_break"] == 0.0
-
-
-def test_taskscore_clips_and_normalizes_margins():
-    env = make_env()
-    env.reset(seed=0)
-    assert env.normalize_task_margin(3.0) == 1.0
-    assert env.normalize_task_margin(-3.0) == -1.0
-    assert np.isclose(env.normalize_task_margin(1.0), 0.5)
-
-
-def test_repair_state_keeps_geometric_validity_without_forcing_task_feasible():
-    env = make_env(
-        bounds=(0.0, 0.0, 10.0, 10.0),
-        observation_radius=0.5,
-        obstacles=[CircleObstacle(x=5.0, y=5.0, radius=0.7)],
-    )
-    env.reset(seed=0)
-    raw = np.array([5.0, 5.0, 4.0], dtype=np.float32)
-    repaired = env.repair_state(raw)
-    assert env.is_valid_state(repaired)
-    assert -np.pi <= float(repaired[2]) <= np.pi
-    assert not env.is_task_feasible(repaired)
-
-
-def test_legacy_modes_reset_and_step():
-    for mode in ("cos_sin", "state"):
-        env = make_env(observation_mode=mode)
-        obs, _ = env.reset(seed=0)
-        assert obs.shape == env.observation_space.shape
-        next_obs, reward, terminated, truncated, _ = env.step(np.array([0.1], dtype=np.float32))
-        assert next_obs.shape == env.observation_space.shape
-        assert isinstance(reward, float)
-        assert isinstance(terminated, bool)
-        assert isinstance(truncated, bool)
-
-
-def test_goal_set_dataset_adds_abstract_edge_for_success():
-    env = make_env(
-        start=(3.9, 5.0, 0.0),
-        max_steps=5,
-    )
-    episode, abstract_episode = collect_goal_set_comm_episode_pair(env, max_steps=5, seed=0)
-    assert episode.transition_infos["abstract_goal_edge"].shape[0] == episode.num_transitions
-    assert not bool(episode.transition_infos["abstract_goal_edge"].any())
+    for key in ("global_push_source_observations", "global_push_goal_observations"):
+        for obs in infos[key].numpy():
+            assert env.is_valid_state(env.observation_to_state(obs))
+            assert obs[env.task_context_indices["device_x"]] == env.inspection_target[0]
     assert abstract_episode is not None
-    assert bool(abstract_episode.transition_infos["abstract_goal_edge"][0])
-    assert bool(abstract_episode.transition_infos["source_terminal_goal_state"][0])
-    assert float(abstract_episode.rewards[0]) == 0.0
-    assert float(abstract_episode.all_observations[-1, -1]) == 1.0
+    assert not bool(abstract_episode.transition_infos["global_push_pair_mask"].any())
 
 
-def test_goal_set_dataset_adds_abstract_edge_without_rollout_success():
-    env = make_env(
-        start=(2.0, 5.0, 0.0),
-        max_steps=1,
-    )
-    episode, abstract_episode = collect_goal_set_comm_episode_pair(env, max_steps=1, seed=0)
-    assert not bool(episode.terminals[0])
-    assert abstract_episode is not None
-    assert bool(abstract_episode.transition_infos["abstract_goal_edge"][0])
-    assert bool(abstract_episode.transition_infos["source_terminal_goal_state"][0])
-    terminal_state = env.observation_to_state(abstract_episode.all_observations[0])
-    assert env.is_terminal_goal_state(terminal_state)
-    assert float(abstract_episode.rewards[0]) == 0.0
-    assert float(abstract_episode.all_observations[-1, -1]) == 1.0
-
-
-def test_task_aware_teacher_collects_success_chain():
-    env = make_env(
-        start=(2.0, 5.0, 0.0),
-        omega_max=3.0,
-        max_steps=80,
-        obstacles=[],
-    )
-    episode, abstract_episode = collect_task_aware_comm_teacher_episode_pair(
-        env,
-        max_steps=80,
-        seed=3,
-        context_id=7,
-    )
-    assert episode is not None
-    assert abstract_episode is not None
-    assert bool(episode.terminals[-1])
-    assert bool(episode.transition_infos["teacher_guided"].all())
-    assert not bool(episode.transition_infos["abstract_goal_edge"].any())
-    final_state = env.observation_to_state(episode.all_observations[-1])
-    assert env.is_terminal_goal_state(final_state)
-    assert bool(abstract_episode.transition_infos["abstract_goal_edge"][0])
-    assert bool(abstract_episode.transition_infos["source_terminal_goal_state"][0])
-    assert float(abstract_episode.rewards[0]) == 0.0
-    assert int(abstract_episode.transition_infos["context_id"][0]) == 7
-
-
-def test_dataset_teacher_shares_random_context_id():
-    num_episodes = 3
-    env = make_env(
-        randomize_inspection_target=True,
-        randomize_ground_station=True,
-        omega_max=3.0,
-        max_steps=80,
-        obstacles=[],
-    )
+def test_dataset_task_goals_are_catalog_devices_and_teacher_reuses_device():
+    env = make_env(max_steps=80)
     episodes = list(
         create_dataset(
             env,
-            num_episodes=num_episodes,
+            num_episodes=3,
             max_steps_per_episode=80,
-            seed=11,
+            seed=2,
             task_aware_teacher_ratio=1.0,
         )
     )
-
-    teacher_contexts = set()
-    random_contexts = set()
+    device_indices = set()
     for episode in episodes:
         infos = episode.transition_infos
-        if "context_id" not in infos:
-            continue
-        context_ids = set(int(v) for v in infos["context_id"].tolist())
-        assert context_ids <= set(range(num_episodes))
-        if bool(infos.get("teacher_guided", np.array([False])).any()):
-            teacher_contexts.update(context_ids)
-        elif not bool(infos.get("abstract_goal_edge", np.array([False])).any()):
-            random_contexts.update(context_ids)
-
-    assert teacher_contexts
-    assert teacher_contexts <= random_contexts
-
-
-def test_visualize_script_smoke():
-    repo_root = Path(__file__).parent.parent
-    out_path = repo_root / "results" / "minimal_qrl_inspection_dubins" / "comm_inspection_dubins_uav_vis" / "smoke_test.png"
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "minimal_qrl.visualize_comm_inspection_dubins_uav",
-            "--out",
-            str(out_path),
-        ],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert "Saved visualization to" in result.stdout
-    assert out_path.exists()
-
-
-if __name__ == "__main__":
-    test_task_context_observation_matches_space()
-    test_reset_sets_task_context_and_abstract_goal()
-    test_sample_task_terminal_state_is_valid()
-    test_random_context_changes_abstract_goal()
-    test_random_context_start_is_not_inspection_target()
-    test_observation_score_direction()
-    test_communication_score_direction()
-    test_collision_penalty_is_negative()
-    test_out_of_bounds_penalty_is_negative()
-    test_success_trigger_on_task_terminal_set()
-    test_nonterminal_state_is_not_success()
-    test_task_feasible_equals_success()
-    test_zero_communication_break_cost_disables_fixed_penalty()
-    test_feasible_state_has_zero_violation_costs()
-    test_taskscore_clips_and_normalizes_margins()
-    test_repair_state_keeps_geometric_validity_without_forcing_task_feasible()
-    test_legacy_modes_reset_and_step()
-    test_goal_set_dataset_adds_abstract_edge_for_success()
-    test_goal_set_dataset_adds_abstract_edge_without_rollout_success()
-    test_task_aware_teacher_collects_success_chain()
-    test_dataset_teacher_shares_random_context_id()
-    test_visualize_script_smoke()
-    print("All comm inspection Dubins UAV tests passed.")
+        device_indices.update(int(v) for v in infos["device_index"].tolist() if int(v) >= 0)
+    assert device_indices <= set(range(len(env.device_ids)))
+    assert device_indices

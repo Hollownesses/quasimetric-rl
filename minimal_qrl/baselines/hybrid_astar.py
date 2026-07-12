@@ -62,7 +62,7 @@ class HybridAStarController(BaselineController):
 
         target = np.asarray(env.inspection_target, dtype=np.float32)
         distance = float(np.linalg.norm(np.asarray(state[:2]) - target))
-        remaining_distance = max(0.0, distance - float(env.observation_radius))
+        remaining_distance = max(0.0, distance - float(env.observation_max_distance))
         return remaining_distance / max(float(env.v), 1e-8)
 
     def _sample_terminal_states(self, env: CommInspectionDubinsUAV2D, seed: int) -> np.ndarray:

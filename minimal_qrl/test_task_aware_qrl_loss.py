@@ -12,6 +12,7 @@ import torch
 from quasimetric_rl.data import BatchData
 from quasimetric_rl.modules.quasimetric_critic.losses import CriticBatchInfo
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
+from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
 
 
 def make_batch(rewards):
@@ -59,6 +60,42 @@ def test_positive_rewards_are_clipped_to_zero_and_reported():
     assert torch.isclose(result.info["target_cost_min"], torch.tensor(0.0))
     assert torch.isclose(result.info["target_cost_max"], torch.tensor(2.0))
     assert torch.isclose(result.info["target_cost_mean"], torch.tensor(2.0 / 3.0))
+
+
+def test_global_push_prefers_explicit_free_state_pairs():
+    class IdentityEncoder(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class L1Quasimetric(torch.nn.Module):
+        def forward(self, source, goal):
+            return torch.abs(goal - source).sum(dim=-1)
+
+    class DummyCritic(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = IdentityEncoder()
+            self.quasimetric_model = L1Quasimetric()
+
+    data = make_batch([-1.0, -1.0])
+    data.transition_infos = {
+        "task_goal_observations": torch.zeros(2, 2),
+        "abstract_goal_edge": torch.zeros(2, dtype=torch.bool),
+        "source_terminal_goal_state": torch.zeros(2, dtype=torch.bool),
+        "global_push_source_observations": torch.tensor([[0.0, 0.0], [1.0, 1.0]]),
+        "global_push_goal_observations": torch.tensor([[3.0, 0.0], [1.0, 4.0]]),
+        "global_push_pair_mask": torch.ones(2, dtype=torch.bool),
+    }
+    critic = DummyCritic()
+    batch_info = CriticBatchInfo(critic=critic, zx=torch.zeros(2, 2), zy=torch.zeros(2, 2))
+    loss = GlobalPushLoss(
+        softplus_beta=0.1,
+        softplus_offset=15.0,
+        abstract_goal_ratio=0.0,
+        state_goal_ratio=1.0,
+    )
+    result = loss(data, batch_info)
+    assert torch.isclose(result.info["global_push_state_state/dist"], torch.tensor(3.0))
 
 
 if __name__ == "__main__":

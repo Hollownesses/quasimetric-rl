@@ -137,7 +137,27 @@ class GlobalPushLoss(CriticLossBase):
                 info["global_push_task_set/dist"] = zero.detach()
                 info["global_push_task_set/loss"] = zero.detach()
 
-            if bool(valid_state.any()) and int(valid_state.sum().item()) > 1 and float(self.state_goal_ratio) > 0.0:
+            explicit_sources = data.transition_infos.get("global_push_source_observations")
+            explicit_goals = data.transition_infos.get("global_push_goal_observations")
+            explicit_mask = data.transition_infos.get("global_push_pair_mask")
+            if float(self.state_goal_ratio) > 0.0 and explicit_sources is not None and explicit_goals is not None:
+                pair_mask = valid_state.clone()
+                if explicit_mask is not None:
+                    pair_mask &= explicit_mask.to(device=device, dtype=torch.bool)
+                if bool(pair_mask.any()):
+                    pair_sources = explicit_sources.to(device=device, dtype=data.observations.dtype)[pair_mask]
+                    pair_goals = explicit_goals.to(device=device, dtype=data.observations.dtype)[pair_mask]
+                    z_state_source = critic_batch_info.critic.encoder(pair_sources)
+                    z_state_goal = critic_batch_info.critic.encoder(pair_goals)
+                    d_state = critic_batch_info.critic.quasimetric_model(z_state_source, z_state_goal)
+                    loss_state = self._push_loss(d_state)
+                    total_loss = total_loss + float(self.state_goal_ratio) * loss_state
+                    info["global_push_state_state/dist"] = d_state.mean()
+                    info["global_push_state_state/loss"] = loss_state
+                else:
+                    info["global_push_state_state/dist"] = zero.detach()
+                    info["global_push_state_state/loss"] = zero.detach()
+            elif bool(valid_state.any()) and int(valid_state.sum().item()) > 1 and float(self.state_goal_ratio) > 0.0:
                 state_source_idxs, state_goals = self._same_context_state_goal_pairs(data, valid_state)
                 if state_goals.numel() > 0:
                     z_state_goal = critic_batch_info.critic.encoder(state_goals)

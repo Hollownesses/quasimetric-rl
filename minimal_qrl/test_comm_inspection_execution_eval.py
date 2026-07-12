@@ -5,6 +5,7 @@
 """
 import os
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -26,7 +27,7 @@ from minimal_qrl.eval.comm_inspection_execution_eval import (
 )
 from minimal_qrl.comm_inspection_planner import INVALID_ROLLOUT_COST
 from minimal_qrl.eval.dubins_execution_mode_eval import DubinsLookaheadConfig
-from minimal_qrl.gc_agents import GoalConditionedAgentBase
+from minimal_qrl.gc_agents import GoalConditionedAgentBase, QRLGoalValueAdapter
 from minimal_qrl.subgoal_actor import SubgoalActor
 from minimal_qrl.envs import CircleObstacle
 
@@ -71,26 +72,63 @@ class FixedInvalidSubgoalActor:
         return self.raw_state.copy()
 
 
+class CountingBatchAdapter(QRLGoalValueAdapter):
+    def __init__(self, env):
+        torch.nn.Module.__init__(self)
+        self.env = env
+        self.calls = 0
+
+    def value(self, obs, goal_obs):
+        raise AssertionError("greedy action selection must not make scalar value calls")
+
+    def batch_value(self, obs_batch, goal_obs_batch):
+        self.calls += 1
+        return np.asarray(obs_batch[:, 0], dtype=np.float32)
+
+
 def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
+    catalog = {
+        "ground_station": {"position": [1.5, 2.0], "los_anchor": [1.5, 2.0]},
+        "devices": [
+            {
+                "id": "tank_01",
+                "position": [5.0, 5.0],
+                "observation_anchor": [5.0, 5.0],
+                "observation": {
+                    "min_distance": 0.5,
+                    "max_distance": 1.8,
+                    "preferred_bearing_rad": math.pi,
+                    "bearing_tolerance_rad": math.pi,
+                    "fov_angle_rad": math.pi / 2.0,
+                    "require_los": False,
+                },
+            },
+            {
+                "id": "pipe_02",
+                "position": [7.0, 7.0],
+                "observation_anchor": [7.0, 7.0],
+                "observation": {
+                    "min_distance": 0.5,
+                    "max_distance": 1.5,
+                    "preferred_bearing_rad": -math.pi / 2.0,
+                    "bearing_tolerance_rad": math.pi,
+                    "fov_angle_rad": math.pi / 2.0,
+                    "require_los": False,
+                },
+            },
+        ],
+    }
     default = dict(
+        device_catalog=catalog,
         bounds=(0.0, 0.0, 10.0, 10.0),
         omega_max=1.0,
         v=1.0,
         dt=0.1,
         max_steps=12,
-        observation_mode="task_context",
-        inspection_target=(5.0, 5.0),
-        ground_station=(1.5, 2.0),
-        observation_radius=1.8,
-        fov_angle=np.pi / 2.0,
-        require_target_los=True,
         comm_alpha=2.0,
         comm_bias=5.0,
         comm_occlusion_penalty=6.0,
         comm_threshold=0.5,
-        goal_sampling_mode="task_feasible",
-        goal_position_tolerance=0.25,
-        goal_heading_tolerance=0.3,
     )
     default.update(kwargs)
     return CommInspectionDubinsUAV2D(**default)
@@ -111,7 +149,7 @@ def test_execution_eval_visualization_smoke(tmp_path: Path):
         agent,
         env,
         "greedy",
-        n_trials=3,
+        starts_per_device=3,
         seed=7,
         lookahead_cfg=None,
         output_dir=tmp_path,
@@ -119,6 +157,10 @@ def test_execution_eval_visualization_smoke(tmp_path: Path):
     )
 
     assert "success_rate" in metrics
+    assert metrics["num_trials"] == 6.0
+    assert set(metrics["per_device"]) == {"tank_01", "pipe_02"}
+    assert all(row["num_trials"] == 3 for row in metrics["per_device"].values())
+    assert "decision_time_p95_sec" in metrics
     assert len(visualizations["success"]) <= 1
     assert len(visualizations["failure"]) <= 1
 
@@ -126,6 +168,15 @@ def test_execution_eval_visualization_smoke(tmp_path: Path):
     assert saved_entries
     saved_png = tmp_path / saved_entries[0]["png"]
     assert saved_png.exists()
+
+
+def test_qrl_greedy_batches_all_candidate_values_once():
+    env = make_env(start=(2.0, 5.0, 0.0))
+    obs, _ = env.reset(seed=0, options={"device_id": "tank_01"})
+    agent = CountingBatchAdapter(env)
+    action = agent.act(obs, env.abstract_goal_observation(), eval_mode=True)
+    assert action.shape == (1,)
+    assert agent.calls == 1
 
 
 def test_hierarchical_execution_eval_smoke(tmp_path: Path):
@@ -153,7 +204,7 @@ def test_hierarchical_execution_eval_smoke(tmp_path: Path):
         agent,
         env,
         "hierarchical",
-        n_trials=2,
+        starts_per_device=2,
         seed=11,
         lookahead_cfg=lookahead_cfg,
         output_dir=tmp_path,
@@ -212,7 +263,7 @@ def test_hierarchical_metrics_and_rollout_recording(tmp_path: Path):
         agent,
         env,
         "hierarchical",
-        n_trials=1,
+        starts_per_device=1,
         seed=5,
         lookahead_cfg=lookahead_cfg,
         output_dir=tmp_path,
@@ -236,25 +287,18 @@ def test_hierarchical_metrics_and_rollout_recording(tmp_path: Path):
 
 def test_planner_rejects_collision_rollouts_even_with_env_stage_cost():
     env = CommInspectionDubinsUAV2D(
+        device_catalog=make_env().device_catalog,
         bounds=(0.0, 0.0, 10.0, 10.0),
         omega_max=1.0,
         v=1.0,
         dt=0.1,
         max_steps=8,
-        observation_mode="task_context",
         obstacles=[CircleObstacle(x=4.16, y=5.0, radius=0.12)],
         start=(4.0, 5.0, 0.0),
-        goal=(6.0, 5.0, 0.0),
-        inspection_target=(5.0, 5.0),
-        ground_station=(1.0, 5.0),
-        observation_radius=2.0,
-        fov_angle=np.pi / 2.0,
-        require_target_los=True,
         comm_alpha=2.0,
         comm_bias=5.0,
         comm_occlusion_penalty=8.0,
         comm_threshold=1.0,
-        goal_sampling_mode="valid",
     )
     agent = ZeroTurnAgent()
     lookahead_cfg = DubinsLookaheadConfig(
@@ -286,9 +330,7 @@ def test_planner_rejects_collision_rollouts_even_with_env_stage_cost():
 
 def test_terminal_heuristic_ignores_dense_progress_term():
     env = make_env(
-        start=(4.0, 5.0, 0.0),
-        goal=(6.0, 5.0, 0.0),
-        goal_sampling_mode="valid",
+        start=(2.0, 5.0, 0.0),
     )
     agent = DistanceToGoalAgent()
     lookahead_cfg = DubinsLookaheadConfig(
@@ -318,9 +360,7 @@ def test_terminal_heuristic_ignores_dense_progress_term():
 
 def test_dense_heuristic_prefers_qrl_progress():
     env = make_env(
-        start=(4.0, 5.0, 0.0),
-        goal=(6.0, 5.0, 0.0),
-        goal_sampling_mode="valid",
+        start=(2.0, 5.0, 0.0),
     )
     agent = DistanceToGoalAgent()
     lookahead_cfg = DubinsLookaheadConfig(
@@ -369,6 +409,8 @@ def test_cli_outputs_separate_lookahead_heuristic_keys(tmp_path: Path):
             str(checkpoint),
             "--output-dir",
             str(output_dir),
+            "--device-catalog",
+            str(tmp_path / "unused_catalog.json"),
             "--execution-modes",
             "lookahead",
             "--lookahead-heuristics",
@@ -385,7 +427,7 @@ def test_cli_outputs_separate_lookahead_heuristic_keys(tmp_path: Path):
             "0.0",
             "--planner-qrl-progress-alpha",
             "1.0",
-            "--n-trials",
+            "--starts-per-device",
             "1",
         ]
         comm_eval.main()

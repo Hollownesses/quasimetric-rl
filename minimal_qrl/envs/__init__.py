@@ -7,6 +7,14 @@ from .continuous_obstacle_2d import ContinuousObstacle2D
 from .maze2d_navigation import Maze2DNavigation
 from .mountaincar_2d import MountainCar2D
 from .dubins_uav_2d import DubinsUAV2D, Obstacle, CircleObstacle
+from .industrial_inspection_catalog import (
+    DeviceObservationSpec,
+    DeviceTaskSpec,
+    GroundStationSpec,
+    IndustrialInspectionCatalog,
+    TaskContextInfeasibleError,
+    load_device_catalog,
+)
 from .comm_inspection_dubins_uav_2d import CommInspectionDubinsUAV2D
 
 __all__ = [
@@ -18,5 +26,11 @@ __all__ = [
     'DubinsUAV2D',
     'Obstacle',
     'CircleObstacle',
+    'DeviceObservationSpec',
+    'DeviceTaskSpec',
+    'GroundStationSpec',
+    'IndustrialInspectionCatalog',
+    'TaskContextInfeasibleError',
+    'load_device_catalog',
     'CommInspectionDubinsUAV2D',
 ]

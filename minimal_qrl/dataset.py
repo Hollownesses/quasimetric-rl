@@ -34,17 +34,39 @@ def _goal_set_transition_infos(
     n: int,
     task_goal_obs: np.ndarray,
     context_id: int,
+    env: Optional[gym.Env] = None,
+    global_push_seed: Optional[int] = None,
+    include_global_push_pairs: bool = False,
     abstract_goal_edge: bool = False,
     source_terminal_goal_state: bool = False,
     teacher_guided: bool = False,
 ) -> dict:
-    return {
+    infos = {
         "abstract_goal_edge": np.full((n,), bool(abstract_goal_edge), dtype=np.bool_),
         "source_terminal_goal_state": np.full((n,), bool(source_terminal_goal_state), dtype=np.bool_),
         "task_goal_observations": np.repeat(task_goal_obs[None, :], n, axis=0).astype(np.float32),
         "context_id": np.full((n,), int(context_id), dtype=np.int64),
         "teacher_guided": np.full((n,), bool(teacher_guided), dtype=np.bool_),
     }
+    device_index = int(getattr(env, "active_device_index", -1)) if env is not None else -1
+    infos["device_index"] = np.full((n,), device_index, dtype=np.int64)
+
+    obs_dim = int(task_goal_obs.shape[0])
+    source_pairs = np.zeros((n, obs_dim), dtype=np.float32)
+    goal_pairs = np.zeros((n, obs_dim), dtype=np.float32)
+    pair_mask = np.zeros((n,), dtype=np.bool_)
+    if include_global_push_pairs and env is not None and n > 0:
+        rng = np.random.default_rng(global_push_seed)
+        for i in range(n):
+            source_state = env.sample_valid_state(seed=int(rng.integers(0, 1_000_000_000)))
+            goal_state = env.sample_valid_state(seed=int(rng.integers(0, 1_000_000_000)))
+            source_pairs[i] = env.state_to_observation(source_state).astype(np.float32)
+            goal_pairs[i] = env.state_to_observation(goal_state).astype(np.float32)
+            pair_mask[i] = True
+    infos["global_push_source_observations"] = source_pairs
+    infos["global_push_goal_observations"] = goal_pairs
+    infos["global_push_pair_mask"] = pair_mask
+    return infos
 
 
 def _make_goal_set_abstract_edge(
@@ -70,6 +92,7 @@ def _make_goal_set_abstract_edge(
             n=1,
             task_goal_obs=task_goal_obs,
             context_id=context_id,
+            env=env,
             abstract_goal_edge=True,
             source_terminal_goal_state=True,
         ),
@@ -252,6 +275,9 @@ def collect_goal_set_comm_episode_pair(
             n=n,
             task_goal_obs=task_goal_obs,
             context_id=context_id,
+            env=env,
+            global_push_seed=None if seed is None else int(seed + 32452843),
+            include_global_push_pairs=True,
         ),
     )
 
@@ -283,8 +309,8 @@ def collect_task_aware_comm_teacher_episode_pair(
     seed: Optional[int] = None,
     context_id: int = 0,
     heading_switch_distance: Optional[float] = None,
-    inspection_target: Optional[Tuple[float, float]] = None,
-    ground_station: Optional[Tuple[float, float]] = None,
+    device_id: Optional[str] = None,
+    task_context=None,
     task_goal_obs: Optional[np.ndarray] = None,
 ) -> Tuple[Optional[EpisodeData], Optional[EpisodeData]]:
     """
@@ -292,100 +318,81 @@ def collect_task_aware_comm_teacher_episode_pair(
 
         s0 -> s1 -> ... -> g in G_task(xi) -> abstract G_task(xi)
 
-    If inspection_target / ground_station are provided, all attempts reuse that
-    fixed task context xi. Otherwise each attempt samples its own feasible xi.
-    Then the collector samples one terminal state g in G_task(xi), resets to a
-    random non-terminal start under the same context, and uses simple Dubins
-    heading guidance toward g.
+    A provided device_id/task_context is preserved across all attempts. The
+    collector samples one terminal state g in G_task(xi), resets to a random
+    non-terminal start under the same context, and uses Dubins guidance to g.
     """
     rng = np.random.default_rng(seed)
-    original_randomize_target = getattr(env, "randomize_inspection_target", False)
-    original_randomize_station = getattr(env, "randomize_ground_station", False)
-    fixed_context = inspection_target is not None and ground_station is not None
+    for attempt in range(max(1, int(TASK_AWARE_TEACHER_MAX_ATTEMPTS))):
+        attempt_seed = None if seed is None else int(seed + 1009 * attempt)
+        context_options = {}
+        if task_context is not None:
+            context_options["task_context"] = task_context
+        elif device_id is not None:
+            context_options["device_id"] = str(device_id)
+        _obs, _ = env.reset(seed=attempt_seed, options=context_options or None)
+        current_task_context = env.active_task
+        current_task_goal_obs = (
+            np.asarray(task_goal_obs, dtype=np.float32).copy()
+            if task_goal_obs is not None
+            else env.abstract_goal_observation().astype(np.float32)
+        )
 
-    try:
-        for attempt in range(max(1, int(TASK_AWARE_TEACHER_MAX_ATTEMPTS))):
-            attempt_seed = None if seed is None else int(seed + 1009 * attempt)
-            if fixed_context:
-                env.randomize_inspection_target = False
-                env.randomize_ground_station = False
-                env.inspection_target = tuple(inspection_target)
-                env.ground_station = tuple(ground_station)
-                current_target = tuple(inspection_target)
-                current_station = tuple(ground_station)
-                current_task_goal_obs = (
-                    np.asarray(task_goal_obs, dtype=np.float32).copy()
-                    if task_goal_obs is not None
-                    else env.abstract_goal_observation().astype(np.float32)
-                )
-            else:
-                env.randomize_inspection_target = original_randomize_target
-                env.randomize_ground_station = original_randomize_station
-                _obs, _ = env.reset(seed=attempt_seed)
-                current_target = tuple(env.inspection_target)
-                current_station = tuple(env.ground_station)
-                current_task_goal_obs = env.abstract_goal_observation().astype(np.float32)
-
-            try:
-                terminal_state = env.sample_task_terminal_state(
-                    seed=None if seed is None else int(seed + 200003 + 1009 * attempt)
-                )
-            except RuntimeError:
-                continue
-
-            env.randomize_inspection_target = False
-            env.randomize_ground_station = False
-            reset_seed = None if seed is None else int(seed + 400009 + 1009 * attempt)
-            obs, _ = env.reset(
-                seed=reset_seed,
-                options={
-                    "inspection_target": current_target,
-                    "ground_station": current_station,
-                },
+        try:
+            terminal_state = env.sample_task_terminal_state(
+                seed=None if seed is None else int(seed + 200003 + 1009 * attempt)
             )
+        except RuntimeError:
+            continue
 
-            observations = [obs.copy()]
-            actions = []
-            next_observations = []
-            rewards = []
-            terminals = []
-            timeouts = []
-            final_info = {}
-            success = False
-            switch_dist = (
-                float(heading_switch_distance)
-                if heading_switch_distance is not None
-                else max(0.35, 0.5 * float(getattr(env, "observation_radius", 1.0)))
+        reset_seed = None if seed is None else int(seed + 400009 + 1009 * attempt)
+        obs, _ = env.reset(
+            seed=reset_seed,
+            options={"task_context": current_task_context},
+        )
+
+        observations = [obs.copy()]
+        actions = []
+        next_observations = []
+        rewards = []
+        terminals = []
+        timeouts = []
+        final_info = {}
+        success = False
+        switch_dist = (
+            float(heading_switch_distance)
+            if heading_switch_distance is not None
+            else max(0.35, 0.5 * float(getattr(env, "observation_radius", 1.0)))
+        )
+
+        for _ in range(max_steps):
+            action = _dubins_teacher_action(
+                env,
+                terminal_state,
+                kp=float(TASK_AWARE_TEACHER_KP),
+                heading_switch_distance=switch_dist,
+                rng=rng,
+                noise_std=float(TASK_AWARE_TEACHER_ACTION_NOISE_STD),
             )
+            next_obs, reward, terminated, truncated, info = env.step(action)
 
-            for _ in range(max_steps):
-                action = _dubins_teacher_action(
-                    env,
-                    terminal_state,
-                    kp=float(TASK_AWARE_TEACHER_KP),
-                    heading_switch_distance=switch_dist,
-                    rng=rng,
-                    noise_std=float(TASK_AWARE_TEACHER_ACTION_NOISE_STD),
-                )
-                next_obs, reward, terminated, truncated, info = env.step(action)
+            actions.append(action.astype(np.float32))
+            observations.append(next_obs.copy())
+            next_observations.append(next_obs.copy())
+            rewards.append(float(reward))
+            terminals.append(bool(terminated))
+            timeouts.append(bool(truncated))
+            final_info = dict(info)
+            success = bool(info.get("success", False))
+            if terminated or truncated:
+                break
 
-                actions.append(action.astype(np.float32))
-                observations.append(next_obs.copy())
-                next_observations.append(next_obs.copy())
-                rewards.append(float(reward))
-                terminals.append(bool(terminated))
-                timeouts.append(bool(truncated))
-                final_info = dict(info)
-                success = bool(info.get("success", False))
-                if terminated or truncated:
-                    break
+        if not success or len(actions) == 0:
+            continue
 
-            if not success or len(actions) == 0:
-                continue
-
-            actions_array = _actions_to_array(actions)
-            n = len(actions)
-            episode = EpisodeData.from_simple_trajectory(
+        actions_array = _actions_to_array(actions)
+        n = len(actions)
+        episode = EpisodeData.from_simple_trajectory(
                 observations=np.array(observations[:-1], dtype=np.float32),
                 actions=actions_array,
                 next_observations=np.array(next_observations, dtype=np.float32),
@@ -396,24 +403,22 @@ def collect_task_aware_comm_teacher_episode_pair(
                     n=n,
                     task_goal_obs=current_task_goal_obs,
                     context_id=context_id,
+                    env=env,
+                    global_push_seed=None if seed is None else int(seed + 49979687 + attempt),
+                    include_global_push_pairs=True,
                     teacher_guided=True,
                 ),
-            )
-            terminal_obs = np.asarray(observations[-1], dtype=np.float32)
-            if not bool(final_info.get("success", False)):
-                terminal_obs = env.state_to_observation(terminal_state).astype(np.float32)
-            abstract_episode = _make_goal_set_abstract_edge(
-                env,
-                terminal_obs=terminal_obs,
-                task_goal_obs=current_task_goal_obs,
-                context_id=context_id,
-                action_template=actions_array[-1],
-                action_dtype=actions_array.dtype,
-            )
-            return episode, abstract_episode
-    finally:
-        env.randomize_inspection_target = original_randomize_target
-        env.randomize_ground_station = original_randomize_station
+        )
+        terminal_obs = np.asarray(observations[-1], dtype=np.float32)
+        abstract_episode = _make_goal_set_abstract_edge(
+            env,
+            terminal_obs=terminal_obs,
+            task_goal_obs=current_task_goal_obs,
+            context_id=context_id,
+            action_template=actions_array[-1],
+            action_dtype=actions_array.dtype,
+        )
+        return episode, abstract_episode
 
     warnings.warn(
         "Task-aware Dubins teacher failed to collect a successful trajectory "
@@ -472,8 +477,7 @@ def create_dataset(
                 seed=episode_seed,
                 context_id=i,
             )
-            shared_inspection_target = tuple(env.inspection_target)
-            shared_ground_station = tuple(env.ground_station)
+            shared_device_id = str(env.active_device_id)
             shared_task_goal_obs = env.abstract_goal_observation().astype(np.float32)
             yield episode
             if abstract_episode is not None:
@@ -487,8 +491,7 @@ def create_dataset(
                     max_steps=max_steps_per_episode,
                     seed=teacher_seed,
                     context_id=i,
-                    inspection_target=shared_inspection_target,
-                    ground_station=shared_ground_station,
+                    device_id=shared_device_id,
                     task_goal_obs=shared_task_goal_obs,
                 )
                 if teacher_episode is not None:

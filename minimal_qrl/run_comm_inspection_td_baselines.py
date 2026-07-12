@@ -137,7 +137,7 @@ def _evaluate_agent(
     execution_modes: List[str],
     lookahead_heuristics: str,
     device: torch.device,
-) -> tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, List[Dict[str, Any]]]]]:
+) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, List[Dict[str, Any]]]]]:
     env = make_comm_inspection_env(args)
     if hasattr(agent, "env"):
         agent.env = env
@@ -165,7 +165,7 @@ def _evaluate_agent(
         save_gif=False,
         gif_fps=8,
     )
-    out: Dict[str, Dict[str, float]] = {}
+    out: Dict[str, Dict[str, Any]] = {}
     visualizations: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     parsed_lookahead_heuristics = _parse_lookahead_heuristics(lookahead_heuristics)
     for mode in execution_modes:
@@ -182,7 +182,7 @@ def _evaluate_agent(
                     agent,
                     env,
                     "lookahead",
-                    n_trials=int(args.n_trials),
+                    starts_per_device=int(args.starts_per_device),
                     seed=int(args.seed),
                     lookahead_cfg=replace(lookahead_cfg, heuristic_mode=heuristic),
                     output_dir=Path(args.output_dir),
@@ -198,7 +198,7 @@ def _evaluate_agent(
             agent,
             env,
             "greedy",
-            n_trials=int(args.n_trials),
+            starts_per_device=int(args.starts_per_device),
             seed=int(args.seed),
             lookahead_cfg=None,
             output_dir=Path(args.output_dir),
@@ -290,23 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-episode-steps", type=int, default=180)
     parser.add_argument("--obstacle-config", type=str, default="medium", choices=["none", "simple", "medium", "hard"])
     parser.add_argument("--obstacles", type=float, nargs="*", default=None)
-    parser.add_argument("--observation-mode", type=str, default="task_context", choices=["task_context", "cos_sin", "state"])
-    parser.add_argument("--inspection-target", type=float, nargs=2, default=[3.0, 7.5])
-    parser.add_argument("--ground-station", type=float, nargs=2, default=[1.5, 2.0])
-    parser.add_argument("--randomize-inspection-target", action="store_true")
-    parser.add_argument("--randomize-ground-station", action="store_true")
-    parser.add_argument("--observation-radius", type=float, default=1.8)
-    parser.add_argument("--fov-angle", type=float, default=float(np.pi / 2.0))
-    parser.add_argument("--require-target-los", dest="require_target_los", action="store_true", default=True)
-    parser.add_argument("--no-require-target-los", dest="require_target_los", action="store_false")
+    parser.add_argument("--device-catalog", type=str, required=True)
     parser.add_argument("--comm-alpha", type=float, default=2.0)
     parser.add_argument("--comm-bias", type=float, default=5.0)
     parser.add_argument("--comm-occlusion-penalty", type=float, default=6.0)
     parser.add_argument("--comm-threshold", type=float, default=0.5)
     parser.add_argument("--require-ground-station-los", action="store_true")
-    parser.add_argument("--goal-sampling-mode", type=str, default="task_feasible", choices=["task_feasible", "valid"])
-    parser.add_argument("--goal-position-tolerance", type=float, default=0.25)
-    parser.add_argument("--goal-heading-tolerance", type=float, default=0.3)
     parser.add_argument("--collision-cost", type=float, default=10.0)
     parser.add_argument("--out-of-bounds-cost", type=float, default=10.0)
     parser.add_argument("--communication-break-cost", type=float, default=1.0)
@@ -318,7 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--taskscore-beta-feas", type=float, default=0.5)
     parser.add_argument("--taskscore-margin-clip", type=float, default=2.0)
 
-    parser.add_argument("--n-trials", type=int, default=100)
+    parser.add_argument("--starts-per-device", type=int, default=50)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--num-critics", type=int, default=2)
@@ -350,7 +339,7 @@ def main() -> None:
     args = build_parser().parse_args()
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     device = auto_device(args.device)
-    results: Dict[str, Dict[str, float]] = {}
+    results: Dict[str, Dict[str, Any]] = {}
     visualizations: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     checkpoints: Dict[str, Optional[str]] = {}
 
@@ -396,10 +385,7 @@ def main() -> None:
         "env_config": {
             "bounds": [float(v) for v in args.bounds],
             "obstacle_config": args.obstacle_config,
-            "inspection_target": [float(v) for v in args.inspection_target],
-            "ground_station": [float(v) for v in args.ground_station],
-            "observation_mode": args.observation_mode,
-            "goal_sampling_mode": args.goal_sampling_mode,
+            "device_catalog": str(args.device_catalog),
         },
         "training_config": {
             "qrl": {
@@ -417,6 +403,7 @@ def main() -> None:
             },
         },
         "evaluation_config": {
+            "starts_per_device": int(args.starts_per_device),
             "lookahead_heuristics": _parse_lookahead_heuristics(args.lookahead_heuristics),
             "qrl_lookahead_heuristics": _parse_lookahead_heuristics(
                 args.qrl_lookahead_heuristics or args.lookahead_heuristics

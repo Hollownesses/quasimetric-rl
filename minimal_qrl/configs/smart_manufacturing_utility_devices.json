@@ -1,0 +1,152 @@
+{
+  "ground_station": {
+    "position": [0.5, 5.0],
+    "los_anchor": [0.5, 5.0]
+  },
+  "devices": [
+    {
+      "id": "main_transformer_tr01",
+      "position": [1.6, 1.0],
+      "observation_anchor": [1.4, 1.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "medium_voltage_switchgear_mv01",
+      "position": [3.0, 1.0],
+      "observation_anchor": [2.8, 1.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "low_voltage_panel_lv01",
+      "position": [4.4, 1.0],
+      "observation_anchor": [4.2, 1.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "ups_cabinet_ups01",
+      "position": [5.8, 1.0],
+      "observation_anchor": [5.6, 1.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "diesel_generator_dg01",
+      "position": [7.2, 1.0],
+      "observation_anchor": [7.0, 1.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "chiller_ch01",
+      "position": [2.0, 2.2],
+      "observation_anchor": [1.8, 2.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "cooling_tower_fan_ct01",
+      "position": [1.6, 3.8],
+      "observation_anchor": [1.4, 3.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "package_boiler_pb01",
+      "position": [3.0, 3.8],
+      "observation_anchor": [2.8, 3.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "air_compressor_ac01",
+      "position": [4.4, 3.8],
+      "observation_anchor": [4.2, 3.8],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "refrigerated_air_dryer_ad01",
+      "position": [1.4, 4.7],
+      "observation_anchor": [1.2, 4.7],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "compressed_air_header_ca01",
+      "position": [1.8, 5.4],
+      "observation_anchor": [1.6, 5.4],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "cnc_spindle_unit_cnc01",
+      "position": [2.2, 7.2],
+      "observation_anchor": [2.0, 7.2],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "robot_welding_cell_rb01",
+      "position": [1.6, 6.3],
+      "observation_anchor": [1.4, 6.3],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "paint_booth_exhaust_pb01",
+      "position": [3.0, 6.3],
+      "observation_anchor": [2.8, 6.3],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "heat_treatment_furnace_ht01",
+      "position": [4.4, 6.3],
+      "observation_anchor": [4.2, 6.3],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "conveyor_drive_cd01",
+      "position": [5.8, 6.3],
+      "observation_anchor": [5.6, 6.3],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "agv_charging_station_agv01",
+      "position": [3.6, 8.0],
+      "observation_anchor": [3.4, 8.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "battery_storage_rack_bess01",
+      "position": [5.0, 8.0],
+      "observation_anchor": [4.8, 8.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "dust_collector_dc01",
+      "position": [1.6, 9.0],
+      "observation_anchor": [1.4, 9.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "air_handling_unit_ahu01",
+      "position": [3.0, 9.0],
+      "observation_anchor": [2.8, 9.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "water_treatment_pump_wp01",
+      "position": [4.4, 9.0],
+      "observation_anchor": [4.2, 9.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "steam_reducing_valve_prv01",
+      "position": [5.8, 9.0],
+      "observation_anchor": [5.6, 9.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "thermal_oil_pump_top01",
+      "position": [7.2, 9.0],
+      "observation_anchor": [7.0, 9.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    },
+    {
+      "id": "combustible_gas_detector_gd01",
+      "position": [8.6, 9.0],
+      "observation_anchor": [8.4, 9.0],
+      "observation": {"min_distance": 0.35, "max_distance": 0.85, "preferred_bearing_rad": 3.141592653589793, "bearing_tolerance_rad": 0.5, "fov_angle_rad": 1.5707963267948966, "require_los": true}
+    }
+  ]
+}

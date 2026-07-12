@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import torch
 
@@ -14,26 +16,39 @@ from minimal_qrl.baselines import (
     simulate_action_sequences,
 )
 from minimal_qrl.envs import CircleObstacle, CommInspectionDubinsUAV2D
+from minimal_qrl.eval.comm_inspection_baseline_eval import IncrementalResultWriter
 from minimal_qrl.gc_agents import GoalConditionedAgentBase
 
 
 def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
+    observation_radius = float(kwargs.pop("observation_radius", 0.6))
+    catalog = {
+        "ground_station": {"position": [1.0, 4.0], "los_anchor": [1.0, 4.0]},
+        "devices": [
+            {
+                "id": "device_01",
+                "position": [5.0, 4.0],
+                "observation_anchor": [5.0, 4.0],
+                "observation": {
+                    "min_distance": 0.0,
+                    "max_distance": observation_radius,
+                    "preferred_bearing_rad": 0.0,
+                    "bearing_tolerance_rad": np.pi,
+                    "fov_angle_rad": np.pi / 2.0,
+                    "require_los": True,
+                },
+            }
+        ],
+    }
     defaults = dict(
+        device_catalog=catalog,
         bounds=(0.0, 0.0, 8.0, 8.0),
         omega_max=2.0,
         v=1.0,
         dt=0.1,
         max_steps=80,
-        observation_mode="task_context",
         obstacles=[],
         start=(2.0, 4.0, 0.0),
-        inspection_target=(5.0, 4.0),
-        ground_station=(1.0, 4.0),
-        randomize_inspection_target=False,
-        randomize_ground_station=False,
-        observation_radius=0.6,
-        fov_angle=np.pi / 2.0,
-        require_target_los=True,
         comm_threshold=-100.0,
     )
     defaults.update(kwargs)
@@ -52,6 +67,36 @@ class ZeroValueAgent(GoalConditionedAgentBase):
     def batch_value(self, obs_batch, goal_obs_batch):
         del goal_obs_batch
         return np.zeros((len(obs_batch),), dtype=np.float32)
+
+
+def test_incremental_result_writer_flushes_each_episode(tmp_path):
+    writer = IncrementalResultWriter(tmp_path)
+    record = {
+        "method": "qrl_greedy",
+        "model_run": "qrl_0",
+        "device_id": "device_01",
+        "episode_seed": 17,
+        "success": 1.0,
+        "num_steps": 12.0,
+    }
+    writer.write(record)
+
+    csv_text = (tmp_path / "baseline_results.partial.csv").read_text(encoding="utf-8")
+    jsonl_text = (tmp_path / "baseline_results.partial.jsonl").read_text(encoding="utf-8")
+    progress = json.loads(
+        (tmp_path / "baseline_progress.json").read_text(encoding="utf-8")
+    )
+    assert "qrl_greedy" in csv_text
+    assert '"device_id": "device_01"' in jsonl_text
+    assert progress["status"] == "running"
+    assert progress["completed_records"] == 1
+
+    writer.mark_complete()
+    writer.close()
+    progress = json.loads(
+        (tmp_path / "baseline_progress.json").read_text(encoding="utf-8")
+    )
+    assert progress["status"] == "complete"
 
 
 def test_formal_baselines_do_not_require_point_goal():
@@ -80,15 +125,11 @@ def test_formal_baselines_do_not_require_point_goal():
 def test_same_seed_produces_same_task_and_start():
     env_a = make_env(
         start=None,
-        randomize_inspection_target=True,
-        randomize_ground_station=True,
         observation_radius=1.5,
         comm_threshold=0.0,
     )
     env_b = make_env(
         start=None,
-        randomize_inspection_target=True,
-        randomize_ground_station=True,
         observation_radius=1.5,
         comm_threshold=0.0,
     )

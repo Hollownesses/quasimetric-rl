@@ -49,16 +49,12 @@ def _obstacles_from_args(obstacles_raw: Optional[List[float]]) -> List:
 
 def make_env(obstacles: Optional[List] = None, **kwargs) -> CommInspectionDubinsUAV2D:
     default = dict(
+        device_catalog=Path(__file__).parent / "configs" / "industrial_site_devices.json",
         bounds=(0.0, 0.0, 10.0, 10.0),
         omega_max=1.0,
         v=1.0,
         dt=0.1,
         max_steps=220,
-        inspection_target=(7.5, 6.5),
-        ground_station=(1.5, 2.0),
-        observation_radius=1.8,
-        fov_angle=np.pi / 2.0,
-        require_target_los=True,
         require_ground_station_los=False,
         comm_alpha=2.0,
         comm_bias=5.0,
@@ -74,15 +70,19 @@ def rollout(
     start: Tuple[float, float, float],
     max_steps: int = 220,
 ) -> Tuple[List[np.ndarray], List[bool], bool]:
-    env.reset(options={"start": start})
+    env.reset(options={"start": start, "device_id": env.active_device_id})
+    terminal_state = env.sample_task_terminal_state(seed=12345)
     states = [env.state.copy()]
     task_flags = [env.is_task_feasible(env.state)]
     success = False
     for _ in range(max_steps):
         x, y, theta = env.state
-        gx, gy = env.inspection_target
+        gx, gy = terminal_state[:2]
         dx, dy = gx - x, gy - y
-        target_theta = np.arctan2(dy, dx)
+        if np.hypot(dx, dy) <= 0.5:
+            target_theta = float(terminal_state[2])
+        else:
+            target_theta = np.arctan2(dy, dx)
         err = _normalize_angle(target_theta - theta)
         omega = np.clip(1.5 * err, -env.omega_max, env.omega_max)
         _, _, terminated, truncated, info = env.step(np.array([omega], dtype=np.float32))
@@ -202,16 +202,28 @@ def plot_environment(
                 zorder=6,
             )
 
-        circle = patches.Circle(
+        sector = patches.Wedge(
             (env.inspection_target[0], env.inspection_target[1]),
-            env.observation_radius,
+            env.observation_max_distance,
+            np.degrees(env.preferred_bearing - env.bearing_tolerance),
+            np.degrees(env.preferred_bearing + env.bearing_tolerance),
+            width=env.observation_max_distance - env.observation_min_distance,
             fill=False,
             linestyle="--",
             linewidth=1.0,
             edgecolor="goldenrod",
             alpha=0.9,
         )
-        ax.add_patch(circle)
+        ax.add_patch(sector)
+        ax.scatter(
+            env.observation_anchor[0],
+            env.observation_anchor[1],
+            c="red",
+            s=35,
+            marker="+",
+            label="observation anchor",
+            zorder=6,
+        )
 
         arrow_len = 0.45
         ax.arrow(
@@ -238,9 +250,12 @@ def plot_environment(
 def main():
     parser = argparse.ArgumentParser(description="Visualize task-conditioned comm-aware inspection Dubins UAV environment")
     parser.add_argument("--start", type=float, nargs=3, default=[1.5, 1.5, 0.0])
-    parser.add_argument("--goal", type=float, nargs=3, default=None, help="Legacy argument ignored in goal-set mode")
-    parser.add_argument("--inspection-target", type=float, nargs=2, default=[7.5, 6.5])
-    parser.add_argument("--ground-station", type=float, nargs=2, default=[1.5, 2.0])
+    parser.add_argument(
+        "--device-catalog",
+        type=str,
+        default=str(Path(__file__).parent / "configs" / "industrial_site_devices.json"),
+    )
+    parser.add_argument("--device-id", type=str, default="tank_01")
     parser.add_argument("--circle-obstacles", type=float, nargs="*", default=None)
     parser.add_argument("--out", type=str, default=str(OUTPUT_DIR / "comm_inspection_overview.png"))
     args = parser.parse_args()
@@ -248,16 +263,14 @@ def main():
     obstacles = _obstacles_from_args(args.circle_obstacles)
     env = make_env(
         obstacles=obstacles,
-        inspection_target=tuple(args.inspection_target),
-        ground_station=tuple(args.ground_station),
-        observation_mode="task_context",
+        device_catalog=args.device_catalog,
     )
 
-    env.reset(seed=42)
+    env.reset(seed=42, options={"device_id": args.device_id})
     states, task_flags, success = rollout(env, tuple(args.start))
     out_path = plot_environment(env, states, task_flags, Path(args.out))
     print(f"Saved visualization to: {out_path}")
-    print(f"Task context: inspection_target={env.inspection_target}, ground_station={env.ground_station}")
+    print(f"Task context: device_id={env.active_device_id}, ground_station={env.ground_station}")
     print(f"Success: {success}")
 
 

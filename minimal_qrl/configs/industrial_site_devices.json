@@ -1,0 +1,47 @@
+{
+  "ground_station": {
+    "position": [1.5, 2.0],
+    "los_anchor": [1.5, 2.0]
+  },
+  "devices": [
+    {
+      "id": "tank_01",
+      "position": [3.5, 5.0],
+      "observation_anchor": [2.5, 5.0],
+      "observation": {
+        "min_distance": 1.1,
+        "max_distance": 2.0,
+        "preferred_bearing_rad": 3.141592653589793,
+        "bearing_tolerance_rad": 0.45,
+        "fov_angle_rad": 1.5707963267948966,
+        "require_los": true
+      }
+    },
+    {
+      "id": "process_unit_02",
+      "position": [5.0, 3.0],
+      "observation_anchor": [4.2, 3.0],
+      "observation": {
+        "min_distance": 1.0,
+        "max_distance": 2.0,
+        "preferred_bearing_rad": 3.141592653589793,
+        "bearing_tolerance_rad": 0.5,
+        "fov_angle_rad": 1.5707963267948966,
+        "require_los": true
+      }
+    },
+    {
+      "id": "pipe_rack_03",
+      "position": [2.0, 8.0],
+      "observation_anchor": [2.0, 8.0],
+      "observation": {
+        "min_distance": 1.0,
+        "max_distance": 1.8,
+        "preferred_bearing_rad": 0.0,
+        "bearing_tolerance_rad": 0.6,
+        "fov_angle_rad": 1.5707963267948966,
+        "require_los": true
+      }
+    }
+  ]
+}

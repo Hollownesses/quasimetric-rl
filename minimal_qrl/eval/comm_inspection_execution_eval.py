@@ -16,6 +16,7 @@ import csv
 import json
 import os
 import sys
+from time import perf_counter
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -104,29 +105,21 @@ def _obstacles_from_args(args) -> List[CircleObstacle]:
 
 
 def make_comm_inspection_env(args) -> CommInspectionDubinsUAV2D:
+    if not getattr(args, "device_catalog", None):
+        raise ValueError("--device-catalog is required")
     env = CommInspectionDubinsUAV2D(
+        device_catalog=args.device_catalog,
         bounds=tuple(float(v) for v in args.bounds),
         omega_max=float(args.omega_max),
         v=float(args.v),
         dt=float(args.dt),
         max_steps=int(args.max_episode_steps),
-        observation_mode=str(args.observation_mode),
         obstacles=_obstacles_from_args(args),
-        inspection_target=tuple(float(v) for v in args.inspection_target),
-        ground_station=tuple(float(v) for v in args.ground_station),
-        randomize_inspection_target=bool(args.randomize_inspection_target),
-        randomize_ground_station=bool(args.randomize_ground_station),
-        observation_radius=float(args.observation_radius),
-        fov_angle=float(args.fov_angle),
-        require_target_los=bool(args.require_target_los),
         comm_alpha=float(args.comm_alpha),
         comm_bias=float(args.comm_bias),
         comm_occlusion_penalty=float(args.comm_occlusion_penalty),
         comm_threshold=float(args.comm_threshold),
         require_ground_station_los=bool(args.require_ground_station_los),
-        goal_sampling_mode=str(args.goal_sampling_mode),
-        goal_position_tolerance=float(args.goal_position_tolerance),
-        goal_heading_tolerance=float(args.goal_heading_tolerance),
         collision_cost=abs(float(args.collision_cost)),
         out_of_bounds_cost=abs(float(args.out_of_bounds_cost)),
         communication_break_cost=abs(float(args.communication_break_cost)),
@@ -144,8 +137,7 @@ def make_comm_inspection_env(args) -> CommInspectionDubinsUAV2D:
     except RuntimeError as exc:
         raise ValueError(
             "当前通信巡检环境配置下不存在可采样的 task terminal state。"
-            "请检查 inspection_target / ground_station / obstacle_config / "
-            "observation_radius / fov_angle / comm_threshold 等参数。"
+            "请检查 device_catalog / obstacle_config / comm_threshold 等参数。"
         ) from exc
     return env
 
@@ -289,12 +281,37 @@ def _choose_hierarchical_subgoal(
     }
 
 
+def _synchronize_agent_device(agent: GoalConditionedAgentBase) -> None:
+    device = getattr(agent, "device", None)
+    if device is None:
+        return
+    device = torch.device(device)
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    elif device.type == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+        torch.mps.synchronize()
+
+
+def _warmup_value_model(
+    agent: GoalConditionedAgentBase,
+    env: CommInspectionDubinsUAV2D,
+    *,
+    seed: int,
+) -> None:
+    first_device = env.device_ids[0]
+    obs, _ = env.reset(seed=int(seed), options={"device_id": first_device})
+    goal = env.abstract_goal_observation().astype(np.float32)
+    _ = agent.batch_value(obs[None, :], goal[None, :])
+    _synchronize_agent_device(agent)
+
+
 def rollout_execution_episode(
     agent: GoalConditionedAgentBase,
     env: CommInspectionDubinsUAV2D,
     execution_mode: str,
     *,
     episode_seed: int,
+    device_id: Optional[str] = None,
     lookahead_cfg: Optional[DubinsLookaheadConfig],
     subgoal_actor: Optional[SubgoalActor] = None,
     actor_device: Optional[torch.device] = None,
@@ -311,7 +328,8 @@ def rollout_execution_episode(
         raise ValueError("hierarchical 模式需要 lookahead_cfg、subgoal_actor 和 actor_device")
 
     np.random.seed(int(episode_seed))
-    obs, reset_info = env.reset(seed=int(episode_seed))
+    reset_options = {"device_id": str(device_id)} if device_id is not None else None
+    obs, reset_info = env.reset(seed=int(episode_seed), options=reset_options)
     goal_obs = env.abstract_goal_observation()
     rng = np.random.default_rng(int(episode_seed))
 
@@ -328,8 +346,11 @@ def rollout_execution_episode(
     out_of_bounds = False
     final_info: Dict[str, Any] = dict(reset_info)
     current_subgoal: Optional[np.ndarray] = None
+    decision_times_sec: List[float] = []
 
     while not (done or truncated):
+        _synchronize_agent_device(agent)
+        decision_start = perf_counter()
         if execution_mode == "lookahead":
             action = _comm_inspection_lookahead_action(agent, env, goal_obs, lookahead_cfg)
         elif execution_mode == "hierarchical":
@@ -385,6 +406,8 @@ def rollout_execution_episode(
             )
         else:
             action = agent.act(obs, goal_obs, eval_mode=True)
+        _synchronize_agent_device(agent)
+        decision_times_sec.append(float(perf_counter() - decision_start))
 
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         obs, reward, done, truncated, step_info = env.step(action)
@@ -430,6 +453,9 @@ def rollout_execution_episode(
         "abstract_goal_observation": np.asarray(goal_obs, dtype=np.float32).copy(),
         "inspection_target": np.asarray(env.inspection_target, dtype=np.float32).copy(),
         "ground_station": np.asarray(env.ground_station, dtype=np.float32).copy(),
+        "device_id": str(env.active_device_id),
+        "decision_times_sec": decision_times_sec,
+        "first_decision_time_sec": float(decision_times_sec[0]) if decision_times_sec else 0.0,
         "high_level_events": high_level_events,
     }
 
@@ -544,16 +570,28 @@ def _draw_environment_base(ax, env: CommInspectionDubinsUAV2D, rollout: Dict[str
         zorder=5,
     )
 
-    obs_circle = patches.Circle(
+    obs_sector = patches.Wedge(
         (float(inspection_target[0]), float(inspection_target[1])),
-        float(env.observation_radius),
+        float(env.observation_max_distance),
+        np.degrees(env.preferred_bearing - env.bearing_tolerance),
+        np.degrees(env.preferred_bearing + env.bearing_tolerance),
+        width=float(env.observation_max_distance - env.observation_min_distance),
         fill=False,
         linestyle="--",
         linewidth=1.0,
         edgecolor="goldenrod",
         alpha=0.9,
     )
-    ax.add_patch(obs_circle)
+    ax.add_patch(obs_sector)
+    ax.scatter(
+        env.observation_anchor[0],
+        env.observation_anchor[1],
+        c="red",
+        s=35,
+        marker="+",
+        label="observation anchor",
+        zorder=6,
+    )
     _add_heading_arrow(ax, start, "green")
 
 
@@ -565,7 +603,7 @@ def _make_rollout_title(
     frame_index: Optional[int] = None,
 ) -> str:
     line1 = (
-        f"{execution_mode} | episode={episode_index:03d} | seed={int(rollout['seed'])} | "
+        f"{execution_mode} | device={rollout['device_id']} | episode={episode_index:03d} | seed={int(rollout['seed'])} | "
         f"success={bool(rollout['success'])} | steps={int(rollout['num_steps'])}"
     )
     line2 = (
@@ -877,6 +915,7 @@ def _rollout_to_raw_payload(rollout: Dict[str, Any], *, execution_mode: str, epi
         "execution_mode": execution_mode,
         "episode_index": int(episode_index),
         "seed": int(rollout["seed"]),
+        "device_id": str(rollout["device_id"]),
         "success": bool(rollout["success"]),
         "terminated": bool(rollout.get("terminated", rollout["success"])),
         "truncated": bool(rollout["truncated"]),
@@ -895,6 +934,8 @@ def _rollout_to_raw_payload(rollout: Dict[str, Any], *, execution_mode: str, epi
         "final_info": _json_safe(rollout["final_info"]),
         "step_infos": [_json_safe(info) for info in rollout["step_infos"]],
         "high_level_events": _json_safe(rollout.get("high_level_events", [])),
+        "decision_times_sec": [float(v) for v in rollout.get("decision_times_sec", [])],
+        "first_decision_time_sec": float(rollout.get("first_decision_time_sec", 0.0)),
     }
 
 
@@ -1025,6 +1066,7 @@ def _save_rollout_visualization(
         "category": category,
         "episode_index": int(episode_index),
         "seed": int(rollout["seed"]),
+        "device_id": str(rollout["device_id"]),
         "mode": execution_mode,
         "success": bool(rollout["success"]),
         "terminated": bool(rollout.get("terminated", rollout["success"])),
@@ -1056,7 +1098,7 @@ def evaluate_execution_mode(
     env: CommInspectionDubinsUAV2D,
     execution_mode: str,
     *,
-    n_trials: int,
+    starts_per_device: int,
     seed: int,
     lookahead_cfg: Optional[DubinsLookaheadConfig],
     output_dir: Path,
@@ -1068,7 +1110,7 @@ def evaluate_execution_mode(
     subgoal_lambda_final: float = 0.3,
     subgoal_lambda_task: float = 1.0,
     result_name: Optional[str] = None,
-) -> tuple[Dict[str, float], Dict[str, List[Dict[str, Any]]]]:
+) -> tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
     if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
     if execution_mode == "lookahead" and lookahead_cfg is None:
@@ -1077,6 +1119,12 @@ def evaluate_execution_mode(
         raise ValueError("hierarchical 模式需要 lookahead_cfg、subgoal_actor 和 actor_device")
 
     np.random.seed(int(seed))
+    starts_per_device = int(starts_per_device)
+    if starts_per_device <= 0:
+        raise ValueError("starts_per_device must be positive")
+    device_ids = list(env.device_ids)
+    total_trials = starts_per_device * len(device_ids)
+    _warmup_value_model(agent, env, seed=int(seed) + 7919)
 
     success_count = 0
     success_steps: List[int] = []
@@ -1098,6 +1146,9 @@ def evaluate_execution_mode(
     repair_dthetas: List[float] = []
     raw_task_scores: List[float] = []
     repaired_task_scores: List[float] = []
+    first_decision_times: List[float] = []
+    all_decision_times: List[float] = []
+    per_device_records: Dict[str, List[Dict[str, float]]] = {device_id: [] for device_id in device_ids}
 
     visualization_index: Dict[str, List[Dict[str, Any]]] = {
         "success": [],
@@ -1112,12 +1163,21 @@ def evaluate_execution_mode(
         success_dir.mkdir(parents=True, exist_ok=True)
         failure_dir.mkdir(parents=True, exist_ok=True)
 
-    for i in tqdm(range(n_trials), desc=f"{output_name}_success_rate", leave=False):
+    trial_specs = [
+        (device_index, device_id, start_index)
+        for device_index, device_id in enumerate(device_ids)
+        for start_index in range(starts_per_device)
+    ]
+    for i, (device_index, device_id, start_index) in enumerate(
+        tqdm(trial_specs, desc=f"{output_name}_success_rate", leave=False)
+    ):
+        episode_seed = int(seed + device_index * 1_000_003 + start_index)
         rollout = rollout_execution_episode(
             agent,
             env,
             execution_mode,
-            episode_seed=int(seed + i),
+            episode_seed=episode_seed,
+            device_id=device_id,
             lookahead_cfg=lookahead_cfg,
             subgoal_actor=subgoal_actor,
             actor_device=actor_device,
@@ -1129,6 +1189,10 @@ def evaluate_execution_mode(
 
         step_count = int(rollout["num_steps"])
         final_info = rollout["final_info"]
+        decision_times = [float(v) for v in rollout.get("decision_times_sec", [])]
+        if decision_times:
+            first_decision_times.append(decision_times[0])
+            all_decision_times.extend(decision_times)
 
         if rollout["success"]:
             success_count += 1
@@ -1150,6 +1214,20 @@ def evaluate_execution_mode(
             task_feasible_ratios.append(
                 float(np.mean([bool(info.get("task_feasible", False)) for info in step_infos]))
             )
+        device_comm_ratio = (
+            float(np.mean([bool(info.get("communication_feasible", False)) for info in step_infos]))
+            if step_infos
+            else 0.0
+        )
+        per_device_records[device_id].append(
+            {
+                "success": float(bool(rollout["success"])),
+                "steps": float(step_count),
+                "cost": float(episode_cost),
+                "communication_feasible_ratio": device_comm_ratio,
+                "first_decision_time_sec": decision_times[0] if decision_times else 0.0,
+            }
+        )
         final_obs_margins.append(_safe_float(final_info.get("obs_margin")))
         final_comm_margins.append(_safe_float(final_info.get("comm_margin")))
         final_task_scores.append(_safe_float(final_info.get("task_score")))
@@ -1209,7 +1287,21 @@ def evaluate_execution_mode(
                 )
             )
 
-    success_rate = success_count / float(n_trials) if n_trials > 0 else 0.0
+    success_rate = success_count / float(total_trials) if total_trials > 0 else 0.0
+    per_device = {}
+    for device_id, records in per_device_records.items():
+        per_device[device_id] = {
+            "num_trials": len(records),
+            "success_rate": float(np.mean([row["success"] for row in records])),
+            "avg_steps": float(np.mean([row["steps"] for row in records])),
+            "avg_total_cost": float(np.mean([row["cost"] for row in records])),
+            "communication_feasible_ratio": float(
+                np.mean([row["communication_feasible_ratio"] for row in records])
+            ),
+            "avg_first_decision_time_sec": float(
+                np.mean([row["first_decision_time_sec"] for row in records])
+            ),
+        }
     metrics = {
         "success_rate": success_rate,
         "avg_steps_success": float(np.mean(success_steps)) if success_steps else 0.0,
@@ -1217,7 +1309,9 @@ def evaluate_execution_mode(
         "avg_total_cost": float(np.mean(total_costs)) if total_costs else 0.0,
         "avg_cost_per_step": float(np.mean(avg_costs_per_step)) if avg_costs_per_step else 0.0,
         "num_success": float(success_count),
-        "num_trials": float(n_trials),
+        "num_trials": float(total_trials),
+        "starts_per_device": float(starts_per_device),
+        "num_devices": float(len(device_ids)),
         "observation_feasible_ratio": (
             float(np.mean(observation_feasible_ratios)) if observation_feasible_ratios else 0.0
         ),
@@ -1228,17 +1322,36 @@ def evaluate_execution_mode(
         "avg_final_obs_margin": float(np.mean(final_obs_margins)) if final_obs_margins else 0.0,
         "avg_final_comm_margin": float(np.mean(final_comm_margins)) if final_comm_margins else 0.0,
         "avg_final_task_score": float(np.mean(final_task_scores)) if final_task_scores else 0.0,
-        "ever_task_feasible_rate": ever_task_feasible / float(n_trials) if n_trials > 0 else 0.0,
+        "ever_task_feasible_rate": ever_task_feasible / float(total_trials) if total_trials > 0 else 0.0,
         "avg_first_task_feasible_step": (
             float(np.mean(first_task_feasible_steps)) if first_task_feasible_steps else 0.0
         ),
-        "collision_rate": collision_episodes / float(n_trials) if n_trials > 0 else 0.0,
-        "out_of_bounds_rate": out_of_bounds_episodes / float(n_trials) if n_trials > 0 else 0.0,
+        "collision_rate": collision_episodes / float(total_trials) if total_trials > 0 else 0.0,
+        "out_of_bounds_rate": out_of_bounds_episodes / float(total_trials) if total_trials > 0 else 0.0,
         "raw_actor_output_valid_rate": float(np.mean(raw_valid_rates)) if raw_valid_rates else 0.0,
         "mean_repair_distance": float(np.mean(repair_distances)) if repair_distances else 0.0,
         "mean_repair_dtheta": float(np.mean(repair_dthetas)) if repair_dthetas else 0.0,
         "mean_taskscore_raw_subgoal": float(np.mean(raw_task_scores)) if raw_task_scores else 0.0,
         "mean_taskscore_repaired_subgoal": float(np.mean(repaired_task_scores)) if repaired_task_scores else 0.0,
+        "first_decision_time_mean_sec": float(np.mean(first_decision_times)) if first_decision_times else 0.0,
+        "first_decision_time_p95_sec": float(np.percentile(first_decision_times, 95)) if first_decision_times else 0.0,
+        "first_decision_time_p99_sec": float(np.percentile(first_decision_times, 99)) if first_decision_times else 0.0,
+        "decision_time_mean_sec": float(np.mean(all_decision_times)) if all_decision_times else 0.0,
+        "decision_time_p95_sec": float(np.percentile(all_decision_times, 95)) if all_decision_times else 0.0,
+        "decision_time_p99_sec": float(np.percentile(all_decision_times, 99)) if all_decision_times else 0.0,
+        "macro_device_success_rate": float(
+            np.mean([values["success_rate"] for values in per_device.values()])
+        ),
+        "macro_device_avg_total_cost": float(
+            np.mean([values["avg_total_cost"] for values in per_device.values()])
+        ),
+        "macro_device_avg_steps": float(
+            np.mean([values["avg_steps"] for values in per_device.values()])
+        ),
+        "macro_device_communication_feasible_ratio": float(
+            np.mean([values["communication_feasible_ratio"] for values in per_device.values()])
+        ),
+        "per_device": per_device,
     }
     return metrics, visualization_index
 
@@ -1294,26 +1407,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-episode-steps", type=int, default=180)
     parser.add_argument("--obstacle-config", type=str, default="medium", choices=["none", "simple", "medium", "hard"])
     parser.add_argument("--obstacles", type=float, nargs="*", default=None)
-    parser.add_argument("--observation-mode", type=str, default="task_context", choices=["task_context", "cos_sin", "state"])
-
-    parser.add_argument("--inspection-target", type=float, nargs=2, default=[3.0, 7.5])
-    parser.add_argument("--ground-station", type=float, nargs=2, default=[1.5, 2.0])
-    parser.add_argument("--randomize-inspection-target", dest="randomize_inspection_target", action="store_true", default=True)
-    parser.add_argument("--no-randomize-inspection-target", dest="randomize_inspection_target", action="store_false")
-    parser.add_argument("--randomize-ground-station", dest="randomize_ground_station", action="store_true", default=True)
-    parser.add_argument("--no-randomize-ground-station", dest="randomize_ground_station", action="store_false")
-    parser.add_argument("--observation-radius", type=float, default=1.8)
-    parser.add_argument("--fov-angle", type=float, default=float(np.pi / 2.0))
-    parser.add_argument("--require-target-los", dest="require_target_los", action="store_true", default=True)
-    parser.add_argument("--no-require-target-los", dest="require_target_los", action="store_false")
+    parser.add_argument("--device-catalog", type=str, required=True)
     parser.add_argument("--comm-alpha", type=float, default=2.0)
     parser.add_argument("--comm-bias", type=float, default=5.0)
     parser.add_argument("--comm-occlusion-penalty", type=float, default=6.0)
     parser.add_argument("--comm-threshold", type=float, default=0.5)
     parser.add_argument("--require-ground-station-los", action="store_true")
-    parser.add_argument("--goal-sampling-mode", type=str, default="task_feasible", choices=["task_feasible", "valid"])
-    parser.add_argument("--goal-position-tolerance", type=float, default=0.25)
-    parser.add_argument("--goal-heading-tolerance", type=float, default=0.3)
     parser.add_argument("--collision-cost", type=float, default=10.0)
     parser.add_argument("--out-of-bounds-cost", type=float, default=10.0)
     parser.add_argument("--communication-break-cost", type=float, default=1.0)
@@ -1321,7 +1420,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--communication-violation-cost-weight", type=float, default=0.5)
     parser.add_argument("--observation-failure-cost", type=float, default=0.25)
 
-    parser.add_argument("--n-trials", type=int, default=200)
+    parser.add_argument("--starts-per-device", type=int, default=50)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--num-critics", type=int, default=2)
@@ -1421,7 +1520,7 @@ def main():
         gif_fps=int(args.viz_gif_fps),
     )
 
-    results: Dict[str, Dict[str, float]] = {}
+    results: Dict[str, Dict[str, Any]] = {}
     visualization_index: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     result_modes: List[str] = []
     for mode in execution_modes:
@@ -1434,7 +1533,7 @@ def main():
                     agent,
                     env,
                     "lookahead",
-                    n_trials=int(args.n_trials),
+                    starts_per_device=int(args.starts_per_device),
                     seed=int(args.seed),
                     lookahead_cfg=cfg,
                     output_dir=output_dir,
@@ -1454,7 +1553,7 @@ def main():
             agent,
             env,
             mode,
-            n_trials=int(args.n_trials),
+            starts_per_device=int(args.starts_per_device),
             seed=int(args.seed),
             lookahead_cfg=cfg,
             output_dir=output_dir,
@@ -1475,7 +1574,7 @@ def main():
         "checkpoint": os.path.abspath(args.checkpoint),
         "ckpt_step": int(ckpt_step) if ckpt_step is not None else None,
         "seed": int(args.seed),
-        "n_trials": int(args.n_trials),
+        "starts_per_device": int(args.starts_per_device),
         "execution_modes": result_modes,
         "requested_execution_modes": execution_modes,
         "lookahead_heuristics": lookahead_heuristics,
@@ -1492,11 +1591,8 @@ def main():
             "dt": float(args.dt),
             "max_episode_steps": int(args.max_episode_steps),
             "obstacle_config": str(args.obstacle_config),
-            "inspection_target": [float(v) for v in args.inspection_target],
-            "ground_station": [float(v) for v in args.ground_station],
-            "observation_mode": str(args.observation_mode),
-            "goal_sampling_mode": str(args.goal_sampling_mode),
-            "require_target_los": bool(args.require_target_los),
+            "device_catalog": os.path.abspath(args.device_catalog),
+            "device_ids": list(env.device_ids),
             "require_ground_station_los": bool(args.require_ground_station_los),
             "comm_threshold": float(args.comm_threshold),
             "taskscore_beta_obs": float(args.taskscore_beta_obs),

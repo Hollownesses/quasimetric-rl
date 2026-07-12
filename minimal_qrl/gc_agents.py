@@ -121,8 +121,8 @@ class QRLGoalValueAdapter(GoalConditionedAgentBase):
 
         # 当前内部状态（使用 env.state，比 obs 更精确）
         state = env.state.copy()
-        best_a = 0.0
-        best_v = float("inf")
+        valid_actions = []
+        valid_next_observations = []
         for w in omegas:
             # 单步 roll-out 近似下一状态（复用 Dubins 动力学）
             theta_new = env._normalize_angle(state[2] + w * env.dt)
@@ -132,13 +132,16 @@ class QRLGoalValueAdapter(GoalConditionedAgentBase):
             # 越界/碰撞直接跳过
             if not env.is_valid_state(next_state):
                 continue
-            next_obs = env.state_to_observation(next_state)
-            v = self.value(next_obs, goal_obs)
-            if v < best_v:
-                best_v = v
-                best_a = float(w)
+            valid_actions.append(float(w))
+            valid_next_observations.append(env.state_to_observation(next_state))
 
-        return np.array([best_a], dtype=np.float32)
+        if not valid_actions:
+            return np.array([0.0], dtype=np.float32)
+        obs_batch = np.asarray(valid_next_observations, dtype=np.float32)
+        goal_batch = np.repeat(np.asarray(goal_obs, dtype=np.float32)[None, :], len(valid_actions), axis=0)
+        values = self.batch_value(obs_batch, goal_batch)
+        best_index = int(np.argmin(values))
+        return np.array([valid_actions[best_index]], dtype=np.float32)
 
 
 class GCActor(nn.Module):

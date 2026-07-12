@@ -72,11 +72,11 @@ A: 减小 `--batch-size` 或 `--num-episodes`
 bash minimal_qrl/run_comm_inspection_execution_eval.sh
 ```
 
-默认会读取：
+训练与评估默认共用 `minimal_qrl/configs/industrial_site_devices.json`，其中基站固定，每台设备定义语义位置、表面观测锚点、观测距离环带和期望方位。默认会读取：
 
 - `results/minimal_qrl_inspection_dubins/checkpoint_final.pth`
-- 固定的 `inspection_target` / `ground_station` / `obstacle_config`
-- 随机起点和随机 task terminal goal
+- 设备目录中的全部真实设备和固定基站
+- 每台设备上数量相同的随机 UAV 起点
 - 同时评估 `greedy` 与 `lookahead`
 
 评估结果会保存到：
@@ -92,6 +92,8 @@ results/minimal_qrl_inspection_dubins/comm_inspection_execution_eval.json
 - `ever_task_feasible_rate`: rollout 中曾进入联合任务可行区域的比例
 - `collision_rate`: episode 级别的碰撞比例
 - `out_of_bounds_rate`: episode 级别的越界比例
+- `per_device`: 逐设备的成功率、代价、步数和通信可行比例
+- `first_decision_time_*` / `decision_time_*`: 首次和单步决策时延统计
 
 ## 下一步
 

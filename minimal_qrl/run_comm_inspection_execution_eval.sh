@@ -6,7 +6,7 @@
 #
 # 常见覆盖方式：
 #   OUTPUT_DIR=./results/minimal_qrl_inspection_dubins \
-#   N_TRIALS=300 \
+#   STARTS_PER_DEVICE=100 \
 #   EXECUTION_MODES=greedy,lookahead \
 #   LOOKAHEAD_HEURISTICS=terminal,dense \
 #   PLANNER_QRL_PROGRESS_ALPHA=1.0 \
@@ -29,32 +29,13 @@ OUTPUT_DIR="${OUTPUT_DIR:-./results/goalset_qrl_comm_inspection}"
 CHECKPOINT="${CHECKPOINT:-$OUTPUT_DIR/checkpoint_final.pth}"
 
 BOUNDS="${BOUNDS:-0 0 10 10}"
-INSPECTION_TARGET="${INSPECTION_TARGET:-3.0 7.5}"
-GROUND_STATION="${GROUND_STATION:-1.5 2.0}"
+DEVICE_CATALOG="${DEVICE_CATALOG:-./minimal_qrl/configs/industrial_site_devices.json}"
 OBSTACLE_CONFIG="${OBSTACLE_CONFIG:-medium}"
 
-RANDOMIZE_INSPECTION_TARGET_FLAG=""
-RANDOMIZE_GROUND_STATION_FLAG=""
-REQUIRE_TARGET_LOS_FLAG="--require-target-los"
 REQUIRE_GROUND_STATION_LOS_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
 VIZ_SAVE_GIF_FLAG=""
 
-if [[ "${RANDOMIZE_INSPECTION_TARGET:-1}" == "1" ]]; then
-  RANDOMIZE_INSPECTION_TARGET_FLAG="--randomize-inspection-target"
-else
-  RANDOMIZE_INSPECTION_TARGET_FLAG="--no-randomize-inspection-target"
-fi
-if [[ "${RANDOMIZE_GROUND_STATION:-1}" == "1" ]]; then
-  RANDOMIZE_GROUND_STATION_FLAG="--randomize-ground-station"
-else
-  RANDOMIZE_GROUND_STATION_FLAG="--no-randomize-ground-station"
-fi
-if [[ "${REQUIRE_TARGET_LOS:-1}" == "1" ]]; then
-  REQUIRE_TARGET_LOS_FLAG="--require-target-los"
-else
-  REQUIRE_TARGET_LOS_FLAG="--no-require-target-los"
-fi
 if [[ "${REQUIRE_GROUND_STATION_LOS:-0}" == "1" ]]; then
   REQUIRE_GROUND_STATION_LOS_FLAG="--require-ground-station-los"
 fi
@@ -80,22 +61,12 @@ fi
   --dt "${DT:-0.1}" \
   --max-episode-steps "${MAX_STEPS_PER_EPISODE:-180}" \
   --obstacle-config "$OBSTACLE_CONFIG" \
-  --observation-mode "${OBSERVATION_MODE:-task_context}" \
-  --inspection-target ${INSPECTION_TARGET} \
-  --ground-station ${GROUND_STATION} \
-  ${RANDOMIZE_INSPECTION_TARGET_FLAG} \
-  ${RANDOMIZE_GROUND_STATION_FLAG} \
-  --observation-radius "${OBS_RADIUS:-1.8}" \
-  --fov-angle "${FOV_ANGLE:-1.5707963267948966}" \
-  ${REQUIRE_TARGET_LOS_FLAG} \
+  --device-catalog "$DEVICE_CATALOG" \
   --comm-alpha "${COMM_ALPHA:-2.0}" \
   --comm-bias "${COMM_BIAS:-5.0}" \
   --comm-occlusion-penalty "${COMM_OCCLUSION_PENALTY:-6.0}" \
   --comm-threshold "${COMM_THRESHOLD:-0.5}" \
   ${REQUIRE_GROUND_STATION_LOS_FLAG} \
-  --goal-sampling-mode "${GOAL_SAMPLING_MODE:-task_feasible}" \
-  --goal-position-tolerance "${GOAL_POS_TOL:-0.25}" \
-  --goal-heading-tolerance "${GOAL_HEADING_TOL:-0.3}" \
   --collision-cost "${COLLISION_COST:-10.0}" \
   --out-of-bounds-cost "${OUT_OF_BOUNDS_COST:-10.0}" \
   --communication-break-cost "${COMM_BREAK_COST:-1.0}" \
@@ -103,7 +74,7 @@ fi
   --communication-violation-cost-weight "${COMM_VIOLATION_COST_WEIGHT:-0.5}" \
   --observation-failure-cost "${OBSERVATION_FAILURE_COST:-0.25}" \
   --num-critics "${NUM_CRITICS:-2}" \
-  --n-trials "${N_TRIALS:-100}" \
+  --starts-per-device "${STARTS_PER_DEVICE:-50}" \
   --seed "${SEED:-0}" \
   --device "${DEVICE:-auto}" \
   --execution-modes "${EXECUTION_MODES:-greedy,lookahead}" \

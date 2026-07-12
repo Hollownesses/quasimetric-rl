@@ -243,6 +243,8 @@ python minimal_qrl/train.py \
 
 ## Goal-set 通信巡检 Baseline
 
+通信巡检环境由 `--device-catalog` 指定工业设备 JSON 目录。任务目标仅从目录设备产生；Global Push 的 state–state 项则使用同一设备上下文下独立采样的全自由空间状态对。
+
 统一 benchmark 包含 Hybrid A*、no-terminal MPPI、model-only MPPI、goal-set SAC、QRL greedy 和 QRL+MPPI：
 
 ```bash
