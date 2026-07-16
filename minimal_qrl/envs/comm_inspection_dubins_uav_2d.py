@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from contextlib import contextmanager
 from typing import Dict, List, Mapping, Optional, Tuple, Union
 
 import gym
@@ -244,6 +245,58 @@ class CommInspectionDubinsUAV2D(DubinsUAV2D):
         task = self.device_catalog.get_device(device_id)
         self._activate_task(task)
         return task
+
+    @contextmanager
+    def _task_scope(self, device_id: str):
+        """Temporarily evaluate a catalog task and restore all public task state."""
+        original = self._active_task
+        task = self.device_catalog.get_device(str(device_id))
+        self._activate_task(task)
+        try:
+            yield task
+        finally:
+            self._activate_task(original)
+
+    def observation_for_task(self, state: np.ndarray, device_id: str) -> np.ndarray:
+        """Encode ``state`` under another catalog task without changing the active task."""
+        with self._task_scope(device_id):
+            return self.state_to_observation(state).copy()
+
+    def abstract_goal_for_task(self, device_id: str) -> np.ndarray:
+        """Return the abstract goal observation for ``device_id`` without side effects."""
+        with self._task_scope(device_id):
+            return self.abstract_goal_observation().copy()
+
+    def is_task_feasible_for_task(self, state: np.ndarray, device_id: str) -> bool:
+        """Test membership in a device task's terminal set without changing context."""
+        with self._task_scope(device_id):
+            return bool(self.is_task_feasible(state))
+
+    def transition_outcome_for_task(
+        self,
+        next_state: np.ndarray,
+        device_id: str,
+        *,
+        collision: bool = False,
+        out_of_bounds: bool = False,
+    ) -> Dict[str, object]:
+        """Recompute a transition's goal observation, reward and terminal flag.
+
+        Time-limit truncation deliberately is not represented here: replay users must
+        keep it separate from ``terminated`` so Bellman targets continue to bootstrap.
+        """
+        with self._task_scope(device_id):
+            state = np.asarray(next_state, dtype=np.float32).reshape(3)
+            success = bool(self.is_task_feasible(state))
+            terms = self.compute_step_terms(state, bool(collision), bool(out_of_bounds))
+            return {
+                "next_observation": self.state_to_observation(state).copy(),
+                "goal_observation": self.abstract_goal_observation().copy(),
+                "reward": float(terms["reward_total"]),
+                "terminated": bool(success or collision or out_of_bounds),
+                "success": success,
+                "step_terms": dict(terms),
+            }
 
     def sample_task_context(self, seed: Optional[int] = None) -> Dict[str, object]:
         rng = self._get_rng(seed)

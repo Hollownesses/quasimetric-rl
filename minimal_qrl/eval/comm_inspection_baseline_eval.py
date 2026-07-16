@@ -21,6 +21,8 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from minimal_qrl.baselines import (  # noqa: E402
+    CalibratedValueAgent,
+    ContextGCRLConfig,
     GoalSetSACConfig,
     HybridAStarConfig,
     HybridAStarController,
@@ -28,8 +30,10 @@ from minimal_qrl.baselines import (  # noqa: E402
     MPPIController,
     PolicyController,
     load_goal_set_sac_checkpoint,
+    load_context_checkpoint,
     rollout_controller_episode,
     train_goal_set_sac,
+    train_context_agent,
 )
 from minimal_qrl.eval.comm_inspection_execution_eval import (  # noqa: E402
     VisualizationConfig,
@@ -40,7 +44,16 @@ from minimal_qrl.eval.comm_inspection_execution_eval import (  # noqa: E402
 from minimal_qrl.eval.utils import auto_device  # noqa: E402
 
 
-METHODS = {"hybrid_astar", "mppi_no_terminal", "model_mppi", "goal_set_sac", "qrl_greedy", "qrl_mppi"}
+CONTEXT_ALGORITHMS = {
+    "context_her_ddpg",
+    "context_contrastive_rl",
+    "mrn_context_her_ddpg",
+}
+CONTEXT_MPPI_METHODS = {f"{name}_mppi" for name in CONTEXT_ALGORITHMS}
+METHODS = {
+    "hybrid_astar", "mppi_no_terminal", "model_mppi", "goal_set_sac",
+    "qrl_greedy", "qrl_mppi", *CONTEXT_ALGORITHMS, *CONTEXT_MPPI_METHODS,
+}
 SCALAR_METRICS = (
     "success",
     "num_steps",
@@ -62,6 +75,18 @@ SCALAR_METRICS = (
     "expanded_nodes",
     "model_rollouts",
     "training_env_steps",
+    "teacher_env_steps",
+    "training_updates",
+    "relabel_count",
+    "cross_context_relabel_count",
+    "eligible_future_ratio",
+    "positive_relabel_ratio",
+    "actor_parameters",
+    "critic_parameters",
+    "contrastive_positive_accuracy",
+    "contrastive_negative_accuracy",
+    "mrn_metric_mean",
+    "mrn_residual_mean",
 )
 CSV_FIELDS = [
     "method",
@@ -179,6 +204,18 @@ def _rollout_record(method: str, rollout: Dict[str, Any], model_run: str) -> Dic
         "expanded_nodes": float(diagnostics.get("expanded_nodes", 0.0)),
         "model_rollouts": float(diagnostics.get("model_rollouts", 0.0)),
         "training_env_steps": float(diagnostics.get("training_env_steps", 0.0)),
+        "teacher_env_steps": float(diagnostics.get("teacher_env_steps", 0.0)),
+        "training_updates": float(diagnostics.get("training_updates", 0.0)),
+        "relabel_count": float(diagnostics.get("relabel_count", 0.0)),
+        "cross_context_relabel_count": float(diagnostics.get("cross_context_relabel_count", 0.0)),
+        "eligible_future_ratio": float(diagnostics.get("eligible_future_ratio", 0.0)),
+        "positive_relabel_ratio": float(diagnostics.get("positive_relabel_ratio", 0.0)),
+        "actor_parameters": float(diagnostics.get("actor_parameters", 0.0)),
+        "critic_parameters": float(diagnostics.get("critic_parameters", 0.0)),
+        "contrastive_positive_accuracy": float(diagnostics.get("contrastive_positive_accuracy", 0.0)),
+        "contrastive_negative_accuracy": float(diagnostics.get("contrastive_negative_accuracy", 0.0)),
+        "mrn_metric_mean": float(diagnostics.get("mrn_metric_mean", 0.0)),
+        "mrn_residual_mean": float(diagnostics.get("mrn_residual_mean", 0.0)),
         "planner_failure_reason": str(diagnostics.get("planner_failure_reason", "")),
         "start": [float(v) for v in rollout["start"]],
         "inspection_target": [float(v) for v in rollout["inspection_target"]],
@@ -187,13 +224,62 @@ def _rollout_record(method: str, rollout: Dict[str, Any], model_run: str) -> Dic
     }
 
 
-def _bootstrap_ci(values: np.ndarray, rng: np.random.Generator, n_boot: int) -> list[float]:
-    values = np.asarray(values, dtype=np.float64)
-    if values.size == 0:
+def _run_task_matrix(
+    records: list[Dict[str, Any]],
+    key: str,
+    episode_seeds: Optional[list[int]] = None,
+) -> tuple[np.ndarray, list[int]]:
+    runs = sorted({str(row["model_run"]) for row in records})
+    seeds = episode_seeds or sorted({int(row["episode_seed"]) for row in records})
+    matrix = np.full((len(runs), len(seeds)), np.nan, dtype=np.float64)
+    for run_index, run in enumerate(runs):
+        rows_by_seed: Dict[int, list[float]] = defaultdict(list)
+        for row in records:
+            if str(row["model_run"]) == run:
+                rows_by_seed[int(row["episode_seed"])].append(float(row[key]))
+        for seed_index, episode_seed in enumerate(seeds):
+            values = rows_by_seed.get(episode_seed, [])
+            if values:
+                matrix[run_index, seed_index] = float(np.mean(values))
+    return matrix, seeds
+
+
+def _hierarchical_bootstrap_ci(
+    records: list[Dict[str, Any]],
+    key: str,
+    rng: np.random.Generator,
+    n_boot: int,
+) -> list[float]:
+    matrix, _seeds = _run_task_matrix(records, key)
+    if matrix.size == 0:
         return [0.0, 0.0]
-    samples = rng.choice(values, size=(max(1, int(n_boot)), values.size), replace=True)
-    means = samples.mean(axis=1)
-    return [float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))]
+    samples = []
+    for _ in range(max(1, int(n_boot))):
+        run_indices = rng.integers(0, matrix.shape[0], size=matrix.shape[0])
+        task_indices = rng.integers(0, matrix.shape[1], size=matrix.shape[1])
+        samples.append(float(np.nanmean(matrix[run_indices][:, task_indices])))
+    return [float(np.percentile(samples, 2.5)), float(np.percentile(samples, 97.5))]
+
+
+def _hierarchical_paired_ci(
+    method_records: list[Dict[str, Any]],
+    reference_records: list[Dict[str, Any]],
+    key: str,
+    common_seeds: list[int],
+    rng: np.random.Generator,
+    n_boot: int,
+) -> list[float]:
+    method_matrix, _ = _run_task_matrix(method_records, key, common_seeds)
+    reference_matrix, _ = _run_task_matrix(reference_records, key, common_seeds)
+    samples = []
+    for _ in range(max(1, int(n_boot))):
+        method_runs = rng.integers(0, method_matrix.shape[0], size=method_matrix.shape[0])
+        reference_runs = rng.integers(0, reference_matrix.shape[0], size=reference_matrix.shape[0])
+        tasks = rng.integers(0, len(common_seeds), size=len(common_seeds))
+        method_mean = float(np.nanmean(method_matrix[method_runs][:, tasks]))
+        reference_mean = float(np.nanmean(reference_matrix[reference_runs][:, tasks]))
+        samples.append(method_mean - reference_mean)
+    return [float(np.percentile(samples, 2.5)), float(np.percentile(samples, 97.5))]
 
 
 def _summarize(records: list[Dict[str, Any]], *, seed: int, n_boot: int) -> Dict[str, Any]:
@@ -209,7 +295,9 @@ def _summarize(records: list[Dict[str, Any]], *, seed: int, n_boot: int) -> Dict
             metrics[key] = {
                 "mean": float(np.mean(values)),
                 "std": float(np.std(values)),
-                "bootstrap_95_ci": _bootstrap_ci(values, rng, n_boot),
+                "bootstrap_95_ci": _hierarchical_bootstrap_ci(
+                    method_records, key, rng, n_boot
+                ),
             }
         failure_reasons: Dict[str, int] = defaultdict(int)
         for row in method_records:
@@ -244,34 +332,66 @@ def _summarize(records: list[Dict[str, Any]], *, seed: int, n_boot: int) -> Dict
         ) if per_device else 0.0
         summary[method] = metrics
 
-    reference = by_method.get("qrl_greedy", [])
-    if reference:
+    def add_paired_comparison(
+        paired: Dict[str, Any],
+        method: str,
+        reference_name: str,
+        comparison_name: Optional[str] = None,
+    ) -> None:
+        reference = by_method.get(reference_name, [])
+        method_records = by_method.get(method, [])
+        if not reference or not method_records:
+            return
         reference_by_seed: Dict[int, list[Dict[str, Any]]] = defaultdict(list)
         for row in reference:
             reference_by_seed[int(row["episode_seed"])].append(row)
-        paired: Dict[str, Any] = {}
-        for method, method_records in by_method.items():
-            if method == "qrl_greedy":
-                continue
-            method_by_seed: Dict[int, list[Dict[str, Any]]] = defaultdict(list)
-            for row in method_records:
-                method_by_seed[int(row["episode_seed"])].append(row)
-            common = sorted(set(reference_by_seed) & set(method_by_seed))
-            if not common:
-                continue
-            rng = np.random.default_rng(int(seed) + 17 + sum(ord(ch) for ch in method))
-            paired[method] = {}
-            for key in ("success", "total_cost", "num_steps", "collision"):
-                differences = np.asarray([
-                    np.mean([float(row[key]) for row in method_by_seed[s]])
-                    - np.mean([float(row[key]) for row in reference_by_seed[s]])
-                    for s in common
-                ])
-                paired[method][f"{key}_difference_vs_qrl_greedy"] = {
-                    "mean": float(np.mean(differences)),
-                    "bootstrap_95_ci": _bootstrap_ci(differences, rng, n_boot),
-                    "num_pairs": len(common),
-                }
+        method_by_seed: Dict[int, list[Dict[str, Any]]] = defaultdict(list)
+        for row in method_records:
+            method_by_seed[int(row["episode_seed"])].append(row)
+        common = sorted(set(reference_by_seed) & set(method_by_seed))
+        if not common:
+            return
+        name = comparison_name or method
+        rng = np.random.default_rng(int(seed) + 17 + sum(ord(ch) for ch in name))
+        paired[name] = {"reference": reference_name, "method": method}
+        for key in ("success", "total_cost", "num_steps", "collision"):
+            differences = np.asarray([
+                np.mean([float(row[key]) for row in method_by_seed[s]])
+                - np.mean([float(row[key]) for row in reference_by_seed[s]])
+                for s in common
+            ])
+            paired[name][f"{key}_difference_vs_{reference_name}"] = {
+                "mean": float(np.mean(differences)),
+                "bootstrap_95_ci": _hierarchical_paired_ci(
+                    method_records,
+                    reference,
+                    key,
+                    common,
+                    rng,
+                    n_boot,
+                ),
+                "num_pairs": len(common),
+            }
+
+    paired: Dict[str, Any] = {}
+    for method in by_method:
+        if method in {"qrl_greedy", "qrl_mppi"}:
+            continue
+        reference_name = "qrl_mppi" if method.endswith("_mppi") else "qrl_greedy"
+        add_paired_comparison(paired, method, reference_name)
+    add_paired_comparison(
+        paired,
+        "mrn_context_her_ddpg",
+        "context_her_ddpg",
+        "mrn_vs_monolithic_ddpg",
+    )
+    add_paired_comparison(
+        paired,
+        "mrn_context_her_ddpg_mppi",
+        "context_her_ddpg_mppi",
+        "mrn_vs_monolithic_ddpg_mppi",
+    )
+    if paired:
         summary["paired_comparisons"] = paired
     return summary
 
@@ -403,7 +523,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default="results/comm_inspection_baselines")
     parser.add_argument("--qrl-checkpoints", nargs="*", default=[])
     parser.add_argument("--sac-checkpoints", nargs="*", default=[])
+    parser.add_argument("--context-checkpoints", nargs="*", default=[])
     parser.add_argument("--train-sac", action="store_true")
+    parser.add_argument("--train-context-agents", action="store_true")
     parser.add_argument("--sac-seeds", default=None)
     parser.add_argument("--sac-total-env-steps", type=int, default=None)
     parser.add_argument("--starts-per-device", type=int, default=None)
@@ -458,6 +580,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sac-batch-size", type=int, default=256)
     parser.add_argument("--sac-start-random-steps", type=int, default=5_000)
     parser.add_argument("--sac-hidden-dim", type=int, default=256)
+    parser.add_argument("--context-total-env-steps", type=int, default=None)
+    parser.add_argument("--context-seeds", default=None)
+    parser.add_argument("--context-batch-size", type=int, default=256)
+    parser.add_argument("--context-hidden-dim", type=int, default=256)
+    parser.add_argument("--context-representation-dim", type=int, default=64)
+    parser.add_argument("--context-replay-size", type=int, default=500_000)
+    parser.add_argument("--context-start-random-steps", type=int, default=5_000)
+    parser.add_argument("--context-her-k", type=int, default=4)
+    parser.add_argument("--context-teacher-ratio", type=float, default=1.0)
+    parser.add_argument("--context-checkpoint-interval", type=int, default=50_000)
     return parser
 
 
@@ -473,6 +605,10 @@ def main() -> None:
     sac_steps = stage_steps if args.sac_total_env_steps is None else int(args.sac_total_env_steps)
     sac_seeds = stage_seeds if args.sac_seeds is None else [
         int(value) for value in str(args.sac_seeds).split(",") if value.strip()
+    ]
+    context_steps = stage_steps if args.context_total_env_steps is None else int(args.context_total_env_steps)
+    context_seeds = stage_seeds if args.context_seeds is None else [
+        int(value) for value in str(args.context_seeds).split(",") if value.strip()
     ]
     device = auto_device(args.device)
     spec_env = make_comm_inspection_env(args)
@@ -592,6 +728,125 @@ def main() -> None:
             on_record=incremental_writer.write,
         ))
 
+    requested_context_algorithms = {
+        name for name in CONTEXT_ALGORITHMS
+        if name in methods or f"{name}_mppi" in methods
+    }
+    context_paths = [Path(path) for path in args.context_checkpoints]
+    if requested_context_algorithms and args.train_context_agents:
+        context_batch_size = int(args.context_batch_size)
+        if args.stage == "smoke":
+            context_batch_size = min(context_batch_size, 32)
+        context_cfg = ContextGCRLConfig(
+            hidden_dim=int(args.context_hidden_dim),
+            representation_dim=int(args.context_representation_dim),
+            residual_dim=int(args.context_representation_dim),
+            batch_size=context_batch_size,
+            replay_size=int(args.context_replay_size),
+            total_env_steps=context_steps,
+            start_random_steps=min(int(args.context_start_random_steps), context_steps),
+            her_k=int(args.context_her_k),
+            teacher_ratio=float(args.context_teacher_ratio),
+            checkpoint_interval=min(max(1, int(args.context_checkpoint_interval)), context_steps),
+        )
+        for algorithm in sorted(requested_context_algorithms):
+            for context_seed in context_seeds:
+                train_env = make_comm_inspection_env(args)
+                run_dir = output_dir / algorithm / f"seed_{context_seed}"
+                train_context_agent(
+                    algorithm,
+                    train_env,
+                    context_cfg,
+                    device,
+                    run_dir,
+                    seed=context_seed,
+                )
+                context_paths.append(run_dir / "checkpoint_final.pth")
+    if requested_context_algorithms and not context_paths:
+        raise ValueError(
+            "context GCRL methods require --train-context-agents or --context-checkpoints"
+        )
+    loaded_algorithms = set()
+    context_checkpoint_metadata = []
+    for context_index, checkpoint in enumerate(context_paths):
+        env = make_comm_inspection_env(args)
+        context_agent, metadata = load_context_checkpoint(checkpoint, env, device)
+        algorithm = str(metadata["algorithm"])
+        if algorithm not in requested_context_algorithms:
+            continue
+        loaded_algorithms.add(algorithm)
+        context_checkpoint_metadata.append({"checkpoint": str(checkpoint), **metadata})
+        model_run = f"{algorithm}_seed_{metadata['seed']}_{context_index}"
+        static_diagnostics = {
+            "training_env_steps": int(metadata["env_steps"]),
+            "teacher_env_steps": int(metadata["teacher_steps"]),
+            "training_updates": int(metadata["updates"]),
+            **{
+                key: float(value)
+                for key, value in metadata["replay_diagnostics"].items()
+                if key in {
+                    "relabel_count",
+                    "cross_context_relabel_count",
+                    "eligible_future_ratio",
+                    "positive_relabel_ratio",
+                }
+            },
+            "actor_parameters": int(metadata["model_metadata"].get("actor_parameters", 0)),
+            "critic_parameters": int(metadata["model_metadata"].get("critic_parameters", 0)),
+            **{
+                key: float(value)
+                for key, value in metadata["training_diagnostics"].items()
+                if key in {
+                    "contrastive_positive_accuracy",
+                    "contrastive_negative_accuracy",
+                    "mrn_metric_mean",
+                    "mrn_residual_mean",
+                }
+            },
+        }
+        if algorithm in methods:
+            records.extend(_evaluate_controller(
+                algorithm,
+                PolicyController(
+                    context_agent,
+                    name=algorithm,
+                    static_diagnostics=static_diagnostics,
+                ),
+                env,
+                episode_specs,
+                model_run=model_run,
+                output_dir=output_dir,
+                viz_cfg=viz_cfg,
+                counters=counters,
+                on_record=incremental_writer.write,
+            ))
+        mppi_method = f"{algorithm}_mppi"
+        if mppi_method in methods:
+            calibrated_agent = CalibratedValueAgent(
+                context_agent, metadata["value_calibration"]
+            )
+            records.extend(_evaluate_controller(
+                mppi_method,
+                MPPIController(
+                    mppi_cfg,
+                    terminal_mode="qrl",
+                    qrl_agent=calibrated_agent,
+                    static_diagnostics=static_diagnostics,
+                ),
+                env,
+                episode_specs,
+                model_run=model_run,
+                output_dir=output_dir,
+                viz_cfg=viz_cfg,
+                counters=counters,
+                on_record=incremental_writer.write,
+            ))
+    missing_context_algorithms = requested_context_algorithms - loaded_algorithms
+    if missing_context_algorithms:
+        raise ValueError(
+            f"no matching checkpoints for context algorithms: {sorted(missing_context_algorithms)}"
+        )
+
     summary = _summarize(records, seed=args.seed, n_boot=args.bootstrap_samples)
     payload = {
         "stage": args.stage,
@@ -602,6 +857,8 @@ def main() -> None:
         ],
         "qrl_checkpoints": args.qrl_checkpoints,
         "sac_checkpoints": [str(path) for path in sac_paths],
+        "context_checkpoints": [str(path) for path in context_paths],
+        "context_checkpoint_metadata": context_checkpoint_metadata,
         "summary": summary,
         "episode_results": records,
         "config": vars(args),

@@ -245,13 +245,19 @@ python minimal_qrl/train.py \
 
 通信巡检环境由 `--device-catalog` 指定工业设备 JSON 目录。任务目标仅从目录设备产生；Global Push 的 state–state 项则使用同一设备上下文下独立采样的全自由空间状态对。
 
-统一 benchmark 包含 Hybrid A*、no-terminal MPPI、model-only MPPI、goal-set SAC、QRL greedy 和 QRL+MPPI：
+统一 benchmark 包含 Hybrid A*、no-terminal MPPI、model-only MPPI、goal-set SAC、QRL，以及三个目标上下文 GCRL 基线：
+
+- `context_her_ddpg`：设备任务上下文重标记的 HER+DDPG；
+- `context_contrastive_rl`：以抽象设备任务为目标表示的 Contrastive RL；
+- `mrn_context_her_ddpg`：和 Context HER-DDPG 共享训练管线、使用 MRN critic。
+
+三者都同时输出原生 actor 和统一价值校准 MPPI 结果。Context HER 只会重标记到未来状态真实满足的目录设备任务，并在该上下文中重算观察、稠密任务代价和终止标记。
 
 ```bash
 # 快速闭环检查
 STAGE=smoke bash minimal_qrl/run_comm_inspection_baselines.sh
 
-# 单 seed pilot；默认训练 SAC 300k 环境步并评估 50 个共同任务
+# 单 seed pilot；默认训练 SAC 和三个 Context GCRL 方法 300k 环境步
 STAGE=pilot bash minimal_qrl/run_comm_inspection_baselines.sh
 
 # 正式实验；QRL_CHECKPOINTS 用空格分隔多个训练 seed 的 checkpoint
@@ -260,4 +266,6 @@ QRL_CHECKPOINTS="path/to/qrl_seed0.pth path/to/qrl_seed1.pth path/to/qrl_seed2.p
 bash minimal_qrl/run_comm_inspection_baselines.sh
 ```
 
-结果写入 `baseline_results.json` 和 `baseline_results.csv`，包含逐 episode 指标、均值、标准差、bootstrap 95% 区间、相对 QRL greedy 的配对比较和规划计算预算。`mppi_no_terminal`、`model_mppi` 和 `qrl_mppi` 使用相同 rollout 预算，只改变 terminal guidance；Hybrid A* 默认使用 task-feasible terminal samples 构造几何时间启发式，默认搜索超时为 30 秒。
+可以通过 `TRAIN_CONTEXT_AGENTS=0` 禁用现场训练，并用空格分隔的 `CONTEXT_CHECKPOINTS` 加载已有 checkpoint。`CONTEXT_TOTAL_ENV_STEPS`、`CONTEXT_SEEDS`、`CONTEXT_HER_K` 和 `CONTEXT_TEACHER_RATIO` 分别控制训练预算、seed、future relabel 比例和 teacher episode 比例。每个训练目录包含 `train_metrics.csv`、`validation_metrics.csv`、TensorBoard 日志及每 50k 步 checkpoint。
+
+结果写入 `baseline_results.json` 和 `baseline_results.csv`，包含逐 episode 指标、训练/teacher 步数、HER 有效率、参数量、bootstrap 95% 区间，以及原生策略对 QRL greedy、统一 MPPI 对 QRL-MPPI、MRN 对普通 DDPG critic 的配对比较。所有 MPPI 变体使用相同 rollout 预算；Context GCRL 价值在训练分布的固定校准集上按 5%/95% 分位映射到 `[0,1]`。

@@ -218,6 +218,7 @@ class MPPIController(BaselineController):
         *,
         terminal_mode: str,
         qrl_agent: Optional[GoalConditionedAgentBase] = None,
+        static_diagnostics: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
         if terminal_mode not in {"none", "model", "qrl"}:
@@ -227,6 +228,7 @@ class MPPIController(BaselineController):
         self.cfg = cfg
         self.terminal_mode = terminal_mode
         self.qrl_agent = qrl_agent
+        self.static_diagnostics = dict(static_diagnostics or {})
         if terminal_mode == "none":
             self.name = "mppi_no_terminal"
         elif terminal_mode == "model":
@@ -256,7 +258,11 @@ class MPPIController(BaselineController):
             self._terminal_states = np.asarray(sampled, dtype=np.float32)
         else:
             self._terminal_states = np.zeros((0, 3), dtype=np.float32)
-        return {"terminal_sample_count": int(len(self._terminal_states))}
+        self._episode_diagnostics.update(self.static_diagnostics)
+        return {
+            "terminal_sample_count": int(len(self._terminal_states)),
+            **self.static_diagnostics,
+        }
 
     def _terminal_cost(self, env: CommInspectionDubinsUAV2D, states: np.ndarray) -> np.ndarray:
         if self.terminal_mode == "none":

@@ -21,14 +21,18 @@ fi
 STAGE="${STAGE:-pilot}"
 OUTPUT_DIR="${OUTPUT_DIR:-./results/experiments/comm_inspection_baselines_${STAGE}}"
 QRL_CHECKPOINTS="${QRL_CHECKPOINTS:-./results/goalset_qrl_comm_inspection/checkpoint_final.pth}"
-METHODS="${METHODS:-hybrid_astar,mppi_no_terminal,model_mppi,goal_set_sac,qrl_greedy,qrl_mppi}"
+METHODS="${METHODS:-hybrid_astar,mppi_no_terminal,model_mppi,goal_set_sac,qrl_greedy,qrl_mppi,context_her_ddpg,context_her_ddpg_mppi,context_contrastive_rl,context_contrastive_rl_mppi,mrn_context_her_ddpg,mrn_context_her_ddpg_mppi}"
 STARTS_PER_DEVICE="${STARTS_PER_DEVICE:-25}"
 
 TRAIN_SAC_FLAG=""
+TRAIN_CONTEXT_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
 EXTRA_ARGS=()
 if [[ "${TRAIN_SAC:-1}" == "1" ]]; then
   TRAIN_SAC_FLAG="--train-sac"
+fi
+if [[ "${TRAIN_CONTEXT_AGENTS:-1}" == "1" ]]; then
+  TRAIN_CONTEXT_FLAG="--train-context-agents"
 fi
 if [[ "${SAVE_VISUALIZATIONS:-0}" == "1" ]]; then
   SAVE_VISUALIZATIONS_FLAG="--save-visualizations"
@@ -43,6 +47,19 @@ fi
 if [[ -n "${SAC_BATCH_SIZE:-}" ]]; then
   EXTRA_ARGS+=(--sac-batch-size "$SAC_BATCH_SIZE")
 fi
+if [[ -n "${CONTEXT_TOTAL_ENV_STEPS:-}" ]]; then
+  EXTRA_ARGS+=(--context-total-env-steps "$CONTEXT_TOTAL_ENV_STEPS")
+fi
+if [[ -n "${CONTEXT_SEEDS:-}" ]]; then
+  EXTRA_ARGS+=(--context-seeds "$CONTEXT_SEEDS")
+fi
+if [[ -n "${CONTEXT_CHECKPOINTS:-}" ]]; then
+  read -r -a CONTEXT_CKPT_ARRAY <<< "$CONTEXT_CHECKPOINTS"
+  EXTRA_ARGS+=(--context-checkpoints "${CONTEXT_CKPT_ARRAY[@]}")
+fi
+EXTRA_ARGS+=(--context-batch-size "${CONTEXT_BATCH_SIZE:-256}")
+EXTRA_ARGS+=(--context-her-k "${CONTEXT_HER_K:-4}")
+EXTRA_ARGS+=(--context-teacher-ratio "${CONTEXT_TEACHER_RATIO:-1.0}")
 
 read -r -a QRL_CKPT_ARRAY <<< "$QRL_CHECKPOINTS"
 
@@ -77,6 +94,7 @@ echo "  incremental_jsonl=$OUTPUT_DIR/baseline_results.partial.jsonl"
   --output-dir "$OUTPUT_DIR" \
   --qrl-checkpoints "${QRL_CKPT_ARRAY[@]}" \
   ${TRAIN_SAC_FLAG} \
+  ${TRAIN_CONTEXT_FLAG} \
   --seed "${SEED:-0}" \
   --device "${DEVICE:-auto}" \
   --bounds ${BOUNDS:-0 0 10 10} \

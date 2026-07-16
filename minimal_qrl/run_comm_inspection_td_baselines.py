@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Train and evaluate TD-based baselines on the communication-inspection Dubins task."""
+"""Legacy point-goal TD prototype.
+
+This runner is retained for older Dubins experiments and is not part of the formal
+goal-set communication-inspection benchmark. Use
+``minimal_qrl/eval/comm_inspection_baseline_eval.py`` for Context HER-DDPG,
+Context Contrastive RL, and MRN Context HER-DDPG.
+"""
 
 from __future__ import annotations
 
