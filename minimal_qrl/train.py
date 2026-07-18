@@ -8,8 +8,11 @@ import os
 import sys
 import argparse
 import csv
+import json
 import logging
+import platform
 import tempfile
+from time import perf_counter
 from pathlib import Path
 from typing import *
 from datetime import datetime
@@ -65,6 +68,10 @@ from minimal_qrl.subgoal_actor import (
     save_subgoal_actor_checkpoint,
     train_subgoal_actor,
 )
+from minimal_qrl.industry_exp.scalability_scenarios import (
+    load_metric_scenario,
+    scenario_to_env_kwargs,
+)
 
 
 def setup_logging(output_dir: str):
@@ -75,7 +82,7 @@ def setup_logging(output_dir: str):
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_file, mode='w'),
+            logging.FileHandler(log_file, mode='a'),
             logging.StreamHandler()
         ]
     )
@@ -168,6 +175,10 @@ def get_env_kwargs(args) -> dict:
     Returns:
         环境参数字典
     """
+    if getattr(args, '_scenario_data', None) is not None:
+        if args.env_type != 'comm_inspection_dubins_uav':
+            raise ValueError("--scenario-config currently supports comm_inspection_dubins_uav only")
+        return scenario_to_env_kwargs(args._scenario_data)
     if args.env_type == 'simple_grid':
         return {
             'grid_size': tuple(args.grid_size),
@@ -340,6 +351,15 @@ def _write_metric_rows_csv(path: str, rows: list):
 
 def train(args):
     """训练主函数"""
+    end_to_end_start = perf_counter()
+    checkpoint_io_time = 0.0
+    evaluation_time = 0.0
+    collection_stats: Dict[str, Any] = {}
+    args._scenario_data = None
+    if getattr(args, 'scenario_config', None):
+        args._scenario_data = load_metric_scenario(args.scenario_config)
+        args.env_type = 'comm_inspection_dubins_uav'
+        args.max_steps_per_episode = int(args._scenario_data['max_episode_steps'])
     # 设置随机种子
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -349,6 +369,13 @@ def train(args):
     # 设置输出目录
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
+    timing_progress_path = os.path.join(output_dir, 'timing_progress.json')
+    prior_timing: Dict[str, Any] = {}
+    if getattr(args, 'init_checkpoint', None) and os.path.exists(timing_progress_path):
+        with open(timing_progress_path, 'r', encoding='utf-8') as f:
+            prior_timing = json.load(f)
+        checkpoint_io_time = float(prior_timing.get('checkpoint_io_time_sec', 0.0))
+        evaluation_time = float(prior_timing.get('evaluation_time_sec', 0.0))
     
     # 设置日志
     logger = setup_logging(output_dir)
@@ -409,6 +436,8 @@ def train(args):
                     if args.env_type == 'comm_inspection_dubins_uav'
                     else 0.0
                 ),
+                target_env_transitions=getattr(args, 'target_env_transitions', None),
+                collection_stats=collection_stats,
             )
         
         register_offline_env(
@@ -420,13 +449,17 @@ def train(args):
     
     # 创建数据集
     logger.info("创建数据集...")
+    data_start = perf_counter()
     dataset_conf = Dataset.Conf(
         kind=args.env_type,
         name=args.env_type,  # 使用 env_type 作为 name
         future_observation_discount=0.99,
     )
     dataset = dataset_conf.make(dummy=False)
+    data_time_sec = float(prior_timing.get('data_time_sec', 0.0)) + (perf_counter() - data_start)
     logger.info(f"数据集大小: {len(dataset)} 个转移")
+    if collection_stats:
+        logger.info(f"数据收集统计: {collection_stats}")
     
     # 创建 QRL Agent 和 Losses
     logger.info("创建 QRL Agent 和 Losses...")
@@ -565,19 +598,27 @@ def train(args):
     
     # 初始化训练状态
     logger.info("开始训练...")
+    optimization_start = perf_counter()
+    optimization_core_time = float(prior_timing.get('optimization_core_time_sec', 0.0))
     optim_steps = loaded_optim_steps
     train_metric_rows = []
+    prior_metrics_path = os.path.join(output_dir, 'train_metrics.csv')
+    if getattr(args, 'init_checkpoint', None) and os.path.exists(prior_metrics_path):
+        with open(prior_metrics_path, 'r', encoding='utf-8', newline='') as f:
+            train_metric_rows = list(csv.DictReader(f))
     critic_training_enabled = not bool(getattr(args, 'skip_critic_training', False))
     critic_steps_remaining = max(0, int(args.total_steps) - int(optim_steps))
     pbar = tqdm(total=critic_steps_remaining, desc="训练进度")
 
     if not getattr(args, 'init_checkpoint', None):
         checkpoint_path = os.path.join(output_dir, 'checkpoint_00000.pth')
+        checkpoint_start = perf_counter()
         torch.save({
             'optim_steps': optim_steps,
             'agent': agent.state_dict(),
             'losses': losses.state_dict(),
         }, checkpoint_path)
+        checkpoint_io_time += perf_counter() - checkpoint_start
         logger.info(f"保存初始检查点: {checkpoint_path}")
     elif critic_training_enabled and critic_steps_remaining > 0:
         logger.info(f"将从已加载 checkpoint 继续训练 QRL critic，剩余步数: {critic_steps_remaining}")
@@ -590,11 +631,13 @@ def train(args):
         for batch_data in dataloader:
             if optim_steps >= args.total_steps:
                 break
-            
+
+            optimization_step_start = perf_counter()
             batch_data = batch_data.to(device)
             
             # 前向传播和反向传播
             loss_result = losses(agent, batch_data, optimize=True)
+            optimization_core_time += perf_counter() - optimization_step_start
             
             optim_steps += 1
             pbar.update(1)
@@ -675,6 +718,7 @@ def train(args):
             
             # 评估和可视化
             if args.eval_interval > 0 and optim_steps % args.eval_interval == 0:
+                evaluation_start = perf_counter()
                 logger.info(f"Step {optim_steps}: 开始评估...")
                 agent.eval()
                 # MPS 时临时迁到 CPU 做评估与热力图，避免 Metal buffer 错误
@@ -783,27 +827,51 @@ def train(args):
                     if device != eval_device:
                         agent.to(device)
                     agent.train()
+                    evaluation_time += perf_counter() - evaluation_start
             
             # 保存检查点
             if optim_steps % args.save_interval == 0:
                 checkpoint_path = os.path.join(output_dir, f'checkpoint_{optim_steps:05d}.pth')
+                checkpoint_start = perf_counter()
                 torch.save({
                     'optim_steps': optim_steps,
                     'agent': agent.state_dict(),
                     'losses': losses.state_dict(),
                 }, checkpoint_path)
+                checkpoint_io_time += perf_counter() - checkpoint_start
+                with open(timing_progress_path, 'w', encoding='utf-8') as f:
+                    json.dump(
+                        {
+                            'optim_steps': int(optim_steps),
+                            'data_time_sec': float(data_time_sec),
+                            'optimization_core_time_sec': float(optimization_core_time),
+                            'evaluation_time_sec': float(evaluation_time),
+                            'checkpoint_io_time_sec': float(checkpoint_io_time),
+                            'end_to_end_time_sec': float(
+                                prior_timing.get('end_to_end_time_sec', 0.0)
+                                + perf_counter()
+                                - end_to_end_start
+                            ),
+                        },
+                        f,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
                 logger.info(f"保存检查点: {checkpoint_path}")
         
         epoch += 1
     
     pbar.close()
+    optimization_elapsed = perf_counter() - optimization_start
     
     final_path = os.path.join(output_dir, 'checkpoint_final.pth')
+    checkpoint_start = perf_counter()
     torch.save({
         'optim_steps': optim_steps,
         'agent': agent.state_dict(),
         'losses': losses.state_dict(),
     }, final_path)
+    checkpoint_io_time += perf_counter() - checkpoint_start
     logger.info(f"保存最终模型: {final_path}")
     train_metrics_path = os.path.join(output_dir, 'train_metrics.csv')
     _write_metric_rows_csv(train_metrics_path, train_metric_rows)
@@ -914,6 +982,40 @@ def train(args):
             },
         )
         logger.info(f"保存最终 SubgoalActor 检查点: {subgoal_ckpt_final}")
+
+    end_to_end_time_sec = float(prior_timing.get('end_to_end_time_sec', 0.0)) + (
+        perf_counter() - end_to_end_start
+    )
+    timing_payload = {
+        'seed': int(args.seed),
+        'scenario_config': os.path.abspath(args.scenario_config) if getattr(args, 'scenario_config', None) else None,
+        'data_time_sec': float(data_time_sec),
+        'optimization_core_time_sec': float(
+            optimization_core_time
+        ),
+        'optimization_phase_time_sec': float(optimization_elapsed),
+        'evaluation_time_sec': float(evaluation_time),
+        'checkpoint_io_time_sec': float(checkpoint_io_time),
+        'end_to_end_time_sec': float(end_to_end_time_sec),
+        'global_gradient_updates': int(optim_steps),
+        'resumed_from_checkpoint': (
+            os.path.abspath(args.init_checkpoint) if getattr(args, 'init_checkpoint', None) else None
+        ),
+        'dataset_total_transitions': int(len(dataset)),
+        'collection_stats': collection_stats or None,
+        'hardware': {
+            'requested_device': str(args.device),
+            'resolved_device': str(device),
+            'platform': platform.platform(),
+            'processor': platform.processor(),
+            'python_version': platform.python_version(),
+            'torch_version': str(torch.__version__),
+            'cuda_version': str(torch.version.cuda) if torch.version.cuda else None,
+        },
+    }
+    with open(os.path.join(output_dir, 'timing.json'), 'w', encoding='utf-8') as f:
+        json.dump(timing_payload, f, ensure_ascii=False, indent=2)
+    logger.info(f"保存训练计时: {os.path.join(output_dir, 'timing.json')}")
     
     # 标记完成
     with open(os.path.join(output_dir, 'COMPLETE'), 'w') as f:
@@ -933,6 +1035,8 @@ def main():
                         help='可选：加载已有 QRL checkpoint 作为初始化，再继续训练或仅训练 SubgoalActor')
     parser.add_argument('--skip-critic-training', action='store_true',
                         help='跳过前半段 QRL critic 训练；通常与 --init-checkpoint 配合，只训练 SubgoalActor')
+    parser.add_argument('--scenario-config', type=str, default=None,
+                        help='权威的工业园区场景 JSON；提供后覆盖所有环境参数')
     
     # 环境参数
     parser.add_argument('--env-type', type=str, default='simple_grid',
@@ -1063,6 +1167,8 @@ def main():
                              '1.0 表示每个 random rollout 额外收集 1 条 teacher 轨迹')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
+    parser.add_argument('--target-env-transitions', type=int, default=None,
+                        help='通信巡检数据集的精确真实转移预算；抽象目标边不计入')
     parser.add_argument('--max-steps-per-episode', type=int, default=200, help='每个 episode 的最大步数')
     
     # 训练参数

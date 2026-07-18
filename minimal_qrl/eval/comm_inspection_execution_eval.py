@@ -55,6 +55,7 @@ from minimal_qrl.subgoal_actor import (
     load_subgoal_actor_checkpoint,
     select_teacher_subgoal,
 )
+from minimal_qrl.industry_exp.scalability_scenarios import load_metric_scenario
 
 
 @dataclass
@@ -312,6 +313,7 @@ def rollout_execution_episode(
     *,
     episode_seed: int,
     device_id: Optional[str] = None,
+    start_state: Optional[np.ndarray] = None,
     lookahead_cfg: Optional[DubinsLookaheadConfig],
     subgoal_actor: Optional[SubgoalActor] = None,
     actor_device: Optional[torch.device] = None,
@@ -328,7 +330,11 @@ def rollout_execution_episode(
         raise ValueError("hierarchical 模式需要 lookahead_cfg、subgoal_actor 和 actor_device")
 
     np.random.seed(int(episode_seed))
-    reset_options = {"device_id": str(device_id)} if device_id is not None else None
+    reset_options: Dict[str, Any] = {}
+    if device_id is not None:
+        reset_options["device_id"] = str(device_id)
+    if start_state is not None:
+        reset_options["start"] = np.asarray(start_state, dtype=np.float32).reshape(3)
     obs, reset_info = env.reset(seed=int(episode_seed), options=reset_options)
     goal_obs = env.abstract_goal_observation()
     rng = np.random.default_rng(int(episode_seed))
@@ -1110,6 +1116,7 @@ def evaluate_execution_mode(
     subgoal_lambda_final: float = 0.3,
     subgoal_lambda_task: float = 1.0,
     result_name: Optional[str] = None,
+    task_records: Optional[List[Dict[str, Any]]] = None,
 ) -> tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
     if execution_mode not in {"greedy", "lookahead", "hierarchical"}:
         raise ValueError(f"未知 execution_mode: {execution_mode}")
@@ -1123,7 +1130,13 @@ def evaluate_execution_mode(
     if starts_per_device <= 0:
         raise ValueError("starts_per_device must be positive")
     device_ids = list(env.device_ids)
-    total_trials = starts_per_device * len(device_ids)
+    if task_records is None:
+        total_trials = starts_per_device * len(device_ids)
+    else:
+        task_records = [row for row in task_records if str(row["device_id"]) in device_ids]
+        total_trials = len(task_records)
+        if total_trials <= 0:
+            raise ValueError("task_records contain no task for this scenario")
     _warmup_value_model(agent, env, seed=int(seed) + 7919)
 
     success_count = 0
@@ -1163,21 +1176,34 @@ def evaluate_execution_mode(
         success_dir.mkdir(parents=True, exist_ok=True)
         failure_dir.mkdir(parents=True, exist_ok=True)
 
-    trial_specs = [
-        (device_index, device_id, start_index)
-        for device_index, device_id in enumerate(device_ids)
-        for start_index in range(starts_per_device)
-    ]
-    for i, (device_index, device_id, start_index) in enumerate(
+    if task_records is None:
+        trial_specs = [
+            (device_index, device_id, start_index, int(seed + device_index * 1_000_003 + start_index), None)
+            for device_index, device_id in enumerate(device_ids)
+            for start_index in range(starts_per_device)
+        ]
+    else:
+        device_indices = {device_id: index for index, device_id in enumerate(device_ids)}
+        trial_specs = [
+            (
+                device_indices[str(row["device_id"])],
+                str(row["device_id"]),
+                int(row["sample_index"]),
+                int(row["seed"]),
+                np.asarray(row["start"], dtype=np.float32),
+            )
+            for row in task_records
+        ]
+    for i, (device_index, device_id, start_index, episode_seed, start_state) in enumerate(
         tqdm(trial_specs, desc=f"{output_name}_success_rate", leave=False)
     ):
-        episode_seed = int(seed + device_index * 1_000_003 + start_index)
         rollout = rollout_execution_episode(
             agent,
             env,
             execution_mode,
             episode_seed=episode_seed,
             device_id=device_id,
+            start_state=start_state,
             lookahead_cfg=lookahead_cfg,
             subgoal_actor=subgoal_actor,
             actor_device=actor_device,
@@ -1399,6 +1425,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default="comm_inspection_dubins_uav_eval",
         help="offline env 注册名",
     )
+    parser.add_argument("--scenario-config", type=str, default=None)
+    parser.add_argument("--task-bank", type=str, default=None)
+    parser.add_argument("--task-split", choices=["validation", "test"], default="test")
 
     parser.add_argument("--bounds", type=float, nargs=4, default=[0.0, 0.0, 10.0, 10.0])
     parser.add_argument("--omega-max", type=float, default=3.0)
@@ -1407,7 +1436,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-episode-steps", type=int, default=180)
     parser.add_argument("--obstacle-config", type=str, default="medium", choices=["none", "simple", "medium", "hard"])
     parser.add_argument("--obstacles", type=float, nargs="*", default=None)
-    parser.add_argument("--device-catalog", type=str, required=True)
+    parser.add_argument("--device-catalog", type=str, default=None)
     parser.add_argument("--comm-alpha", type=float, default=2.0)
     parser.add_argument("--comm-bias", type=float, default=5.0)
     parser.add_argument("--comm-occlusion-penalty", type=float, default=6.0)
@@ -1465,6 +1494,40 @@ def main():
     parser = _build_parser()
     args = parser.parse_args()
 
+    scenario = None
+    if args.scenario_config:
+        scenario = load_metric_scenario(args.scenario_config)
+        args.bounds = [float(v) for v in scenario["bounds"]]
+        args.omega_max = float(scenario["omega_max"])
+        args.v = float(scenario["v"])
+        args.dt = float(scenario["dt"])
+        args.max_episode_steps = int(scenario["max_episode_steps"])
+        args.obstacle_config = "none"
+        args.obstacles = [
+            value
+            for item in scenario["obstacles"]
+            for value in (float(item["x"]), float(item["y"]), float(item["radius"]))
+        ]
+        args.device_catalog = scenario["device_catalog"]
+        for field in (
+            "comm_alpha",
+            "comm_bias",
+            "comm_occlusion_penalty",
+            "comm_threshold",
+            "require_ground_station_los",
+            "collision_cost",
+            "out_of_bounds_cost",
+            "communication_break_cost",
+            "observation_violation_cost_weight",
+            "communication_violation_cost_weight",
+            "observation_failure_cost",
+            "taskscore_beta_obs",
+            "taskscore_beta_comm",
+            "taskscore_beta_feas",
+            "taskscore_margin_clip",
+        ):
+            setattr(args, field, scenario[field])
+
     if not os.path.exists(args.checkpoint):
         raise FileNotFoundError(
             f"未找到 checkpoint: {args.checkpoint}. "
@@ -1477,6 +1540,25 @@ def main():
 
     env = make_comm_inspection_env(args)
     agent, ckpt_step = build_qrl_adapter(args, device, env)
+
+    task_records = None
+    if args.task_bank:
+        with open(args.task_bank, "r", encoding="utf-8") as handle:
+            task_bank = json.load(handle)
+        width = float(args.bounds[2] - args.bounds[0])
+        height = float(args.bounds[3] - args.bounds[1])
+        task_records = []
+        for row in task_bank["records"]:
+            if str(row["split"]) != str(args.task_split):
+                continue
+            normalized = row["start_normalized"]
+            mapped = dict(row)
+            mapped["start"] = [
+                float(args.bounds[0]) + float(normalized[0]) * width,
+                float(args.bounds[1]) + float(normalized[1]) * height,
+                float(normalized[2]),
+            ]
+            task_records.append(mapped)
 
     execution_modes = _parse_execution_modes(args.execution_modes)
     lookahead_heuristics = _parse_lookahead_heuristics(args.lookahead_heuristics)
@@ -1540,6 +1622,7 @@ def main():
                     viz_cfg=viz_cfg,
                     high_level_period=int(args.high_level_period),
                     result_name=result_key,
+                    task_records=task_records,
                 )
                 results[result_key] = metrics
                 visualization_index[result_key] = vis_index
@@ -1565,6 +1648,7 @@ def main():
             subgoal_lambda_final=float(args.subgoal_lambda_final),
             subgoal_lambda_task=float(args.subgoal_lambda_task),
             result_name=mode,
+            task_records=task_records,
         )
         results[mode] = metrics
         visualization_index[mode] = vis_index
@@ -1591,7 +1675,11 @@ def main():
             "dt": float(args.dt),
             "max_episode_steps": int(args.max_episode_steps),
             "obstacle_config": str(args.obstacle_config),
-            "device_catalog": os.path.abspath(args.device_catalog),
+            "device_catalog": (
+                os.path.abspath(args.device_catalog)
+                if isinstance(args.device_catalog, (str, os.PathLike))
+                else "embedded-in-scenario-config"
+            ),
             "device_ids": list(env.device_ids),
             "require_ground_station_los": bool(args.require_ground_station_los),
             "comm_threshold": float(args.comm_threshold),
@@ -1600,6 +1688,9 @@ def main():
             "taskscore_beta_feas": float(args.taskscore_beta_feas),
             "taskscore_margin_clip": float(args.taskscore_margin_clip),
         },
+        "scenario_config": os.path.abspath(args.scenario_config) if args.scenario_config else None,
+        "task_bank": os.path.abspath(args.task_bank) if args.task_bank else None,
+        "task_split": str(args.task_split),
     }
 
     out_json = os.path.join(args.output_dir, "comm_inspection_execution_eval.json")

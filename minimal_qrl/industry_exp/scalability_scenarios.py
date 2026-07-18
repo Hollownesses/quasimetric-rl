@@ -1,0 +1,262 @@
+"""Metric industrial-inspection scenarios used by the scalability study.
+
+The simulator keeps its established numerical convention and attaches an
+explicit physical interpretation: one environment unit represents ten metres.
+This module is the source of truth for the six controlled scenarios.  Generated
+result directories are deliberately not used as inputs.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import math
+from pathlib import Path
+from typing import Any, Mapping
+
+from minimal_qrl.envs import CircleObstacle
+
+
+METERS_PER_ENV_UNIT = 10.0
+BASE_PHYSICAL_SIDE_M = 100.0
+BASE_ENV_SIDE = BASE_PHYSICAL_SIDE_M / METERS_PER_ENV_UNIT
+AREA_SIDE_METRES = (100, 200, 500, 1000)
+DEVICE_COUNTS = (4, 12, 24)
+
+BASE_OBSTACLES = (
+    {"x": 3.5, "y": 5.0, "radius": 1.0},
+    {"x": 6.5, "y": 5.0, "radius": 1.0},
+    {"x": 5.0, "y": 3.0, "radius": 0.8},
+)
+
+# A deterministic, spatially distributed, nested ordering.  It is encoded in
+# source rather than read from an old result artifact.
+DEVICE_ORDER = (
+    "relief_valve_psv101",
+    "reactor_r101",
+    "reboiler_e101",
+    "emergency_vent_ev01",
+    "scrubber_t301",
+    "process_compressor_k101",
+    "cooling_water_pump_p401",
+    "distillation_column_c101",
+    "feed_pump_p101b",
+    "pipe_rack_node_pr02",
+    "filter_f201",
+    "feed_pump_p101a",
+    "gas_detector_gd01",
+    "pipe_rack_node_pr01",
+    "reactor_r102",
+    "reflux_drum_v101",
+    "control_valve_fcv101",
+    "shutdown_valve_esdv101",
+    "condenser_e102",
+    "absorber_t302",
+    "boiler_b401",
+    "flare_header_node_fh01",
+    "heat_exchanger_e201",
+    "separator_v201",
+)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def base_catalog_path() -> Path:
+    return _repo_root() / "minimal_qrl" / "configs" / "chemical_process_plant_devices.json"
+
+
+def _load_base_catalog() -> dict[str, Any]:
+    with base_catalog_path().open("r", encoding="utf-8") as handle:
+        catalog = json.load(handle)
+    by_id = {str(item["id"]): item for item in catalog["devices"]}
+    missing = [device_id for device_id in DEVICE_ORDER if device_id not in by_id]
+    if missing:
+        raise ValueError(f"base device catalog is missing: {', '.join(missing)}")
+    catalog["devices"] = [copy.deepcopy(by_id[device_id]) for device_id in DEVICE_ORDER]
+    return catalog
+
+
+def _scale_point(point: list[float], scale: float) -> list[float]:
+    return [float(point[0]) * scale, float(point[1]) * scale]
+
+
+def build_metric_scenario(physical_side_m: int, device_count: int) -> dict[str, Any]:
+    """Build one controlled metric scenario.
+
+    Spatial locations and obstacle geometry are homothetically scaled so that
+    topology and obstacle fraction stay fixed.  Inspection stand-off distances
+    are intentionally *not* scaled: they keep their 3.5--8.5 metre meaning.
+    """
+
+    if int(physical_side_m) not in AREA_SIDE_METRES:
+        raise ValueError(f"unsupported physical side: {physical_side_m}")
+    if int(device_count) not in DEVICE_COUNTS:
+        raise ValueError(f"unsupported device count: {device_count}")
+    if physical_side_m != 100 and device_count != 24:
+        raise ValueError("only the 100 m device-count axis may use fewer than 24 devices")
+
+    scale = float(physical_side_m) / BASE_PHYSICAL_SIDE_M
+    env_side = BASE_ENV_SIDE * scale
+    catalog = _load_base_catalog()
+    catalog["devices"] = catalog["devices"][: int(device_count)]
+    catalog["ground_station"]["position"] = _scale_point(
+        catalog["ground_station"]["position"], scale
+    )
+    catalog["ground_station"]["los_anchor"] = _scale_point(
+        catalog["ground_station"]["los_anchor"], scale
+    )
+    for device in catalog["devices"]:
+        device["position"] = _scale_point(device["position"], scale)
+        device["observation_anchor"] = _scale_point(device["observation_anchor"], scale)
+
+    obstacles = [
+        {
+            "x": float(item["x"]) * scale,
+            "y": float(item["y"]) * scale,
+            "radius": float(item["radius"]) * scale,
+        }
+        for item in BASE_OBSTACLES
+    ]
+    comm_alpha = 2.0
+    # The controlled scalability study assumes an engineered private-network
+    # link budget.  A base bias of 12 keeps even the farthest occluded state in
+    # the 100 m reference layout above the 0.5 threshold; alpha*log(scale)
+    # then preserves that relative margin at every larger scale.
+    comm_bias_base = 12.0
+    scenario_id = f"metric_l{int(physical_side_m)}_k{int(device_count)}"
+    axes: list[str] = []
+    if device_count == 24:
+        axes.append("area")
+    if physical_side_m == 100:
+        axes.append("device_count")
+
+    scenario = {
+        "schema_version": 1,
+        "scenario_id": scenario_id,
+        "experiment_axes": axes,
+        "meters_per_env_unit": METERS_PER_ENV_UNIT,
+        "physical_side_m": float(physical_side_m),
+        "physical_area_m2": float(physical_side_m) ** 2,
+        "scale_factor": scale,
+        "bounds": [0.0, 0.0, env_side, env_side],
+        "device_count": int(device_count),
+        "topology": "medium",
+        "max_episode_steps": int(round(180 * scale)),
+        "device_catalog": catalog,
+        "obstacles": obstacles,
+        "omega_max": 3.0,
+        "v": 1.0,
+        "dt": 0.1,
+        "comm_alpha": comm_alpha,
+        "comm_bias": comm_bias_base + comm_alpha * math.log(scale),
+        "comm_occlusion_penalty": 6.0,
+        "comm_threshold": 0.5,
+        "require_ground_station_los": False,
+        "collision_cost": 10.0,
+        "out_of_bounds_cost": 10.0,
+        "communication_break_cost": 1.0,
+        "observation_violation_cost_weight": 1.0,
+        "communication_violation_cost_weight": 0.5,
+        "observation_failure_cost": 0.25,
+        "taskscore_beta_obs": 1.0,
+        "taskscore_beta_comm": 1.0,
+        "taskscore_beta_feas": 0.5,
+        "taskscore_margin_clip": 2.0,
+        "min_start_target_distance": 0.5,
+        "metadata": {
+            "coordinate_interpretation": "1 environment unit = 10 metres",
+            "catalog_source": str(base_catalog_path().relative_to(_repo_root())),
+            "inspection_distances_scaled": False,
+            "communication_relative_coverage_fixed": True,
+        },
+    }
+    validate_metric_scenario(scenario)
+    return scenario
+
+
+def build_scalability_scenarios() -> list[dict[str, Any]]:
+    """Return the six unique scenarios; the l100/k24 baseline is shared."""
+
+    scenarios = [build_metric_scenario(side, 24) for side in AREA_SIDE_METRES]
+    scenarios.extend(build_metric_scenario(100, count) for count in DEVICE_COUNTS if count != 24)
+    return scenarios
+
+
+def validate_metric_scenario(scenario: Mapping[str, Any]) -> None:
+    side_m = float(scenario["physical_side_m"])
+    area_m2 = float(scenario["physical_area_m2"])
+    if not math.isclose(area_m2, side_m * side_m, rel_tol=0.0, abs_tol=1e-8):
+        raise ValueError("physical_area_m2 must equal physical_side_m squared")
+    bounds = [float(v) for v in scenario["bounds"]]
+    expected_side = side_m / float(scenario["meters_per_env_unit"])
+    if bounds != [0.0, 0.0, expected_side, expected_side]:
+        raise ValueError("bounds do not match the metric coordinate mapping")
+    devices = list(scenario["device_catalog"]["devices"])
+    if len(devices) != int(scenario["device_count"]):
+        raise ValueError("device_count does not match device_catalog")
+    ids = [str(item["id"]) for item in devices]
+    if ids != list(DEVICE_ORDER[: len(ids)]):
+        raise ValueError("device catalog does not follow the nested device order")
+    for point in (
+        [scenario["device_catalog"]["ground_station"]["position"]]
+        + [item["position"] for item in devices]
+        + [item["observation_anchor"] for item in devices]
+    ):
+        x, y = float(point[0]), float(point[1])
+        if not (bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]):
+            raise ValueError(f"catalog point outside bounds: {point}")
+
+
+def write_scalability_scenarios(directory: Path) -> list[Path]:
+    directory.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for scenario in build_scalability_scenarios():
+        path = directory / f"{scenario['scenario_id']}.json"
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(scenario, handle, ensure_ascii=False, indent=2)
+        paths.append(path)
+    return paths
+
+
+def load_metric_scenario(path: str | Path) -> dict[str, Any]:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        scenario = json.load(handle)
+    if not isinstance(scenario, dict):
+        raise ValueError("scenario config root must be a JSON object")
+    validate_metric_scenario(scenario)
+    return scenario
+
+
+def scenario_to_env_kwargs(scenario: Mapping[str, Any]) -> dict[str, Any]:
+    validate_metric_scenario(scenario)
+    obstacles = [
+        CircleObstacle(x=float(item["x"]), y=float(item["y"]), radius=float(item["radius"]))
+        for item in scenario["obstacles"]
+    ]
+    return {
+        "device_catalog": copy.deepcopy(scenario["device_catalog"]),
+        "bounds": tuple(float(v) for v in scenario["bounds"]),
+        "omega_max": float(scenario["omega_max"]),
+        "v": float(scenario["v"]),
+        "dt": float(scenario["dt"]),
+        "max_steps": int(scenario["max_episode_steps"]),
+        "obstacles": obstacles,
+        "comm_alpha": float(scenario["comm_alpha"]),
+        "comm_bias": float(scenario["comm_bias"]),
+        "comm_occlusion_penalty": float(scenario["comm_occlusion_penalty"]),
+        "comm_threshold": float(scenario["comm_threshold"]),
+        "require_ground_station_los": bool(scenario["require_ground_station_los"]),
+        "collision_cost": float(scenario["collision_cost"]),
+        "out_of_bounds_cost": float(scenario["out_of_bounds_cost"]),
+        "communication_break_cost": float(scenario["communication_break_cost"]),
+        "observation_violation_cost_weight": float(scenario["observation_violation_cost_weight"]),
+        "communication_violation_cost_weight": float(scenario["communication_violation_cost_weight"]),
+        "observation_failure_cost": float(scenario["observation_failure_cost"]),
+        "taskscore_beta_obs": float(scenario["taskscore_beta_obs"]),
+        "taskscore_beta_comm": float(scenario["taskscore_beta_comm"]),
+        "taskscore_beta_feas": float(scenario["taskscore_beta_feas"]),
+        "taskscore_margin_clip": float(scenario["taskscore_margin_clip"]),
+        "min_start_target_distance": float(scenario.get("min_start_target_distance", 0.5)),
+    }

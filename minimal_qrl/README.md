@@ -47,6 +47,31 @@ python minimal_qrl/train.py \
     --save-interval 1000
 ```
 
+## 工业园区米制扩展实验
+
+空间/设备扩展实验使用 `1 环境单位 = 10 m`：`10×10` 即
+`100 m×100 m = 10,000 m²`。默认生成6个场景、18个训练 job，并在
+20k/40k/60k 检查点评估。
+
+```bash
+# 只生成场景、固定任务库和 manifest
+python -m minimal_qrl.industry_exp.scalability generate \
+  --output-root results/qrl_scalability_metric
+
+# 运行全部训练与评估（必须固定同一计算设备）
+python -m minimal_qrl.industry_exp.scalability run \
+  --output-root results/qrl_scalability_metric \
+  --device cpu \
+  --seeds 0,1,2
+
+# 从已有结果重新生成 CSV、JSON、图表和 Markdown 报告
+python -m minimal_qrl.industry_exp.scalability report \
+  --output-root results/qrl_scalability_metric
+```
+
+运行器会跳过已有 `COMPLETE` 的 job，并从未完成训练目录中最新的
+checkpoint 继续。汇总报告位于 `results/qrl_scalability_metric/report/`。
+
 ## 参数说明
 
 ### 训练参数

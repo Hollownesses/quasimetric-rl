@@ -3,8 +3,9 @@
 """
 import numpy as np
 import random
+import torch
 import warnings
-from typing import Iterator, Optional, List, Tuple
+from typing import Any, Iterator, Optional, List, Tuple
 import gym
 
 from quasimetric_rl.data import EpisodeData
@@ -221,6 +222,7 @@ def collect_goal_set_comm_episode_pair(
     max_steps: int = 200,
     seed: Optional[int] = None,
     context_id: int = 0,
+    device_id: Optional[str] = None,
 ) -> Tuple[EpisodeData, Optional[EpisodeData]]:
     """
     Collect one communication-inspection goal-set episode plus one abstract
@@ -233,7 +235,8 @@ def collect_goal_set_comm_episode_pair(
         np.random.seed(seed)
         random.seed(seed)
 
-    obs, _ = env.reset(seed=seed)
+    reset_options = {"device_id": str(device_id)} if device_id is not None else None
+    obs, _ = env.reset(seed=seed, options=reset_options)
     task_goal_obs = env.abstract_goal_observation().astype(np.float32)
 
     observations = [obs.copy()]
@@ -312,6 +315,7 @@ def collect_task_aware_comm_teacher_episode_pair(
     device_id: Optional[str] = None,
     task_context=None,
     task_goal_obs: Optional[np.ndarray] = None,
+    collection_stats: Optional[dict[str, Any]] = None,
 ) -> Tuple[Optional[EpisodeData], Optional[EpisodeData]]:
     """
     Collect a successful task-aware Dubins teacher trajectory:
@@ -387,7 +391,16 @@ def collect_task_aware_comm_teacher_episode_pair(
             if terminated or truncated:
                 break
 
+        if collection_stats is not None:
+            collection_stats["attempted_teacher_steps"] = int(
+                collection_stats.get("attempted_teacher_steps", 0)
+            ) + len(actions)
+
         if not success or len(actions) == 0:
+            if collection_stats is not None:
+                collection_stats["failed_teacher_attempt_steps"] = int(
+                    collection_stats.get("failed_teacher_attempt_steps", 0)
+                ) + len(actions)
             continue
 
         actions_array = _actions_to_array(actions)
@@ -429,6 +442,173 @@ def collect_task_aware_comm_teacher_episode_pair(
     return None, None
 
 
+def _slice_episode(episode: EpisodeData, length: int) -> EpisodeData:
+    """Return the first ``length`` transitions as a well-formed episode."""
+
+    length = int(length)
+    if length <= 0 or length > int(episode.num_transitions):
+        raise ValueError("episode slice length must be in [1, num_transitions]")
+    terminals = episode.terminals[:length].clone()
+    timeouts = episode.timeouts[:length].clone()
+    if length < int(episode.num_transitions):
+        terminals[-1] = False
+        timeouts[-1] = True
+    return EpisodeData(
+        episode_lengths=torch.tensor([length], dtype=torch.int64),
+        all_observations=episode.all_observations[: length + 1].clone(),
+        actions=episode.actions[:length].clone(),
+        rewards=episode.rewards[:length].clone(),
+        terminals=terminals,
+        timeouts=timeouts,
+        observation_infos={key: value[: length + 1].clone() for key, value in episode.observation_infos.items()},
+        transition_infos={
+            key: value[:length].clone() for key, value in episode.transition_infos.items()
+        },
+    )
+
+
+def create_budgeted_comm_dataset(
+    env: gym.Env,
+    *,
+    target_env_transitions: int,
+    max_steps_per_episode: int,
+    seed: Optional[int],
+    task_aware_teacher_ratio: float,
+    collection_stats: Optional[dict[str, Any]] = None,
+) -> Iterator[EpisodeData]:
+    """Collect an exact, task-balanced real-transition budget.
+
+    Random and successful teacher transitions count toward the real budget.
+    One-step abstract-goal edges are emitted as synthetic data and accounted
+    separately.  Devices are visited in seeded, shuffled round-robin order so
+    that each task receives comparable collection opportunities.
+    """
+
+    target = int(target_env_transitions)
+    if target <= 0:
+        raise ValueError("target_env_transitions must be positive")
+    device_ids = list(getattr(env, "device_ids", ()))
+    if not device_ids:
+        raise ValueError("budgeted communication dataset requires device_ids")
+
+    stats = collection_stats if collection_stats is not None else {}
+    stats.clear()
+    stats.update(
+        {
+            "target_real_transitions": target,
+            "stored_real_transitions": 0,
+            "attempted_env_steps": 0,
+            "attempted_teacher_steps": 0,
+            "failed_teacher_attempt_steps": 0,
+            "synthetic_abstract_edges": 0,
+            "random_episodes": 0,
+            "successful_teacher_episodes": 0,
+            "per_device_real_transitions": {device_id: 0 for device_id in device_ids},
+            "per_device_collection_contexts": {device_id: 0 for device_id in device_ids},
+        }
+    )
+    per_device_targets = {
+        device_id: target // len(device_ids) + int(index < target % len(device_ids))
+        for index, device_id in enumerate(device_ids)
+    }
+    stats["per_device_target_transitions"] = dict(per_device_targets)
+    teacher_ratio = max(0.0, float(task_aware_teacher_ratio))
+    teacher_floor = int(np.floor(teacher_ratio))
+    teacher_fraction = teacher_ratio - teacher_floor
+    rng = np.random.default_rng(None if seed is None else int(seed) + 91815541)
+    context_id = 0
+
+    while int(stats["stored_real_transitions"]) < target:
+        if context_id % len(device_ids) == 0:
+            round_ids = list(device_ids)
+            rng.shuffle(round_ids)
+        device_id = round_ids[context_id % len(device_ids)]
+        if (
+            int(stats["per_device_real_transitions"][device_id])
+            >= int(per_device_targets[device_id])
+        ):
+            context_id += 1
+            continue
+        episode_seed = None if seed is None else int(seed + context_id * 104729)
+        episode, abstract_episode = collect_goal_set_comm_episode_pair(
+            env,
+            max_steps=max_steps_per_episode,
+            seed=episode_seed,
+            context_id=context_id,
+            device_id=device_id,
+        )
+        stats["random_episodes"] = int(stats["random_episodes"]) + 1
+        stats["per_device_collection_contexts"][device_id] += 1
+        stats["attempted_env_steps"] = int(stats["attempted_env_steps"]) + int(
+            episode.num_transitions
+        )
+        remaining = int(per_device_targets[device_id]) - int(
+            stats["per_device_real_transitions"][device_id]
+        )
+        kept = min(remaining, int(episode.num_transitions))
+        yield episode if kept == int(episode.num_transitions) else _slice_episode(episode, kept)
+        stats["stored_real_transitions"] = int(stats["stored_real_transitions"]) + kept
+        stats["per_device_real_transitions"][device_id] += kept
+        if abstract_episode is not None:
+            yield abstract_episode
+            stats["synthetic_abstract_edges"] = int(stats["synthetic_abstract_edges"]) + 1
+
+        if int(stats["stored_real_transitions"]) >= target:
+            break
+        if (
+            int(stats["per_device_real_transitions"][device_id])
+            >= int(per_device_targets[device_id])
+        ):
+            context_id += 1
+            continue
+
+        num_teacher = teacher_floor + int(float(rng.uniform()) < teacher_fraction)
+        task_goal_obs = env.abstract_goal_for_task(device_id).astype(np.float32)
+        for teacher_index in range(num_teacher):
+            teacher_seed = (
+                None
+                if seed is None
+                else int(seed + 1_000_003 + context_id * 9973 + teacher_index)
+            )
+            attempted_before = int(stats["attempted_teacher_steps"])
+            teacher_episode, teacher_abstract = collect_task_aware_comm_teacher_episode_pair(
+                env,
+                max_steps=max_steps_per_episode,
+                seed=teacher_seed,
+                context_id=context_id,
+                device_id=device_id,
+                task_goal_obs=task_goal_obs,
+                collection_stats=stats,
+            )
+            stats["attempted_env_steps"] = int(stats["attempted_env_steps"]) + (
+                int(stats["attempted_teacher_steps"]) - attempted_before
+            )
+            if teacher_episode is None:
+                continue
+            stats["successful_teacher_episodes"] = int(
+                stats["successful_teacher_episodes"]
+            ) + 1
+            remaining = int(per_device_targets[device_id]) - int(
+                stats["per_device_real_transitions"][device_id]
+            )
+            if remaining <= 0:
+                break
+            kept = min(remaining, int(teacher_episode.num_transitions))
+            yield (
+                teacher_episode
+                if kept == int(teacher_episode.num_transitions)
+                else _slice_episode(teacher_episode, kept)
+            )
+            stats["stored_real_transitions"] = int(stats["stored_real_transitions"]) + kept
+            stats["per_device_real_transitions"][device_id] += kept
+            if teacher_abstract is not None:
+                yield teacher_abstract
+                stats["synthetic_abstract_edges"] = int(stats["synthetic_abstract_edges"]) + 1
+            if int(stats["stored_real_transitions"]) >= target:
+                break
+        context_id += 1
+
+
 def create_dataset(
     env: gym.Env,
     num_episodes: int = 100,
@@ -436,6 +616,8 @@ def create_dataset(
     sample_valid_states: bool = True,
     seed: Optional[int] = None,
     task_aware_teacher_ratio: float = 0.0,
+    target_env_transitions: Optional[int] = None,
+    collection_stats: Optional[dict[str, Any]] = None,
 ) -> Iterator[EpisodeData]:
     """
     创建数据集，支持多种环境
@@ -452,6 +634,21 @@ def create_dataset(
     Yields:
         EpisodeData
     """
+    if (
+        target_env_transitions is not None
+        and hasattr(env, "abstract_goal_observation")
+        and hasattr(env, "device_ids")
+    ):
+        yield from create_budgeted_comm_dataset(
+            env,
+            target_env_transitions=int(target_env_transitions),
+            max_steps_per_episode=max_steps_per_episode,
+            seed=seed,
+            task_aware_teacher_ratio=task_aware_teacher_ratio,
+            collection_stats=collection_stats,
+        )
+        return
+
     if getattr(env, 'dataset_mode', None) == 'discrete_graph' and hasattr(env, 'iter_discrete_transitions'):
         for state, action, next_state, reward, done in env.iter_discrete_transitions():
             yield EpisodeData.from_simple_trajectory(
