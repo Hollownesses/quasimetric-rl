@@ -71,6 +71,19 @@ python -m minimal_qrl.industry_exp.scalability report \
 
 运行器会跳过已有 `COMPLETE` 的 job，并从未完成训练目录中最新的
 checkpoint 继续。汇总报告位于 `results/qrl_scalability_metric/report/`。
+训练默认每2,000 step保存一次模型，但仍只在由 `--checkpoints`
+指定的节点运行验证；保存间隔可用 `--save-interval` 单独调整。
+
+可以用 `--area-sides` 和 `--device-counts` 只选择部分场景。面积边长目前支持
+`100,200,300,500,1000` 米。例如，单种子趋势实验：
+
+```bash
+bash minimal_qrl/run_qrl_scalability_pilot.sh
+```
+
+该脚本选择 `100/300/1000 m` 和 `K=4/12/24`，公共基准不重复，
+因此每个种子共训练5个模型。单种子报告仅用于趋势观察，
+`usable` 的正式判定仍保持三种子要求。
 
 ## 参数说明
 

@@ -2,8 +2,9 @@
 
 The simulator keeps its established numerical convention and attaches an
 explicit physical interpretation: one environment unit represents ten metres.
-This module is the source of truth for the six controlled scenarios.  Generated
-result directories are deliberately not used as inputs.
+This module is the source of truth for the controlled scenarios.  Generated
+result directories are deliberately not used as inputs.  The formal-study
+defaults remain unchanged, while callers can select supported subsets.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import copy
 import json
 import math
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from minimal_qrl.envs import CircleObstacle
 
@@ -20,7 +21,8 @@ from minimal_qrl.envs import CircleObstacle
 METERS_PER_ENV_UNIT = 10.0
 BASE_PHYSICAL_SIDE_M = 100.0
 BASE_ENV_SIDE = BASE_PHYSICAL_SIDE_M / METERS_PER_ENV_UNIT
-AREA_SIDE_METRES = (100, 200, 500, 1000)
+AREA_SIDE_METRES = (100, 200, 300, 500, 1000)
+DEFAULT_AREA_SIDE_METRES = (100, 200, 500, 1000)
 DEVICE_COUNTS = (4, 12, 24)
 
 BASE_OBSTACLES = (
@@ -176,12 +178,28 @@ def build_metric_scenario(physical_side_m: int, device_count: int) -> dict[str, 
     return scenario
 
 
-def build_scalability_scenarios() -> list[dict[str, Any]]:
-    """Return the six unique scenarios; the l100/k24 baseline is shared."""
+def build_scalability_scenarios(
+    *,
+    area_sides: Sequence[int] = DEFAULT_AREA_SIDE_METRES,
+    device_counts: Sequence[int] = DEVICE_COUNTS,
+) -> list[dict[str, Any]]:
+    """Return the selected scenario union; the l100/k24 baseline is shared."""
 
-    scenarios = [build_metric_scenario(side, 24) for side in AREA_SIDE_METRES]
-    scenarios.extend(build_metric_scenario(100, count) for count in DEVICE_COUNTS if count != 24)
-    return scenarios
+    selected_sides = tuple(dict.fromkeys(int(side) for side in area_sides))
+    selected_counts = tuple(dict.fromkeys(int(count) for count in device_counts))
+    if not selected_sides:
+        raise ValueError("area_sides must not be empty")
+    if not selected_counts:
+        raise ValueError("device_counts must not be empty")
+
+    scenarios_by_id: dict[str, dict[str, Any]] = {}
+    for side in selected_sides:
+        scenario = build_metric_scenario(side, 24)
+        scenarios_by_id[scenario["scenario_id"]] = scenario
+    for count in selected_counts:
+        scenario = build_metric_scenario(100, count)
+        scenarios_by_id[scenario["scenario_id"]] = scenario
+    return list(scenarios_by_id.values())
 
 
 def validate_metric_scenario(scenario: Mapping[str, Any]) -> None:
@@ -209,10 +227,18 @@ def validate_metric_scenario(scenario: Mapping[str, Any]) -> None:
             raise ValueError(f"catalog point outside bounds: {point}")
 
 
-def write_scalability_scenarios(directory: Path) -> list[Path]:
+def write_scalability_scenarios(
+    directory: Path,
+    *,
+    area_sides: Sequence[int] = DEFAULT_AREA_SIDE_METRES,
+    device_counts: Sequence[int] = DEVICE_COUNTS,
+) -> list[Path]:
     directory.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
-    for scenario in build_scalability_scenarios():
+    for scenario in build_scalability_scenarios(
+        area_sides=area_sides,
+        device_counts=device_counts,
+    ):
         path = directory / f"{scenario['scenario_id']}.json"
         with path.open("w", encoding="utf-8") as handle:
             json.dump(scenario, handle, ensure_ascii=False, indent=2)

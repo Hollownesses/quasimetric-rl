@@ -24,6 +24,7 @@ def test_metric_area_scenarios_have_expected_physical_mapping_and_geometry():
     expected = {
         100: (10.0, 10_000.0, 180),
         200: (20.0, 40_000.0, 360),
+        300: (30.0, 90_000.0, 540),
         500: (50.0, 250_000.0, 900),
         1000: (100.0, 1_000_000.0, 1800),
     }
@@ -49,7 +50,7 @@ def test_metric_area_scenarios_have_expected_physical_mapping_and_geometry():
 def test_communication_margin_is_invariant_at_corresponding_positions():
     qualities = []
     los_flags = []
-    for side_m in (100, 200, 500, 1000):
+    for side_m in (100, 200, 300, 500, 1000):
         scenario = build_metric_scenario(side_m, 24)
         env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
         scale = scenario["scale_factor"]
@@ -105,7 +106,7 @@ def test_task_bank_maps_to_valid_paired_starts_at_every_area(tmp_path: Path):
         tmp_path / "task_bank.json", validation_per_device=1, test_per_device=1
     )
     validation = [row for row in bank["records"] if row["split"] == "validation"]
-    for side_m in (100, 200, 500, 1000):
+    for side_m in (100, 200, 300, 500, 1000):
         scenario = build_metric_scenario(side_m, 24)
         env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
         env_side = float(scenario["bounds"][2])
@@ -133,8 +134,32 @@ def test_manifest_contains_18_unique_jobs_and_shared_baseline_once_per_seed(tmp_
     jobs = manifest["jobs"]
     assert len(jobs) == 18
     assert len({row["job_id"] for row in jobs}) == 18
+    assert {row["save_interval"] for row in jobs} == {2_000}
     baseline = [row for row in jobs if row["scenario_id"] == "metric_l100_k24"]
     assert len(baseline) == 3
+
+
+def test_pilot_manifest_selects_five_unique_single_seed_jobs(tmp_path: Path):
+    manifest = scalability.build_manifest(
+        tmp_path,
+        seeds=[0],
+        target_env_transitions=60_000,
+        total_steps=60_000,
+        checkpoints=[20_000, 40_000, 60_000],
+        validation_per_device=1,
+        test_per_device=1,
+        area_sides=[100, 300, 1000],
+        device_counts=[4, 12, 24],
+    )
+    scenario_ids = {row["scenario_id"] for row in manifest["jobs"]}
+    assert scenario_ids == {
+        "metric_l100_k4",
+        "metric_l100_k12",
+        "metric_l100_k24",
+        "metric_l300_k24",
+        "metric_l1000_k24",
+    }
+    assert len(manifest["jobs"]) == 5
 
 
 def test_completed_job_is_not_overwritten(tmp_path: Path, monkeypatch):
@@ -151,4 +176,3 @@ def test_completed_job_is_not_overwritten(tmp_path: Path, monkeypatch):
         teacher_ratio=0.0,
     )
     assert called == []
-

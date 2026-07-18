@@ -24,6 +24,8 @@ import matplotlib.pyplot as plt
 
 from minimal_qrl.envs import CommInspectionDubinsUAV2D
 from minimal_qrl.industry_exp.scalability_scenarios import (
+    DEFAULT_AREA_SIDE_METRES,
+    DEVICE_COUNTS,
     build_metric_scenario,
     build_scalability_scenarios,
     scenario_to_env_kwargs,
@@ -116,10 +118,25 @@ def build_manifest(
     checkpoints: Sequence[int],
     validation_per_device: int,
     test_per_device: int,
+    area_sides: Sequence[int] = DEFAULT_AREA_SIDE_METRES,
+    device_counts: Sequence[int] = DEVICE_COUNTS,
+    save_interval: int = 2_000,
 ) -> dict[str, Any]:
+    if int(save_interval) <= 0:
+        raise ValueError("save_interval must be positive")
     scenario_dir = output_root / "scenario_configs"
-    scenario_paths = write_scalability_scenarios(scenario_dir)
-    scenarios = {item["scenario_id"]: item for item in build_scalability_scenarios()}
+    scenario_paths = write_scalability_scenarios(
+        scenario_dir,
+        area_sides=area_sides,
+        device_counts=device_counts,
+    )
+    scenarios = {
+        item["scenario_id"]: item
+        for item in build_scalability_scenarios(
+            area_sides=area_sides,
+            device_counts=device_counts,
+        )
+    }
     paths_by_id = {path.stem: path for path in scenario_paths}
     task_bank_path = output_root / "task_bank.json"
     task_bank = generate_task_bank(
@@ -146,20 +163,25 @@ def build_manifest(
                     "task_bank": str(task_bank_path),
                     "target_env_transitions": int(target_env_transitions),
                     "total_steps": int(total_steps),
+                    "save_interval": int(save_interval),
                     "checkpoints": [int(v) for v in checkpoints],
                     "validation_per_device": int(validation_per_device),
                     "test_per_device": int(test_per_device),
                     "output_dir": str(output_root / "jobs" / job_id),
                 }
             )
-    if len(jobs) != 6 * len(seeds):
-        raise AssertionError("manifest must contain six scenarios for every seed")
+    if len(jobs) != len(scenarios) * len(seeds):
+        raise AssertionError("manifest must contain every selected scenario for every seed")
     if len({row["job_id"] for row in jobs}) != len(jobs):
         raise AssertionError("manifest contains duplicate jobs")
     manifest = {
         "schema_version": 1,
         "usability_threshold": USABILITY_THRESHOLD,
         "task_bank_digest": task_bank["content_digest"],
+        "selection": {
+            "area_sides_m": [int(value) for value in area_sides],
+            "device_counts": [int(value) for value in device_counts],
+        },
         "scenarios": list(scenarios.values()),
         "jobs": jobs,
     }
@@ -209,7 +231,14 @@ def run_job(
     log_path = job_dir / "runner.log"
 
     if not training_complete.exists():
-        save_interval = min(int(v) for v in job["checkpoints"] if int(v) > 0)
+        # Model persistence is independent from the more expensive validation
+        # schedule.  Old manifests fall back to the historical behavior.
+        save_interval = int(
+            job.get(
+                "save_interval",
+                min(int(v) for v in job["checkpoints"] if int(v) > 0),
+            )
+        )
         command = [
             sys.executable,
             "minimal_qrl/train.py",
@@ -632,8 +661,26 @@ def _build_parser() -> argparse.ArgumentParser:
         sub = subparsers.add_parser(name)
         sub.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
         sub.add_argument("--seeds", type=_parse_ints, default=list(DEFAULT_SEEDS))
+        sub.add_argument(
+            "--area-sides",
+            type=_parse_ints,
+            default=list(DEFAULT_AREA_SIDE_METRES),
+            help="comma-separated physical side lengths in metres",
+        )
+        sub.add_argument(
+            "--device-counts",
+            type=_parse_ints,
+            default=list(DEVICE_COUNTS),
+            help="comma-separated device counts for the 100 m map",
+        )
         sub.add_argument("--target-env-transitions", type=int, default=60_000)
         sub.add_argument("--total-steps", type=int, default=60_000)
+        sub.add_argument(
+            "--save-interval",
+            type=int,
+            default=2_000,
+            help="save a training checkpoint every N gradient updates",
+        )
         sub.add_argument("--checkpoints", type=_parse_ints, default=[20_000, 40_000, 60_000])
         sub.add_argument("--validation-per-device", type=int, default=10)
         sub.add_argument("--test-per-device", type=int, default=25)
@@ -654,6 +701,8 @@ def main() -> None:
         return
     if max(args.checkpoints) > int(args.total_steps):
         raise ValueError("checkpoints cannot exceed total_steps")
+    if int(args.save_interval) <= 0:
+        raise ValueError("save-interval must be positive")
     manifest = build_manifest(
         args.output_root,
         seeds=args.seeds,
@@ -662,6 +711,9 @@ def main() -> None:
         checkpoints=args.checkpoints,
         validation_per_device=args.validation_per_device,
         test_per_device=args.test_per_device,
+        area_sides=args.area_sides,
+        device_counts=args.device_counts,
+        save_interval=args.save_interval,
     )
     if args.command == "run":
         run_manifest(
