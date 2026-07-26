@@ -1551,6 +1551,13 @@ def main():
         for row in task_bank["records"]:
             if str(row["split"]) != str(args.task_split):
                 continue
+            record_scenario_id = row.get("scenario_id")
+            if (
+                record_scenario_id is not None
+                and scenario is not None
+                and str(record_scenario_id) != str(scenario["scenario_id"])
+            ):
+                continue
             normalized = row["start_normalized"]
             mapped = dict(row)
             mapped["start"] = [

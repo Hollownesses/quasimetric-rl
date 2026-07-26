@@ -59,6 +59,7 @@ DEVICE_ORDER = (
     "heat_exchanger_e201",
     "separator_v201",
 )
+BASE_DEVICE_COUNT = len(DEVICE_ORDER)
 
 
 def _repo_root() -> Path:
@@ -82,6 +83,16 @@ def _load_base_catalog() -> dict[str, Any]:
 
 def _scale_point(point: list[float], scale: float) -> list[float]:
     return [float(point[0]) * scale, float(point[1]) * scale]
+
+
+def _translate_point(point: Sequence[float], dx: float, dy: float) -> list[float]:
+    return [float(point[0]) + float(dx), float(point[1]) + float(dy)]
+
+
+def tiled_device_id(tile_grid_size: int, row: int, col: int, base_device_id: str) -> str:
+    """Return a globally unique device id for one tiled park scenario."""
+
+    return f"g{int(tile_grid_size)}_r{int(row)}_c{int(col)}__{str(base_device_id)}"
 
 
 def build_metric_scenario(physical_side_m: int, device_count: int) -> dict[str, Any]:
@@ -178,6 +189,113 @@ def build_metric_scenario(physical_side_m: int, device_count: int) -> dict[str, 
     return scenario
 
 
+def build_tiled_metric_scenario(tile_grid_size: int = 2) -> dict[str, Any]:
+    """Build a density-preserving tiled industrial park.
+
+    Each tile is a translated copy of the 100 m reference park.  Device and
+    obstacle *sizes* are not scaled.  A single engineered base station is
+    placed at the centre of the complete park and its link budget is adjusted
+    for the larger side length.
+    """
+
+    grid = int(tile_grid_size)
+    if grid <= 0:
+        raise ValueError("tile_grid_size must be positive")
+
+    physical_side_m = int(BASE_PHYSICAL_SIDE_M) * grid
+    env_side = BASE_ENV_SIDE * grid
+    catalog = _load_base_catalog()
+    base_devices = list(catalog["devices"])
+    tiled_devices: list[dict[str, Any]] = []
+    obstacles: list[dict[str, float]] = []
+
+    for row in range(grid):
+        for col in range(grid):
+            dx = float(col) * BASE_ENV_SIDE
+            dy = float(row) * BASE_ENV_SIDE
+            for base_device in base_devices:
+                device = copy.deepcopy(base_device)
+                device["id"] = tiled_device_id(
+                    grid,
+                    row,
+                    col,
+                    str(base_device["id"]),
+                )
+                device["position"] = _translate_point(device["position"], dx, dy)
+                device["observation_anchor"] = _translate_point(
+                    device["observation_anchor"],
+                    dx,
+                    dy,
+                )
+                tiled_devices.append(device)
+            for obstacle in BASE_OBSTACLES:
+                obstacles.append(
+                    {
+                        "x": float(obstacle["x"]) + dx,
+                        "y": float(obstacle["y"]) + dy,
+                        "radius": float(obstacle["radius"]),
+                    }
+                )
+
+    centre = [0.5 * env_side, 0.5 * env_side]
+    catalog["devices"] = tiled_devices
+    catalog["ground_station"]["position"] = list(centre)
+    catalog["ground_station"]["los_anchor"] = list(centre)
+
+    comm_alpha = 2.0
+    comm_bias_base = 12.0
+    device_count = BASE_DEVICE_COUNT * grid * grid
+    scenario = {
+        "schema_version": 1,
+        "scenario_id": f"tiled_g{grid}_l{physical_side_m}_k{device_count}",
+        "experiment_axes": ["area", "device_count", "joint_scale"],
+        "meters_per_env_unit": METERS_PER_ENV_UNIT,
+        "physical_side_m": float(physical_side_m),
+        "physical_area_m2": float(physical_side_m) ** 2,
+        "scale_factor": float(grid),
+        "bounds": [0.0, 0.0, env_side, env_side],
+        "device_count": int(device_count),
+        "topology": "tiled_medium",
+        "max_episode_steps": int(round(180 * grid)),
+        "device_catalog": catalog,
+        "obstacles": obstacles,
+        "omega_max": 3.0,
+        "v": 1.0,
+        "dt": 0.1,
+        "comm_alpha": comm_alpha,
+        "comm_bias": comm_bias_base + comm_alpha * math.log(float(grid)),
+        "comm_occlusion_penalty": 6.0,
+        "comm_threshold": 0.5,
+        "require_ground_station_los": False,
+        "collision_cost": 10.0,
+        "out_of_bounds_cost": 10.0,
+        "communication_break_cost": 1.0,
+        "observation_violation_cost_weight": 1.0,
+        "communication_violation_cost_weight": 0.5,
+        "observation_failure_cost": 0.25,
+        "taskscore_beta_obs": 1.0,
+        "taskscore_beta_comm": 1.0,
+        "taskscore_beta_feas": 0.5,
+        "taskscore_margin_clip": 2.0,
+        "min_start_target_distance": 0.5,
+        "metadata": {
+            "layout_kind": "density_preserving_tiled",
+            "tile_grid_size": int(grid),
+            "base_tile_side_m": BASE_PHYSICAL_SIDE_M,
+            "base_devices_per_tile": BASE_DEVICE_COUNT,
+            "base_obstacles_per_tile": len(BASE_OBSTACLES),
+            "coordinate_interpretation": "1 environment unit = 10 metres",
+            "catalog_source": str(base_catalog_path().relative_to(_repo_root())),
+            "inspection_distances_scaled": False,
+            "obstacle_sizes_scaled": False,
+            "single_central_ground_station": True,
+            "communication_relative_coverage_fixed": True,
+        },
+    }
+    validate_metric_scenario(scenario)
+    return scenario
+
+
 def build_scalability_scenarios(
     *,
     area_sides: Sequence[int] = DEFAULT_AREA_SIDE_METRES,
@@ -215,16 +333,45 @@ def validate_metric_scenario(scenario: Mapping[str, Any]) -> None:
     if len(devices) != int(scenario["device_count"]):
         raise ValueError("device_count does not match device_catalog")
     ids = [str(item["id"]) for item in devices]
-    if ids != list(DEVICE_ORDER[: len(ids)]):
+    metadata = dict(scenario.get("metadata", {}))
+    if metadata.get("layout_kind") == "density_preserving_tiled":
+        grid = int(metadata["tile_grid_size"])
+        expected_ids = [
+            tiled_device_id(grid, row, col, device_id)
+            for row in range(grid)
+            for col in range(grid)
+            for device_id in DEVICE_ORDER
+        ]
+        if ids != expected_ids:
+            raise ValueError("tiled device catalog does not follow the deterministic tile order")
+        if len(devices) != BASE_DEVICE_COUNT * grid * grid:
+            raise ValueError("tiled device count does not match tile density")
+    elif ids != list(DEVICE_ORDER[: len(ids)]):
         raise ValueError("device catalog does not follow the nested device order")
     for point in (
-        [scenario["device_catalog"]["ground_station"]["position"]]
+        [
+            scenario["device_catalog"]["ground_station"]["position"],
+            scenario["device_catalog"]["ground_station"]["los_anchor"],
+        ]
         + [item["position"] for item in devices]
         + [item["observation_anchor"] for item in devices]
     ):
         x, y = float(point[0]), float(point[1])
         if not (bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]):
             raise ValueError(f"catalog point outside bounds: {point}")
+    for obstacle in scenario["obstacles"]:
+        x = float(obstacle["x"])
+        y = float(obstacle["y"])
+        radius = float(obstacle["radius"])
+        if radius <= 0.0:
+            raise ValueError("obstacle radius must be positive")
+        if not (
+            bounds[0] <= x - radius
+            and x + radius <= bounds[2]
+            and bounds[1] <= y - radius
+            and y + radius <= bounds[3]
+        ):
+            raise ValueError(f"obstacle outside bounds: {obstacle}")
 
 
 def write_scalability_scenarios(

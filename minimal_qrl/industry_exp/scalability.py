@@ -109,6 +109,91 @@ def generate_task_bank(
     return payload
 
 
+def generate_scenario_task_bank(
+    path: Path,
+    scenarios: Sequence[Mapping[str, Any]],
+    *,
+    validation_per_device: int = 10,
+    test_per_device: int = 25,
+    seed: int = TASK_BANK_SEED,
+) -> dict[str, Any]:
+    """Generate independent full-map random starts for each scenario.
+
+    Unlike ``generate_task_bank``, this does not map starts sampled in the
+    100 m reference park into every other scenario.  Each scenario samples
+    starts directly from its complete physical bounds.  A scenario id on every
+    task record keeps overlapping device ids unambiguous.
+    """
+
+    records: list[dict[str, Any]] = []
+    scenario_device_ids: dict[str, list[str]] = {}
+    total = int(validation_per_device) + int(test_per_device)
+    if total <= 0:
+        raise ValueError("task bank must contain at least one start per device")
+
+    ordered_scenarios = sorted(scenarios, key=lambda item: str(item["scenario_id"]))
+    for scenario in ordered_scenarios:
+        scenario_id = str(scenario["scenario_id"])
+        scenario_seed_offset = (
+            int(hashlib.sha256(scenario_id.encode("utf-8")).hexdigest()[:12], 16)
+            % 90_000_000
+        )
+        env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
+        width = float(scenario["bounds"][2] - scenario["bounds"][0])
+        height = float(scenario["bounds"][3] - scenario["bounds"][1])
+        scenario_device_ids[scenario_id] = list(env.device_ids)
+        for device_index, device_id in enumerate(env.device_ids):
+            for sample_index in range(total):
+                episode_seed = int(
+                    seed
+                    + scenario_seed_offset
+                    + device_index * 1_000_003
+                    + sample_index * 101
+                )
+                _obs, _info = env.reset(
+                    seed=episode_seed,
+                    options={"device_id": device_id},
+                )
+                start = [float(v) for v in env.state]
+                split = "validation" if sample_index < validation_per_device else "test"
+                split_index = (
+                    sample_index
+                    if split == "validation"
+                    else sample_index - validation_per_device
+                )
+                records.append(
+                    {
+                        "task_id": (
+                            f"{scenario_id}:{split}:{device_id}:{split_index:03d}"
+                        ),
+                        "scenario_id": scenario_id,
+                        "split": split,
+                        "device_id": str(device_id),
+                        "device_index": int(device_index),
+                        "sample_index": int(split_index),
+                        "seed": episode_seed,
+                        "start_normalized": [
+                            (start[0] - float(scenario["bounds"][0])) / width,
+                            (start[1] - float(scenario["bounds"][1])) / height,
+                            start[2],
+                        ],
+                    }
+                )
+
+    payload = {
+        "schema_version": 2,
+        "generation_mode": "independent_full_scenario_random_starts",
+        "generation_seed": int(seed),
+        "validation_per_device": int(validation_per_device),
+        "test_per_device": int(test_per_device),
+        "scenario_device_ids": scenario_device_ids,
+        "records": records,
+    }
+    payload["content_digest"] = _digest(payload)
+    _write_json(path, payload)
+    return payload
+
+
 def build_manifest(
     output_root: Path,
     *,
@@ -483,6 +568,10 @@ def _aggregate_scenarios(manifest: Mapping[str, Any], job_rows: Sequence[Mapping
                 "physical_side_m": float(scenario["physical_side_m"]),
                 "physical_area_m2": float(scenario["physical_area_m2"]),
                 "device_count": int(scenario["device_count"]),
+                "experiment_axes": list(scenario.get("experiment_axes", [])),
+                "layout_kind": str(
+                    scenario.get("metadata", {}).get("layout_kind", "homothetic")
+                ),
                 "completed_seeds": len(mppi_values),
                 "qrl_mppi_success_mean": m_mean,
                 "qrl_mppi_success_std": m_std,
@@ -507,7 +596,14 @@ def _aggregate_scenarios(manifest: Mapping[str, Any], job_rows: Sequence[Mapping
 
 
 def _plot_axis(rows: Sequence[Mapping[str, Any]], *, x_key: str, x_label: str, path: Path) -> None:
-    valid = [row for row in rows if row.get("qrl_mppi_success_mean") is not None]
+    valid = [
+        row
+        for row in rows
+        if row.get("qrl_mppi_success_mean") is not None
+        and row.get("training_time_mean_sec") is not None
+        and math.isfinite(float(row["qrl_mppi_success_mean"]))
+        and math.isfinite(float(row["training_time_mean_sec"]))
+    ]
     if not valid:
         return
     valid = sorted(valid, key=lambda row: float(row[x_key]))
@@ -586,11 +682,16 @@ def write_report(output_root: Path) -> dict[str, Any]:
         )
     aggregates = _aggregate_scenarios(manifest, job_rows)
     area_rows = sorted(
-        [row for row in aggregates if int(row["device_count"]) == 24],
+        [row for row in aggregates if "area" in row.get("experiment_axes", [])],
         key=lambda row: float(row["physical_area_m2"]),
     )
     device_rows = sorted(
-        [row for row in aggregates if float(row["physical_side_m"]) == 100.0],
+        [
+            row
+            for row in aggregates
+            if "device_count" in row.get("experiment_axes", [])
+            and "joint_scale" not in row.get("experiment_axes", [])
+        ],
         key=lambda row: int(row["device_count"]),
     )
     report_dir = output_root / "report"

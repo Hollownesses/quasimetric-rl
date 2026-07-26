@@ -85,6 +85,28 @@ bash minimal_qrl/run_qrl_scalability_pilot.sh
 因此每个种子共训练5个模型。单种子报告仅用于趋势观察，
 `usable` 的正式判定仍保持三种子要求。
 
+### 2×2密度保持拼接园区
+
+更真实的联合规模实验将4个 `100 m×100 m` 子园区平移拼接为
+`200 m×200 m` 园区，共96台设备和12个障碍物。设备、障碍物半径和
+`3.5–8.5 m` 巡检距离均保持原物理尺寸；完整园区使用一个中心基站，
+通信偏置按边长调整。验证和测试起点直接从完整200米园区独立随机采样。
+
+```bash
+bash minimal_qrl/run_qrl_tiled_scalability_2x2.sh
+```
+
+脚本默认只运行2×2单种子场景。固定数据密度以24设备场景的50k真实转移
+和50k更新为基准，因此96设备场景自动使用200k真实转移和200k更新，
+并在40k/80k/120k/160k/200k进行验证。若要重新训练具有相同中心基站
+口径的1×1基准，可运行：
+
+```bash
+TILE_GRIDS=1,2 \
+OUTPUT_ROOT=results/qrl_tiled_scalability_1x1_2x2 \
+bash minimal_qrl/run_qrl_tiled_scalability_2x2.sh
+```
+
 ## 参数说明
 
 ### 训练参数
