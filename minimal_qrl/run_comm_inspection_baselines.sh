@@ -27,6 +27,7 @@ STARTS_PER_DEVICE="${STARTS_PER_DEVICE:-25}"
 TRAIN_SAC_FLAG=""
 TRAIN_CONTEXT_FLAG=""
 SAVE_VISUALIZATIONS_FLAG=""
+RESUME_FLAG=""
 EXTRA_ARGS=()
 if [[ "${TRAIN_SAC:-1}" == "1" ]]; then
   TRAIN_SAC_FLAG="--train-sac"
@@ -36,6 +37,9 @@ if [[ "${TRAIN_CONTEXT_AGENTS:-1}" == "1" ]]; then
 fi
 if [[ "${SAVE_VISUALIZATIONS:-0}" == "1" ]]; then
   SAVE_VISUALIZATIONS_FLAG="--save-visualizations"
+fi
+if [[ "${RESUME:-0}" == "1" ]]; then
+  RESUME_FLAG="--resume"
 fi
 EXTRA_ARGS+=(--starts-per-device "$STARTS_PER_DEVICE")
 if [[ -n "${SAC_TOTAL_ENV_STEPS:-}" ]]; then
@@ -85,6 +89,7 @@ echo "  methods=$METHODS"
 echo "  starts_per_device=$STARTS_PER_DEVICE"
 echo "  device_catalog=${DEVICE_CATALOG:-./minimal_qrl/configs/industrial_site_devices.json}"
 echo "  output_dir=$OUTPUT_DIR"
+echo "  resume=${RESUME:-0}"
 echo "  incremental_csv=$OUTPUT_DIR/baseline_results.partial.csv"
 echo "  incremental_jsonl=$OUTPUT_DIR/baseline_results.partial.jsonl"
 
@@ -95,6 +100,7 @@ echo "  incremental_jsonl=$OUTPUT_DIR/baseline_results.partial.jsonl"
   --qrl-checkpoints "${QRL_CKPT_ARRAY[@]}" \
   ${TRAIN_SAC_FLAG} \
   ${TRAIN_CONTEXT_FLAG} \
+  ${RESUME_FLAG} \
   --seed "${SEED:-0}" \
   --device "${DEVICE:-auto}" \
   --bounds ${BOUNDS:-0 0 10 10} \

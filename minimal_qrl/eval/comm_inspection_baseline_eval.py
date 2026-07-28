@@ -98,27 +98,57 @@ CSV_FIELDS = [
 ]
 
 
+def _record_key(record: Dict[str, Any]) -> tuple[str, str, str, int]:
+    return (
+        str(record["method"]),
+        str(record["model_run"]),
+        str(record["device_id"]),
+        int(record["episode_seed"]),
+    )
+
+
 class IncrementalResultWriter:
     """Flush one completed episode immediately so interrupted runs retain data."""
 
-    def __init__(self, output_dir: Path) -> None:
+    def __init__(self, output_dir: Path, *, resume: bool = False) -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_path = self.output_dir / "baseline_results.partial.csv"
         self.jsonl_path = self.output_dir / "baseline_results.partial.jsonl"
         self.progress_path = self.output_dir / "baseline_progress.json"
+        self.existing_records: list[Dict[str, Any]] = []
+        if resume and self.jsonl_path.exists():
+            with open(self.jsonl_path, "r", encoding="utf-8") as f:
+                for line_number, line in enumerate(f, start=1):
+                    if not line.strip():
+                        continue
+                    try:
+                        self.existing_records.append(json.loads(line))
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(
+                            f"invalid partial JSONL record at line {line_number}: "
+                            f"{self.jsonl_path}"
+                        ) from exc
+
         self._csv_file = open(self.csv_path, "w", encoding="utf-8", newline="")
-        self._jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
         self._csv_writer = csv.DictWriter(
             self._csv_file,
             fieldnames=CSV_FIELDS,
             extrasaction="ignore",
         )
         self._csv_writer.writeheader()
+        self._csv_writer.writerows(self.existing_records)
         self._csv_file.flush()
-        self.completed_records = 0
+        self._jsonl_file = open(
+            self.jsonl_path,
+            "a" if resume else "w",
+            encoding="utf-8",
+        )
+        self.completed_records = len(self.existing_records)
+        self.completed_keys = {_record_key(record) for record in self.existing_records}
         self._closed = False
-        self._write_progress(status="running", latest=None)
+        latest = self.existing_records[-1] if self.existing_records else None
+        self._write_progress(status="running", latest=latest)
 
     def _write_progress(self, *, status: str, latest: Optional[Dict[str, Any]]) -> None:
         payload: Dict[str, Any] = {
@@ -146,6 +176,7 @@ class IncrementalResultWriter:
         self._jsonl_file.write(json.dumps(record, ensure_ascii=False) + "\n")
         self._jsonl_file.flush()
         self.completed_records += 1
+        self.completed_keys.add(_record_key(record))
         self._write_progress(status="running", latest=record)
 
     def mark_complete(self) -> None:
@@ -437,8 +468,20 @@ def _evaluate_controller(
     viz_cfg: VisualizationConfig,
     counters: Dict[str, Dict[str, int]],
     on_record: Optional[Callable[[Dict[str, Any]], None]] = None,
+    completed_keys: Optional[set[tuple[str, str, str, int]]] = None,
 ) -> list[Dict[str, Any]]:
-    episode_specs = list(episode_specs)
+    if completed_keys is None:
+        completed_keys = set()
+    episode_specs = [
+        (str(device_id), int(episode_seed))
+        for device_id, episode_seed in episode_specs
+        if (
+            str(method),
+            str(model_run),
+            str(device_id),
+            int(episode_seed),
+        ) not in completed_keys
+    ]
     specs_by_device: Dict[str, list[tuple[str, int]]] = {}
     for device_id, episode_seed in episode_specs:
         specs_by_device.setdefault(str(device_id), []).append((str(device_id), int(episode_seed)))
@@ -533,6 +576,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--bootstrap-samples", type=int, default=2000)
     parser.add_argument("--save-visualizations", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from baseline_results.partial.jsonl and skip completed records.",
+    )
     parser.add_argument("--viz-max-successes", type=int, default=3)
     parser.add_argument("--viz-max-failures", type=int, default=3)
 
@@ -625,9 +673,15 @@ def main() -> None:
         gif_fps=8,
     )
     counters: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    records: list[Dict[str, Any]] = []
-    incremental_writer = IncrementalResultWriter(output_dir)
+    incremental_writer = IncrementalResultWriter(output_dir, resume=bool(args.resume))
     atexit.register(incremental_writer.close)
+    records: list[Dict[str, Any]] = list(incremental_writer.existing_records)
+    completed_keys = incremental_writer.completed_keys
+    if args.resume:
+        print(
+            f"Resuming from {incremental_writer.jsonl_path}: "
+            f"{len(records)} completed records loaded"
+        )
 
     astar_cfg = HybridAStarConfig(
         position_resolution=args.astar_position_resolution,
@@ -653,6 +707,7 @@ def main() -> None:
             "hybrid_astar", HybridAStarController(astar_cfg), env, episode_specs,
             model_run="model", output_dir=output_dir, viz_cfg=viz_cfg, counters=counters,
             on_record=incremental_writer.write,
+            completed_keys=completed_keys,
         ))
     if "mppi_no_terminal" in methods:
         env = make_comm_inspection_env(args)
@@ -660,6 +715,7 @@ def main() -> None:
             "mppi_no_terminal", MPPIController(mppi_cfg, terminal_mode="none"), env, episode_specs,
             model_run="model", output_dir=output_dir, viz_cfg=viz_cfg, counters=counters,
             on_record=incremental_writer.write,
+            completed_keys=completed_keys,
         ))
     if "model_mppi" in methods:
         env = make_comm_inspection_env(args)
@@ -667,6 +723,7 @@ def main() -> None:
             "model_mppi", MPPIController(mppi_cfg, terminal_mode="model"), env, episode_specs,
             model_run="model", output_dir=output_dir, viz_cfg=viz_cfg, counters=counters,
             on_record=incremental_writer.write,
+            completed_keys=completed_keys,
         ))
 
     qrl_methods = {"qrl_greedy", "qrl_mppi"} & set(methods)
@@ -687,6 +744,7 @@ def main() -> None:
                 episode_specs, model_run=model_run, output_dir=output_dir,
                 viz_cfg=viz_cfg, counters=counters,
                 on_record=incremental_writer.write,
+                completed_keys=completed_keys,
             ))
         if "qrl_mppi" in methods:
             records.extend(_evaluate_controller(
@@ -694,6 +752,7 @@ def main() -> None:
                 env, episode_specs, model_run=model_run, output_dir=output_dir,
                 viz_cfg=viz_cfg, counters=counters,
                 on_record=incremental_writer.write,
+                completed_keys=completed_keys,
             ))
 
     sac_paths = [Path(path) for path in args.sac_checkpoints]
@@ -726,6 +785,7 @@ def main() -> None:
             episode_specs, model_run=f"sac_seed_{metadata['seed']}_{sac_index}",
             output_dir=output_dir, viz_cfg=viz_cfg, counters=counters,
             on_record=incremental_writer.write,
+            completed_keys=completed_keys,
         ))
 
     requested_context_algorithms = {
@@ -819,6 +879,7 @@ def main() -> None:
                 viz_cfg=viz_cfg,
                 counters=counters,
                 on_record=incremental_writer.write,
+                completed_keys=completed_keys,
             ))
         mppi_method = f"{algorithm}_mppi"
         if mppi_method in methods:
@@ -840,6 +901,7 @@ def main() -> None:
                 viz_cfg=viz_cfg,
                 counters=counters,
                 on_record=incremental_writer.write,
+                completed_keys=completed_keys,
             ))
     missing_context_algorithms = requested_context_algorithms - loaded_algorithms
     if missing_context_algorithms:

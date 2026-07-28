@@ -67,42 +67,62 @@ class GoalConditionedAgentBase(nn.Module):
 class QRLGoalValueAdapter(GoalConditionedAgentBase):
     """
     将已有 QRL Agent 适配为 GoalConditionedAgentBase：
-    - 使用第一个 critic 的 encoder + quasimetric_model 计算 d(s,g)
-    - 若环境提供 get_distance_scale，则乘以该尺度，近似 time-to-go
+    - 使用第一个 critic 计算 d(s,g)，避免评估时重复整套 critic 推理
+    - 可显式指定 distance_scale；未指定时沿用环境的距离尺度
+
+    ``distance_scale`` 的默认行为是为旧的固定 step-cost Dubins 实验保留的。
+    对直接以环境代价训练的 QRL（例如通信巡检的 negative_reward 训练），
+    应显式传入 ``distance_scale=1.0``。
     """
 
-    def __init__(self, qrl_agent: nn.Module, env: DubinsUAV2D, device: torch.device):
+    def __init__(
+        self,
+        qrl_agent: nn.Module,
+        env: DubinsUAV2D,
+        device: torch.device,
+        *,
+        distance_scale: Optional[float] = None,
+    ):
         super().__init__()
         self.qrl_agent = qrl_agent
         self.env = env
         self.device = device
 
-        self._scale = 1.0
-        u = getattr(env, "unwrapped", env)
-        if hasattr(u, "get_distance_scale"):
-            self._scale = float(u.get_distance_scale())
+        if distance_scale is None:
+            self._scale = 1.0
+            u = getattr(env, "unwrapped", env)
+            if hasattr(u, "get_distance_scale"):
+                self._scale = float(u.get_distance_scale())
+        else:
+            self._scale = float(distance_scale)
+        if not np.isfinite(self._scale) or self._scale <= 0.0:
+            raise ValueError(f"distance_scale must be finite and positive, got {self._scale}")
 
     @torch.no_grad()
     def value(self, obs: np.ndarray, goal_obs: np.ndarray) -> float:
-        critic = self.qrl_agent.critics[0]
-        o = torch.tensor(obs[None], device=self.device, dtype=torch.float32)
-        g = torch.tensor(goal_obs[None], device=self.device, dtype=torch.float32)
-        z_o = critic.encoder(o)
-        z_g = critic.encoder(g)
-        d = critic.quasimetric_model(z_o, z_g).cpu().item()
-        return float(d * self._scale)
+        return float(self.batch_value(
+            np.asarray(obs, dtype=np.float32)[None, :],
+            np.asarray(goal_obs, dtype=np.float32)[None, :],
+        )[0])
 
     @torch.no_grad()
     def batch_value(self, obs_batch: np.ndarray, goal_obs_batch: np.ndarray) -> np.ndarray:
-        critic = self.qrl_agent.critics[0]
         obs_batch = np.asarray(obs_batch, dtype=np.float32)
         goal_obs_batch = np.asarray(goal_obs_batch, dtype=np.float32)
+        if obs_batch.ndim != 2 or goal_obs_batch.ndim != 2:
+            raise ValueError("obs_batch and goal_obs_batch must both be rank-2 arrays")
+        if len(obs_batch) != len(goal_obs_batch):
+            raise ValueError("obs_batch and goal_obs_batch must have the same batch size")
+        if len(obs_batch) == 0:
+            return np.empty((0,), dtype=np.float32)
+
+        critic = self.qrl_agent.critics[0]
         o = torch.as_tensor(obs_batch, device=self.device, dtype=torch.float32)
         g = torch.as_tensor(goal_obs_batch, device=self.device, dtype=torch.float32)
-        z_o = critic.encoder(o)
         z_g = critic.encoder(g)
-        d = critic.quasimetric_model(z_o, z_g).detach().cpu().numpy().astype(np.float32)
-        return d * float(self._scale)
+        distance = critic.quasimetric_model(critic.encoder(o), z_g).reshape(-1)
+        values = distance.detach().cpu().numpy().astype(np.float32)
+        return values * float(self._scale)
 
     @torch.no_grad()
     def act(self, obs: np.ndarray, goal_obs: np.ndarray, eval_mode: bool = True) -> np.ndarray:

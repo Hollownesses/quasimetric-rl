@@ -86,6 +86,40 @@ class CountingBatchAdapter(QRLGoalValueAdapter):
         return np.asarray(obs_batch[:, 0], dtype=np.float32)
 
 
+class CountingEncoder(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def forward(self, values):
+        self.calls += 1
+        return values[:, :1]
+
+
+class ScaledAbsoluteDistance(torch.nn.Module):
+    def __init__(self, scale: float):
+        super().__init__()
+        self.scale = float(scale)
+
+    def forward(self, source, goal):
+        return torch.abs(source[:, 0] - goal[:, 0]) * self.scale
+
+
+class DummyQRLCritic(torch.nn.Module):
+    def __init__(self, distance_scale: float):
+        super().__init__()
+        self.encoder = CountingEncoder()
+        self.quasimetric_model = ScaledAbsoluteDistance(distance_scale)
+
+
+class DummyQRLAgent(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.critics = torch.nn.ModuleList(
+            [DummyQRLCritic(1.0), DummyQRLCritic(3.0)]
+        )
+
+
 def make_env(**kwargs) -> CommInspectionDubinsUAV2D:
     catalog = {
         "ground_station": {"position": [1.5, 2.0], "los_anchor": [1.5, 2.0]},
@@ -177,6 +211,32 @@ def test_qrl_greedy_batches_all_candidate_values_once():
     action = agent.act(obs, env.abstract_goal_observation(), eval_mode=True)
     assert action.shape == (1,)
     assert agent.calls == 1
+
+
+def test_qrl_adapter_uses_first_critic_and_explicit_cost_scale():
+    env = make_env(dt=0.1)
+    qrl = DummyQRLAgent()
+    adapter = QRLGoalValueAdapter(
+        qrl,
+        env=env,
+        device=torch.device("cpu"),
+        distance_scale=1.0,
+    )
+    obs = np.asarray([[3.0], [4.0]], dtype=np.float32)
+    goals = np.asarray([[1.0], [1.0]], dtype=np.float32)
+
+    # Only the first critic is used, so distances are [2, 3].
+    assert np.allclose(adapter.batch_value(obs, goals), [2.0, 3.0])
+    assert np.isclose(adapter.value(obs[0], goals[0]), 2.0)
+    assert qrl.critics[1].encoder.calls == 0
+
+    # The legacy/default Dubins behavior still applies dt when no override is given.
+    legacy_adapter = QRLGoalValueAdapter(
+        DummyQRLAgent(),
+        env=env,
+        device=torch.device("cpu"),
+    )
+    assert np.isclose(legacy_adapter.value(obs[0], goals[0]), 0.2)
 
 
 def test_hierarchical_execution_eval_smoke(tmp_path: Path):

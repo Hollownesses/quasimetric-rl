@@ -195,7 +195,14 @@ def build_qrl_adapter(
 
     qrl_agent.to(device)
     qrl_agent.eval()
-    return QRLGoalValueAdapter(qrl_agent, env=env, device=device), ckpt_step
+    # 通信巡检 QRL 强制使用 negative_reward 目标训练，critic 输出已经是
+    # 与 cost_total 一致的环境代价单位，不能再乘 Dubins 的 dt。
+    return QRLGoalValueAdapter(
+        qrl_agent,
+        env=env,
+        device=device,
+        distance_scale=1.0,
+    ), ckpt_step
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:

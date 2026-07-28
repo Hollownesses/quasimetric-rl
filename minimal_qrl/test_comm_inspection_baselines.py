@@ -16,7 +16,10 @@ from minimal_qrl.baselines import (
     simulate_action_sequences,
 )
 from minimal_qrl.envs import CircleObstacle, CommInspectionDubinsUAV2D
-from minimal_qrl.eval.comm_inspection_baseline_eval import IncrementalResultWriter
+from minimal_qrl.eval.comm_inspection_baseline_eval import (
+    IncrementalResultWriter,
+    _evaluate_controller,
+)
 from minimal_qrl.gc_agents import GoalConditionedAgentBase
 
 
@@ -97,6 +100,68 @@ def test_incremental_result_writer_flushes_each_episode(tmp_path):
         (tmp_path / "baseline_progress.json").read_text(encoding="utf-8")
     )
     assert progress["status"] == "complete"
+
+
+def test_incremental_result_writer_resume_preserves_existing_records(tmp_path):
+    first = {
+        "method": "mppi_no_terminal",
+        "model_run": "model",
+        "device_id": "device_01",
+        "episode_seed": 17,
+        "success": 1.0,
+    }
+    writer = IncrementalResultWriter(tmp_path)
+    writer.write(first)
+    writer.close()
+
+    resumed = IncrementalResultWriter(tmp_path, resume=True)
+    assert resumed.existing_records == [first]
+    assert len(resumed.completed_keys) == 1
+    second = {**first, "episode_seed": 18, "success": 0.0}
+    resumed.write(second)
+    resumed.close()
+
+    jsonl_records = [
+        json.loads(line)
+        for line in (tmp_path / "baseline_results.partial.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert jsonl_records == [first, second]
+    assert len(
+        (tmp_path / "baseline_results.partial.csv")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ) == 3
+
+
+def test_evaluate_controller_skips_completed_episode(tmp_path):
+    env = make_env()
+    completed_key = ("mppi_no_terminal", "model", "device_01", 17)
+    controller = MPPIController(
+        MPPIConfig(horizon=2, num_samples=2),
+        terminal_mode="none",
+    )
+    records = _evaluate_controller(
+        "mppi_no_terminal",
+        controller,
+        env,
+        [("device_01", 17)],
+        model_run="model",
+        output_dir=tmp_path,
+        viz_cfg=type(
+            "VizConfig",
+            (),
+            {
+                "save_visualizations": False,
+                "max_successes": 0,
+                "max_failures": 0,
+            },
+        )(),
+        counters={},
+        completed_keys={completed_key},
+    )
+    assert records == []
 
 
 def test_formal_baselines_do_not_require_point_goal():
