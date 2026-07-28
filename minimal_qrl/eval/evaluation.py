@@ -18,12 +18,32 @@ from .planning_evaluation import (
 )
 
 
+def _resolve_distance_scale(
+    env: gym.Env,
+    distance_scale: Optional[float],
+) -> Optional[float]:
+    """解析 QRL 输出到评估代价单位的缩放，显式配置优先于环境旧默认值。"""
+    if distance_scale is None:
+        u = getattr(env, "unwrapped", env)
+        if not hasattr(u, "get_distance_scale"):
+            return None
+        distance_scale = u.get_distance_scale()
+        if distance_scale is None:
+            return None
+
+    scale = float(distance_scale)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError(f"distance_scale must be finite and positive, got {scale}")
+    return scale
+
+
 def evaluate_quasimetric(
     agent: nn.Module,
     env: gym.Env,
     n_pairs: int = 2000,
     device: str = 'cpu',
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    distance_scale: Optional[float] = None,
 ) -> Dict[str, float]:
     """
     评估 QRL 学习到的 quasimetric
@@ -36,6 +56,7 @@ def evaluate_quasimetric(
         n_pairs: 采样对数
         device: 设备
         seed: 随机种子
+        distance_scale: QRL 输出到评估代价单位的显式缩放；未指定时沿用环境默认值
     
     Returns:
         评估指标字典
@@ -75,7 +96,7 @@ def evaluate_quasimetric(
             zx = critic.encoder(states_t)
             zy = critic.encoder(goals_t)
             pred_dists = critic.quasimetric_model(zx, zy).cpu().numpy()
-        scale = u.get_distance_scale() if hasattr(u, "get_distance_scale") else None
+        scale = _resolve_distance_scale(env, distance_scale)
         if scale is not None:
             pred_dists = pred_dists * scale
         pred_dists_flat = pred_dists.flatten()
@@ -126,10 +147,7 @@ def evaluate_quasimetric(
         pred_dists = critic.quasimetric_model(zx, zy).cpu().numpy()
     
     # 若环境提供 get_distance_scale（如 Dubins 用 step_cost=1，预测为「步数」，乘 dt 得时间）
-    scale = None
-    u = getattr(env, 'unwrapped', env)
-    if hasattr(u, 'get_distance_scale'):
-        scale = u.get_distance_scale()
+    scale = _resolve_distance_scale(env, distance_scale)
     if scale is not None:
         pred_dists = pred_dists * scale
     
@@ -196,7 +214,8 @@ def visualize_distance_field_heatmap(
     step: int = 0,
     output_dir: str = './results',
     device: str = 'cpu',
-    resolution: Optional[Tuple[int, int]] = None
+    resolution: Optional[Tuple[int, int]] = None,
+    distance_scale: Optional[float] = None,
 ):
     """
     可视化距离场热力图（时间代价场）。
@@ -238,8 +257,9 @@ def visualize_distance_field_heatmap(
             zy = critic.encoder(goal_t)
             pred_dists = critic.quasimetric_model(zx, zy).cpu().numpy()
         pred_dists = pred_dists.reshape(h, w).astype(np.float32)
-        if hasattr(u, 'get_distance_scale'):
-            pred_dists = pred_dists * u.get_distance_scale()
+        scale = _resolve_distance_scale(env, distance_scale)
+        if scale is not None:
+            pred_dists = pred_dists * scale
         invalid = ~valid_mask.reshape(h, w)
         pred_dists[invalid] = np.nan
         gt_dists = np.zeros((h, w), dtype=np.float32)

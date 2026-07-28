@@ -595,6 +595,11 @@ def train(args):
     
     # 创建环境实例用于评估
     eval_env = create_env_fn()
+    # 通信巡检使用 negative_reward 学习逐 transition 的真实环境代价，
+    # critic 输出已与 cost_total 同单位，不能沿用固定 step-cost Dubins 的 dt 缩放。
+    evaluation_distance_scale = (
+        1.0 if args.env_type == 'comm_inspection_dubins_uav' else None
+    )
     
     # 初始化训练状态
     logger.info("开始训练...")
@@ -732,6 +737,7 @@ def train(args):
                         n_pairs=args.eval_n_pairs,
                         device=eval_device_str,
                         seed=args.seed + optim_steps,
+                        distance_scale=evaluation_distance_scale,
                     )
                     
                     # 记录到 TensorBoard
@@ -805,6 +811,7 @@ def train(args):
                                 step=optim_steps,
                                 output_dir=output_dir,
                                 device=eval_device_str,
+                                distance_scale=evaluation_distance_scale,
                             )
                             logger.info(f"已保存距离场热力图: {heatmap_path}")
                             # 将图像添加到 TensorBoard
