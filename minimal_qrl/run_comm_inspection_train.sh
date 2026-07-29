@@ -64,7 +64,12 @@ fi
   --log-interval "${LOG_INTERVAL:-100}" \
   --save-interval "${SAVE_INTERVAL:-2000}" \
   --eval-interval "${EVAL_INTERVAL:-1000}" \
-  --eval-n-pairs "${EVAL_N_PAIRS:-400}" \
+  --oracle-bank-eval \
+  --oracle-bank-dir "${ORACLE_BANK_DIR:-$OUTPUT_DIR/oracle_banks}" \
+  --oracle-bank-size "${ORACLE_BANK_SIZE:-192}" \
+  --oracle-bank-seed "${ORACLE_BANK_SEED:-20260729}" \
+  --oracle-astar-timeout-sec "${ORACLE_ASTAR_TIMEOUT_SEC:-60}" \
+  --oracle-final-bootstrap-samples "${ORACLE_FINAL_BOOTSTRAP_SAMPLES:-2000}" \
   --visualization-interval "${VIS_INTERVAL:-1000}" \
   --planning-eval-interval 0 \
   --comm-alpha "${COMM_ALPHA:-2.0}" \

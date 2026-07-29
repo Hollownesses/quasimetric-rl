@@ -61,6 +61,11 @@ from minimal_qrl.envs import (
 )
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
+from minimal_qrl.eval.comm_inspection_oracle_bank import (
+    CommInspectionOracleBankConfig,
+    ensure_comm_inspection_oracle_bank,
+    evaluate_qrl_on_oracle_bank,
+)
 from minimal_qrl.gc_agents import QRLGoalValueAdapter
 from minimal_qrl.subgoal_actor import (
     SubgoalActor,
@@ -354,6 +359,7 @@ def train(args):
     end_to_end_start = perf_counter()
     checkpoint_io_time = 0.0
     evaluation_time = 0.0
+    oracle_generation_time = 0.0
     collection_stats: Dict[str, Any] = {}
     args._scenario_data = None
     if getattr(args, 'scenario_config', None):
@@ -376,6 +382,9 @@ def train(args):
             prior_timing = json.load(f)
         checkpoint_io_time = float(prior_timing.get('checkpoint_io_time_sec', 0.0))
         evaluation_time = float(prior_timing.get('evaluation_time_sec', 0.0))
+        oracle_generation_time = float(
+            prior_timing.get('oracle_generation_time_sec', 0.0)
+        )
     
     # 设置日志
     logger = setup_logging(output_dir)
@@ -600,6 +609,86 @@ def train(args):
     evaluation_distance_scale = (
         1.0 if args.env_type == 'comm_inspection_dubins_uav' else None
     )
+    oracle_bank_enabled = bool(getattr(args, 'oracle_bank_eval', False))
+    if oracle_bank_enabled and args.env_type != 'comm_inspection_dubins_uav':
+        raise ValueError("--oracle-bank-eval 仅支持 comm_inspection_dubins_uav")
+
+    validation_oracle_bank = None
+    validation_oracle_path: Optional[Path] = None
+    final_test_oracle_path: Optional[Path] = None
+    oracle_config: Optional[CommInspectionOracleBankConfig] = None
+    oracle_validation_rows: List[Dict[str, Any]] = []
+    oracle_validation_metrics_path = os.path.join(
+        output_dir,
+        'oracle_validation_metrics.csv',
+    )
+    if (
+        getattr(args, 'init_checkpoint', None)
+        and os.path.exists(oracle_validation_metrics_path)
+    ):
+        with open(
+            oracle_validation_metrics_path,
+            'r',
+            encoding='utf-8',
+            newline='',
+        ) as handle:
+            oracle_validation_rows = list(csv.DictReader(handle))
+
+    if oracle_bank_enabled:
+        oracle_bank_dir = Path(
+            args.oracle_bank_dir
+            if getattr(args, 'oracle_bank_dir', None)
+            else os.path.join(output_dir, 'oracle_banks')
+        )
+        validation_oracle_path = Path(
+            args.oracle_validation_bank
+            if getattr(args, 'oracle_validation_bank', None)
+            else oracle_bank_dir
+            / f'hybrid_astar_validation_{int(args.oracle_bank_size)}.json'
+        )
+        final_test_oracle_path = Path(
+            args.oracle_final_test_bank
+            if getattr(args, 'oracle_final_test_bank', None)
+            else oracle_bank_dir
+            / f'hybrid_astar_final_test_{int(args.oracle_bank_size)}.json'
+        )
+        oracle_config = CommInspectionOracleBankConfig(
+            sample_count=int(args.oracle_bank_size),
+            generation_seed=int(args.oracle_bank_seed),
+            candidate_multiplier=int(args.oracle_candidate_multiplier),
+            position_resolution=float(args.oracle_astar_position_resolution),
+            heading_bins=int(args.oracle_astar_heading_bins),
+            primitive_steps=int(args.oracle_astar_primitive_steps),
+            heuristic_weight=float(args.oracle_astar_heuristic_weight),
+            max_expansions=int(args.oracle_astar_max_expansions),
+            timeout_sec=float(args.oracle_astar_timeout_sec),
+            terminal_samples=int(args.oracle_astar_terminal_samples),
+        )
+        logger.info(
+            "准备固定 validation oracle bank: path=%s, samples=%d, timeout=%.1fs",
+            validation_oracle_path,
+            int(oracle_config.sample_count),
+            float(oracle_config.timeout_sec),
+        )
+        oracle_start = perf_counter()
+        validation_oracle_bank = ensure_comm_inspection_oracle_bank(
+            eval_env,
+            validation_oracle_path,
+            split='validation',
+            config=oracle_config,
+        )
+        oracle_generation_time += perf_counter() - oracle_start
+        logger.info(
+            "Validation oracle bank 就绪: solved=%d/%d, coverage=%.3f",
+            int(validation_oracle_bank['summary']['solved_samples']),
+            int(validation_oracle_bank['summary']['requested_samples']),
+            float(validation_oracle_bank['summary']['oracle_coverage']),
+        )
+        if float(validation_oracle_bank['summary']['oracle_coverage']) < 0.9:
+            logger.warning(
+                "Validation oracle coverage 低于 0.90；MAE/MSE/相关性只基于成功求解样本，"
+                "解释结果时必须同时报告 coverage。"
+            )
     
     # 初始化训练状态
     logger.info("开始训练...")
@@ -730,25 +819,62 @@ def train(args):
                 if device != eval_device:
                     agent.to(eval_device)
                 try:
-                    # 评估 quasimetric
-                    eval_metrics = evaluate_quasimetric(
-                        agent=agent,
-                        env=eval_env,
-                        n_pairs=args.eval_n_pairs,
-                        device=eval_device_str,
-                        seed=args.seed + optim_steps,
-                        distance_scale=evaluation_distance_scale,
-                    )
+                    # 通信巡检使用固定 Hybrid A* validation bank；其他环境沿用原评估。
+                    if validation_oracle_bank is not None:
+                        eval_metrics = evaluate_qrl_on_oracle_bank(
+                            agent,
+                            validation_oracle_bank,
+                            device=eval_device,
+                            distance_scale=1.0,
+                        )
+                        eval_tag_prefix = 'eval_oracle'
+                        oracle_row = {
+                            'optim_steps': int(optim_steps),
+                            **eval_metrics,
+                        }
+                        oracle_validation_rows = [
+                            row
+                            for row in oracle_validation_rows
+                            if int(row['optim_steps']) != int(optim_steps)
+                        ]
+                        oracle_validation_rows.append(oracle_row)
+                        oracle_validation_rows.sort(
+                            key=lambda row: int(row['optim_steps'])
+                        )
+                        _write_metric_rows_csv(
+                            oracle_validation_metrics_path,
+                            oracle_validation_rows,
+                        )
+                    else:
+                        eval_metrics = evaluate_quasimetric(
+                            agent=agent,
+                            env=eval_env,
+                            n_pairs=args.eval_n_pairs,
+                            device=eval_device_str,
+                            seed=args.seed + optim_steps,
+                            distance_scale=evaluation_distance_scale,
+                        )
+                        eval_tag_prefix = 'eval'
                     
                     # 记录到 TensorBoard
                     for key, value in eval_metrics.items():
-                        writer.add_scalar(f'eval/{key}', value, optim_steps)
+                        writer.add_scalar(
+                            f'{eval_tag_prefix}/{key}',
+                            value,
+                            optim_steps,
+                        )
                     
                     # 打印评估结果
                     eval_str = f"评估结果: MSE={eval_metrics['mse']:.4f}, "
+                    if 'rmse' in eval_metrics:
+                        eval_str += f"RMSE={eval_metrics['rmse']:.4f}, "
                     eval_str += f"MAE={eval_metrics['mae']:.4f}, "
                     eval_str += f"Spearman={eval_metrics['spearman_corr']:.4f}, "
                     eval_str += f"Pearson={eval_metrics['pearson_corr']:.4f}"
+                    if 'oracle_coverage' in eval_metrics:
+                        eval_str += (
+                            f", Oracle Coverage={eval_metrics['oracle_coverage']:.3f}"
+                        )
                     logger.info(eval_str)
                     
                     # Planning / Reachability 评估（仅对 obstacle 环境）
@@ -853,6 +979,9 @@ def train(args):
                             'data_time_sec': float(data_time_sec),
                             'optimization_core_time_sec': float(optimization_core_time),
                             'evaluation_time_sec': float(evaluation_time),
+                            'oracle_generation_time_sec': float(
+                                oracle_generation_time
+                            ),
                             'checkpoint_io_time_sec': float(checkpoint_io_time),
                             'end_to_end_time_sec': float(
                                 prior_timing.get('end_to_end_time_sec', 0.0)
@@ -883,6 +1012,87 @@ def train(args):
     train_metrics_path = os.path.join(output_dir, 'train_metrics.csv')
     _write_metric_rows_csv(train_metrics_path, train_metric_rows)
     logger.info(f"保存训练指标 CSV: {train_metrics_path}")
+
+    if (
+        oracle_bank_enabled
+        and oracle_config is not None
+        and final_test_oracle_path is not None
+    ):
+        logger.info(
+            "准备独立 final-test oracle bank: path=%s, samples=%d, timeout=%.1fs",
+            final_test_oracle_path,
+            int(oracle_config.sample_count),
+            float(oracle_config.timeout_sec),
+        )
+        oracle_start = perf_counter()
+        final_test_oracle_bank = ensure_comm_inspection_oracle_bank(
+            eval_env,
+            final_test_oracle_path,
+            split='final_test',
+            config=oracle_config,
+        )
+        oracle_generation_time += perf_counter() - oracle_start
+        logger.info(
+            "Final-test oracle bank 就绪: solved=%d/%d, coverage=%.3f",
+            int(final_test_oracle_bank['summary']['solved_samples']),
+            int(final_test_oracle_bank['summary']['requested_samples']),
+            float(final_test_oracle_bank['summary']['oracle_coverage']),
+        )
+        if float(final_test_oracle_bank['summary']['oracle_coverage']) < 0.9:
+            logger.warning(
+                "Final-test oracle coverage 低于 0.90；最终指标不能脱离 coverage "
+                "单独作为全任务误差结论。"
+            )
+
+        agent.eval()
+        if device != eval_device:
+            agent.to(eval_device)
+        try:
+            final_test_metrics = evaluate_qrl_on_oracle_bank(
+                agent,
+                final_test_oracle_bank,
+                device=eval_device,
+                distance_scale=1.0,
+                bootstrap_samples=int(args.oracle_final_bootstrap_samples),
+                bootstrap_seed=int(args.oracle_bank_seed) + 200_000_033,
+            )
+            for key, value in final_test_metrics.items():
+                writer.add_scalar(f'final_test_oracle/{key}', value, optim_steps)
+            final_test_payload = {
+                'checkpoint': os.path.abspath(final_path),
+                'optim_steps': int(optim_steps),
+                'bank_path': str(final_test_oracle_path.resolve()),
+                'bank_summary': final_test_oracle_bank['summary'],
+                'metrics': final_test_metrics,
+            }
+            final_test_metrics_path = os.path.join(
+                output_dir,
+                'oracle_final_test_metrics.json',
+            )
+            with open(
+                final_test_metrics_path,
+                'w',
+                encoding='utf-8',
+            ) as handle:
+                json.dump(
+                    final_test_payload,
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            logger.info(
+                "Final-test oracle: MAE=%.4f, RMSE=%.4f, Spearman=%.4f, "
+                "coverage=%.3f；结果保存至 %s",
+                float(final_test_metrics['mae']),
+                float(final_test_metrics['rmse']),
+                float(final_test_metrics['spearman_corr']),
+                float(final_test_metrics['oracle_coverage']),
+                final_test_metrics_path,
+            )
+        finally:
+            if device != eval_device:
+                agent.to(device)
+            agent.train()
 
     if (
         args.env_type == 'comm_inspection_dubins_uav'
@@ -1002,6 +1212,7 @@ def train(args):
         ),
         'optimization_phase_time_sec': float(optimization_elapsed),
         'evaluation_time_sec': float(evaluation_time),
+        'oracle_generation_time_sec': float(oracle_generation_time),
         'checkpoint_io_time_sec': float(checkpoint_io_time),
         'end_to_end_time_sec': float(end_to_end_time_sec),
         'global_gradient_updates': int(optim_steps),
@@ -1023,6 +1234,8 @@ def train(args):
     with open(os.path.join(output_dir, 'timing.json'), 'w', encoding='utf-8') as f:
         json.dump(timing_payload, f, ensure_ascii=False, indent=2)
     logger.info(f"保存训练计时: {os.path.join(output_dir, 'timing.json')}")
+    writer.flush()
+    writer.close()
     
     # 标记完成
     with open(os.path.join(output_dir, 'COMPLETE'), 'w') as f:
@@ -1189,9 +1402,103 @@ def main():
     
     # 评估参数
     parser.add_argument('--eval-interval', type=int, default=1000, help='评估间隔（步数）')
-    parser.add_argument('--eval-n-pairs', type=int, default=500, help='评估时采样的状态-目标对数（减少可加速评估）')
+    parser.add_argument(
+        '--eval-n-pairs',
+        type=int,
+        default=500,
+        help='传统随机评估的状态-目标对数；启用 --oracle-bank-eval 时忽略',
+    )
     parser.add_argument('--visualization-interval', type=int, default=1000,
                         help='可视化间隔（步数），设为0禁用可视化')
+    parser.add_argument(
+        '--oracle-bank-eval',
+        action='store_true',
+        help='通信巡检使用固定 Hybrid A* validation/final-test bank 评估 QRL',
+    )
+    parser.add_argument(
+        '--oracle-bank-dir',
+        type=str,
+        default=None,
+        help='Oracle bank 目录；默认 OUTPUT_DIR/oracle_banks',
+    )
+    parser.add_argument(
+        '--oracle-validation-bank',
+        type=str,
+        default=None,
+        help='可选的 validation bank JSON 路径',
+    )
+    parser.add_argument(
+        '--oracle-final-test-bank',
+        type=str,
+        default=None,
+        help='可选的 final-test bank JSON 路径',
+    )
+    parser.add_argument(
+        '--oracle-bank-size',
+        type=int,
+        default=192,
+        help='每个 oracle split 的样本数；24 个设备时 192=每设备 8 个',
+    )
+    parser.add_argument(
+        '--oracle-bank-seed',
+        type=int,
+        default=20260729,
+        help='独立于训练 seed 的固定 oracle bank 生成 seed',
+    )
+    parser.add_argument(
+        '--oracle-candidate-multiplier',
+        type=int,
+        default=16,
+        help='每个入选起点的分层候选数倍数',
+    )
+    parser.add_argument(
+        '--oracle-astar-timeout-sec',
+        type=float,
+        default=60.0,
+        help='Hybrid A* 每个 oracle 样本的超时秒数',
+    )
+    parser.add_argument(
+        '--oracle-astar-position-resolution',
+        type=float,
+        default=0.25,
+        help='Oracle Hybrid A* 位置离散分辨率',
+    )
+    parser.add_argument(
+        '--oracle-astar-heading-bins',
+        type=int,
+        default=24,
+        help='Oracle Hybrid A* 朝向离散数',
+    )
+    parser.add_argument(
+        '--oracle-astar-primitive-steps',
+        type=int,
+        default=5,
+        help='Oracle Hybrid A* 每个运动原语的环境步数',
+    )
+    parser.add_argument(
+        '--oracle-astar-heuristic-weight',
+        type=float,
+        default=1.0,
+        help='Oracle Hybrid A* 启发函数权重',
+    )
+    parser.add_argument(
+        '--oracle-astar-max-expansions',
+        type=int,
+        default=50000,
+        help='Oracle Hybrid A* 最大扩展节点数',
+    )
+    parser.add_argument(
+        '--oracle-astar-terminal-samples',
+        type=int,
+        default=128,
+        help='Oracle Hybrid A* goal-set 启发函数终态样本数',
+    )
+    parser.add_argument(
+        '--oracle-final-bootstrap-samples',
+        type=int,
+        default=2000,
+        help='Final-test 按设备聚类 bootstrap 的重复次数',
+    )
     
     # Planning / Reachability 评估参数
     parser.add_argument('--planning-eval-interval', type=int, default=1000,
