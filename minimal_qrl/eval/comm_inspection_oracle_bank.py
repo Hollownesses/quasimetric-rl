@@ -523,6 +523,203 @@ def load_comm_inspection_oracle_bank(path: str | Path) -> Dict[str, Any]:
     return bank
 
 
+def _oracle_bank_heatmap_data(
+    agent: torch.nn.Module,
+    bank: Mapping[str, Any],
+    *,
+    device: str | torch.device,
+    distance_scale: float,
+) -> Dict[str, Any]:
+    """Build exact QRL/Hybrid-A* matrices for a fixed oracle bank.
+
+    Rows are device contexts and columns are that device's fixed validation
+    samples. Failed oracle samples remain NaN instead of silently falling back
+    to the cheap straight-line/turning-time estimate.
+    """
+    records = list(bank.get("records", []))
+    if not records:
+        raise RuntimeError("oracle bank contains no records")
+
+    device_ids = list(dict.fromkeys(str(record["device_id"]) for record in records))
+    records_by_device = {
+        device_id: sorted(
+            [
+                record
+                for record in records
+                if str(record["device_id"]) == device_id
+            ],
+            key=lambda record: int(record.get("sample_index", 0)),
+        )
+        for device_id in device_ids
+    }
+    max_samples = max(len(group) for group in records_by_device.values())
+    shape = (len(device_ids), max_samples)
+    prediction_matrix = np.full(shape, np.nan, dtype=np.float64)
+    target_matrix = np.full(shape, np.nan, dtype=np.float64)
+    solved_positions: list[tuple[int, int]] = []
+    solved_records: list[Mapping[str, Any]] = []
+
+    for row_index, device_id in enumerate(device_ids):
+        for column_index, record in enumerate(records_by_device[device_id]):
+            oracle_cost = record.get("oracle_cost")
+            if (
+                record.get("status") != "solved"
+                or oracle_cost is None
+                or not math.isfinite(float(oracle_cost))
+            ):
+                continue
+            target_matrix[row_index, column_index] = float(oracle_cost)
+            solved_positions.append((row_index, column_index))
+            solved_records.append(record)
+
+    if not solved_records:
+        raise RuntimeError("oracle bank contains no solved samples")
+
+    observations = np.asarray(
+        [record["observation"] for record in solved_records],
+        dtype=np.float32,
+    )
+    goals = np.asarray(
+        [record["goal_observation"] for record in solved_records],
+        dtype=np.float32,
+    )
+    critic = agent.critics[0]
+    with torch.no_grad():
+        states_t = torch.as_tensor(observations, device=device, dtype=torch.float32)
+        goals_t = torch.as_tensor(goals, device=device, dtype=torch.float32)
+        predictions = (
+            critic.quasimetric_model(
+                critic.encoder(states_t),
+                critic.encoder(goals_t),
+            )
+            .detach()
+            .cpu()
+            .numpy()
+            .reshape(-1)
+            .astype(np.float64)
+        )
+    predictions *= float(distance_scale)
+    for position, prediction in zip(solved_positions, predictions):
+        prediction_matrix[position] = float(prediction)
+
+    error_matrix = prediction_matrix - target_matrix
+    target = target_matrix[np.isfinite(target_matrix)]
+    prediction = prediction_matrix[np.isfinite(target_matrix)]
+    return {
+        "device_ids": device_ids,
+        "prediction": prediction_matrix,
+        "target": target_matrix,
+        "error": error_matrix,
+        "metrics": _core_metrics(prediction, target),
+        "solved_samples": int(len(solved_records)),
+        "requested_samples": int(len(records)),
+    }
+
+
+def visualize_qrl_oracle_bank_heatmap(
+    agent: torch.nn.Module,
+    bank: Mapping[str, Any],
+    *,
+    step: int,
+    output_dir: str | Path,
+    device: str | torch.device,
+    distance_scale: float = 1.0,
+) -> str:
+    """Visualize QRL against exact Hybrid A* costs from the fixed oracle bank.
+
+    This intentionally uses a device-by-sample matrix rather than pretending
+    that records from different task contexts form one spatial distance field.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    data = _oracle_bank_heatmap_data(
+        agent,
+        bank,
+        device=device,
+        distance_scale=distance_scale,
+    )
+    prediction = data["prediction"]
+    target = data["target"]
+    error = data["error"]
+    finite_values = np.concatenate(
+        [prediction[np.isfinite(prediction)], target[np.isfinite(target)]]
+    )
+    common_max = max(float(np.max(finite_values)), 1e-8)
+    finite_errors = error[np.isfinite(error)]
+    error_limit = max(float(np.max(np.abs(finite_errors))), 1e-8)
+
+    value_cmap = plt.get_cmap("viridis").copy()
+    value_cmap.set_bad(color="#d9d9d9")
+    error_cmap = plt.get_cmap("coolwarm").copy()
+    error_cmap.set_bad(color="#d9d9d9")
+
+    device_ids = data["device_ids"]
+    figure_height = max(7.0, 0.32 * len(device_ids) + 2.2)
+    fig, axes = plt.subplots(
+        1,
+        3,
+        figsize=(18, figure_height),
+        constrained_layout=True,
+    )
+    panels = (
+        (prediction, "QRL prediction", value_cmap, 0.0, common_max),
+        (target, "Hybrid A* Ground Truth", value_cmap, 0.0, common_max),
+        (
+            error,
+            "Signed error (QRL - Hybrid A*)",
+            error_cmap,
+            -error_limit,
+            error_limit,
+        ),
+    )
+    for axis, (values, title, cmap, value_min, value_max) in zip(axes, panels):
+        image = axis.imshow(
+            values,
+            aspect="auto",
+            interpolation="nearest",
+            cmap=cmap,
+            vmin=value_min,
+            vmax=value_max,
+        )
+        axis.set_title(title)
+        axis.set_xlabel("Fixed sample index within device")
+        axis.set_xticks(np.arange(values.shape[1]))
+        axis.set_yticks(np.arange(len(device_ids)))
+        axis.set_yticklabels(device_ids, fontsize=7)
+        for row_index, column_index in np.argwhere(~np.isfinite(values)):
+            axis.text(
+                int(column_index),
+                int(row_index),
+                "×",
+                ha="center",
+                va="center",
+                color="#555555",
+                fontsize=8,
+            )
+        fig.colorbar(image, ax=axis, shrink=0.85, label="environment cost")
+
+    metrics = data["metrics"]
+    coverage = data["solved_samples"] / max(data["requested_samples"], 1)
+    fig.suptitle(
+        f"Fixed validation oracle bank at step {int(step)} | "
+        f"Hybrid A* solved {data['solved_samples']}/{data['requested_samples']} "
+        f"({coverage:.1%}) | MAE={metrics['mae']:.2f} | "
+        f"Spearman={metrics['spearman_corr']:.3f}\n"
+        "Gray × = Hybrid A* unsolved; no cheap-distance fallback",
+        fontsize=12,
+    )
+
+    heatmap_dir = Path(output_dir) / "oracle_bank_heatmap"
+    heatmap_dir.mkdir(parents=True, exist_ok=True)
+    output_path = heatmap_dir / f"oracle_bank_heatmap_step{int(step):05d}.png"
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)
+
+
 def _core_metrics(prediction: np.ndarray, target: np.ndarray) -> Dict[str, float]:
     errors = prediction - target
     absolute = np.abs(errors)

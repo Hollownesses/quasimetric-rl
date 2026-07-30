@@ -65,6 +65,7 @@ from minimal_qrl.eval.comm_inspection_oracle_bank import (
     CommInspectionOracleBankConfig,
     ensure_comm_inspection_oracle_bank,
     evaluate_qrl_on_oracle_bank,
+    visualize_qrl_oracle_bank_heatmap,
 )
 from minimal_qrl.gc_agents import QRLGoalValueAdapter
 from minimal_qrl.subgoal_actor import (
@@ -927,30 +928,46 @@ def train(args):
                             except Exception as e:
                                 logger.warning(f"Planning 评估失败: {e}")
                     
-                    # 可视化距离场（按照 visualization_interval 间隔执行）
+                    # 评估可视化（oracle 模式画固定 bank；其他模式画距离场）
                     if args.visualization_interval > 0 and optim_steps % args.visualization_interval == 0:
                         try:
-                            heatmap_path = visualize_distance_field_heatmap(
-                                agent=agent,
-                                env=eval_env,
-                                goal=None,
-                                step=optim_steps,
-                                output_dir=output_dir,
-                                device=eval_device_str,
-                                distance_scale=evaluation_distance_scale,
-                            )
-                            logger.info(f"已保存距离场热力图: {heatmap_path}")
+                            if validation_oracle_bank is not None:
+                                heatmap_path = visualize_qrl_oracle_bank_heatmap(
+                                    agent,
+                                    validation_oracle_bank,
+                                    step=optim_steps,
+                                    output_dir=output_dir,
+                                    device=eval_device,
+                                    distance_scale=1.0,
+                                )
+                                heatmap_tag = "eval_oracle/bank_heatmap"
+                                logger.info(
+                                    "已保存 Hybrid A* oracle bank 热力图: "
+                                    f"{heatmap_path}"
+                                )
+                            else:
+                                heatmap_path = visualize_distance_field_heatmap(
+                                    agent=agent,
+                                    env=eval_env,
+                                    goal=None,
+                                    step=optim_steps,
+                                    output_dir=output_dir,
+                                    device=eval_device_str,
+                                    distance_scale=evaluation_distance_scale,
+                                )
+                                heatmap_tag = "eval/distance_heatmap"
+                                logger.info(f"已保存距离场热力图: {heatmap_path}")
                             # 将图像添加到 TensorBoard
                             try:
                                 from PIL import Image
                                 img = Image.open(heatmap_path)
                                 img_array = np.array(img)
-                                writer.add_image('eval/distance_heatmap', img_array, optim_steps, dataformats='HWC')
+                                writer.add_image(heatmap_tag, img_array, optim_steps, dataformats='HWC')
                             except ImportError:
                                 # 如果没有 PIL，使用 matplotlib 读取
                                 import matplotlib.image as mpimg
                                 img_array = mpimg.imread(heatmap_path)
-                                writer.add_image('eval/distance_heatmap', img_array, optim_steps, dataformats='HWC')
+                                writer.add_image(heatmap_tag, img_array, optim_steps, dataformats='HWC')
                         except Exception as e:
                             logger.warning(f"可视化失败: {e}")
                     

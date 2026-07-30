@@ -13,6 +13,7 @@ from minimal_qrl.eval.comm_inspection_oracle_bank import (
     CommInspectionOracleBankConfig,
     ensure_comm_inspection_oracle_bank,
     evaluate_qrl_on_oracle_bank,
+    visualize_qrl_oracle_bank_heatmap,
 )
 
 
@@ -236,3 +237,70 @@ def test_oracle_record_replays_and_verifies_hybrid_astar_cost():
         record["oracle_cost"],
         atol=1e-6,
     )
+
+
+def test_oracle_bank_heatmap_uses_exact_oracle_costs_and_marks_failures(tmp_path):
+    records = [
+        {
+            "device_id": "device_a",
+            "sample_index": 0,
+            "status": "solved",
+            "observation": [2.0, 0.0],
+            "goal_observation": [0.0, 0.0],
+            "oracle_cost": 101.0,
+        },
+        {
+            "device_id": "device_a",
+            "sample_index": 1,
+            "status": "failed",
+            "observation": [3.0, 0.0],
+            "goal_observation": [0.0, 0.0],
+            "oracle_cost": None,
+        },
+        {
+            "device_id": "device_b",
+            "sample_index": 0,
+            "status": "solved",
+            "observation": [4.0, 0.0],
+            "goal_observation": [0.0, 0.0],
+            "oracle_cost": 303.0,
+        },
+        {
+            "device_id": "device_b",
+            "sample_index": 1,
+            "status": "solved",
+            "observation": [5.0, 0.0],
+            "goal_observation": [0.0, 0.0],
+            "oracle_cost": 404.0,
+        },
+    ]
+    bank = {"records": records}
+
+    data = oracle_bank._oracle_bank_heatmap_data(
+        DummyAgent(),
+        bank,
+        device="cpu",
+        distance_scale=1.0,
+    )
+    np.testing.assert_allclose(
+        data["target"],
+        np.array([[101.0, np.nan], [303.0, 404.0]]),
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        data["prediction"],
+        np.array([[2.0, np.nan], [4.0, 5.0]]),
+        equal_nan=True,
+    )
+    assert data["solved_samples"] == 3
+    assert data["requested_samples"] == 4
+
+    output_path = visualize_qrl_oracle_bank_heatmap(
+        DummyAgent(),
+        bank,
+        step=50_000,
+        output_dir=tmp_path,
+        device="cpu",
+    )
+    assert output_path.endswith("oracle_bank_heatmap_step50000.png")
+    assert (tmp_path / "oracle_bank_heatmap" / "oracle_bank_heatmap_step50000.png").is_file()
