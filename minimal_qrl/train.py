@@ -355,6 +355,16 @@ def _write_metric_rows_csv(path: str, rows: list):
         writer.writerows(rows)
 
 
+def _comm_inspection_global_push_conf(args) -> GlobalPushLoss.Conf:
+    """Build the task-aware GlobalPush config from communication CLI args."""
+    return GlobalPushLoss.Conf(
+        softplus_offset=float(args.global_push_softplus_offset),
+        softplus_beta=float(args.global_push_softplus_beta),
+        abstract_goal_ratio=float(args.global_push_abstract_goal_ratio),
+        state_goal_ratio=float(args.global_push_state_goal_ratio),
+    )
+
+
 def train(args):
     """训练主函数"""
     end_to_end_start = perf_counter()
@@ -540,10 +550,7 @@ def train(args):
             num_critics=args.num_critics,
             quasimetric_critic=QuasimetricCriticConf(
                 losses=QuasimetricCriticLosses.Conf(
-                    global_push=GlobalPushLoss.Conf(
-                        abstract_goal_ratio=float(args.global_push_abstract_goal_ratio),
-                        state_goal_ratio=float(args.global_push_state_goal_ratio),
-                    ),
+                    global_push=_comm_inspection_global_push_conf(args),
                     local_constraint=LocalConstraintLoss.Conf(
                         step_cost=step_cost,
                         cost_source=qrl_cost_source,
@@ -1393,6 +1400,10 @@ def main():
                         choices=['negative_reward', 'fixed'],
                         help='comm_inspection_dubins_uav 的 QRL local constraint 单步代价来源：'
                              'negative_reward 使用环境 task cost；fixed 使用原始固定 step_cost=1.0')
+    parser.add_argument('--global-push-softplus-offset', type=float, default=15.0,
+                        help='goal-set GlobalPush softplus offset；控制 push 梯度开始衰减的距离尺度')
+    parser.add_argument('--global-push-softplus-beta', type=float, default=0.1,
+                        help='goal-set GlobalPush softplus beta；越小则大距离范围内的衰减越平滑')
     parser.add_argument('--global-push-abstract-goal-ratio', type=float, default=0.6,
                         help='goal-set GlobalPush 主项权重：普通状态到当前上下文抽象 G_task')
     parser.add_argument('--global-push-state-goal-ratio', type=float, default=0.4,

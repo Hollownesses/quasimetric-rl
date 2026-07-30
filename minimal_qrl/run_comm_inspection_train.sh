@@ -15,6 +15,12 @@
 # QRL local constraint 单步代价来源：
 #   QRL_COST_SOURCE=fixed            # 默认：使用原始固定 step_cost=1.0
 #   QRL_COST_SOURCE=negative_reward  # 使用环境 task cost
+#
+# Goal-set GlobalPush：
+#   GLOBAL_PUSH_SOFTPLUS_OFFSET=300
+#   GLOBAL_PUSH_SOFTPLUS_BETA=0.01
+#   GLOBAL_PUSH_ABSTRACT_GOAL_RATIO=0.5
+#   GLOBAL_PUSH_STATE_GOAL_RATIO=0.5
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -57,6 +63,8 @@ fi
   --total-steps "${TOTAL_STEPS:-30000}" \
   --num-critics "${NUM_CRITICS:-2}" \
   --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
+  --global-push-softplus-offset "${GLOBAL_PUSH_SOFTPLUS_OFFSET:-15.0}" \
+  --global-push-softplus-beta "${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}" \
   --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.6}" \
   --global-push-state-goal-ratio "${GLOBAL_PUSH_STATE_GOAL_RATIO:-0.4}" \
   --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
