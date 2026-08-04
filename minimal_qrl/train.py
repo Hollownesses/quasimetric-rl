@@ -75,7 +75,7 @@ from minimal_qrl.subgoal_actor import (
     train_subgoal_actor,
 )
 from minimal_qrl.industry_exp.scalability_scenarios import (
-    load_metric_scenario,
+    load_scenario_config,
     scenario_to_env_kwargs,
 )
 
@@ -374,7 +374,7 @@ def train(args):
     collection_stats: Dict[str, Any] = {}
     args._scenario_data = None
     if getattr(args, 'scenario_config', None):
-        args._scenario_data = load_metric_scenario(args.scenario_config)
+        args._scenario_data = load_scenario_config(args.scenario_config)
         args.env_type = 'comm_inspection_dubins_uav'
         args.max_steps_per_episode = int(args._scenario_data['max_episode_steps'])
     # 设置随机种子

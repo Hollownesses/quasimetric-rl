@@ -39,9 +39,13 @@ from minimal_qrl.eval.comm_inspection_execution_eval import (  # noqa: E402
     VisualizationConfig,
     _save_rollout_visualization,
     build_qrl_adapter,
+    load_task_records,
     make_comm_inspection_env,
 )
 from minimal_qrl.eval.utils import auto_device  # noqa: E402
+from minimal_qrl.industry_exp.scalability_scenarios import (  # noqa: E402
+    load_scenario_config,
+)
 
 
 CONTEXT_ALGORITHMS = {
@@ -91,6 +95,9 @@ SCALAR_METRICS = (
 CSV_FIELDS = [
     "method",
     "model_run",
+    "task_id",
+    "stratum",
+    "difficulty",
     "device_id",
     "episode_seed",
     *SCALAR_METRICS,
@@ -198,14 +205,19 @@ def _parse_methods(raw: str) -> list[str]:
     return methods
 
 
-def _rollout_record(method: str, rollout: Dict[str, Any], model_run: str) -> Dict[str, Any]:
+def _rollout_record(
+    method: str,
+    rollout: Dict[str, Any],
+    model_run: str,
+    task_spec: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     infos = list(rollout["step_infos"])
     final_info = rollout["final_info"]
     steps = int(rollout["num_steps"])
     total_cost = float(-np.sum(np.asarray(rollout["rewards"], dtype=np.float64)))
     first_step = final_info.get("first_task_feasible_step")
     diagnostics = dict(rollout.get("controller_diagnostics", {}))
-    return {
+    record = {
         "method": method,
         "model_run": str(model_run),
         "episode_seed": int(rollout["seed"]),
@@ -253,6 +265,15 @@ def _rollout_record(method: str, rollout: Dict[str, Any], model_run: str) -> Dic
         "ground_station": [float(v) for v in rollout["ground_station"]],
         "device_id": str(rollout["device_id"]),
     }
+    if task_spec is not None:
+        record.update(
+            {
+                "task_id": str(task_spec.get("task_id", "")),
+                "stratum": str(task_spec.get("stratum", "")),
+                "difficulty": str(task_spec.get("difficulty", "")),
+            }
+        )
+    return record
 
 
 def _run_task_matrix(
@@ -361,6 +382,27 @@ def _summarize(records: list[Dict[str, Any]], *, seed: int, n_boot: int) -> Dict
         metrics["macro_device_communication_feasible_ratio"] = float(
             np.mean([row["communication_feasible_ratio"] for row in per_device.values()])
         ) if per_device else 0.0
+        per_stratum: Dict[str, Any] = {}
+        strata = sorted(
+            {str(row.get("stratum", "")) for row in method_records if row.get("stratum")}
+        )
+        for stratum in strata:
+            rows = [row for row in method_records if str(row.get("stratum", "")) == stratum]
+            per_stratum[stratum] = {
+                "num_records": len(rows),
+                "success_rate": float(np.mean([float(row["success"]) for row in rows])),
+                "avg_total_cost": float(np.mean([float(row["total_cost"]) for row in rows])),
+                "avg_steps": float(np.mean([float(row["num_steps"]) for row in rows])),
+                "communication_feasible_ratio": float(
+                    np.mean([float(row["communication_feasible_ratio"]) for row in rows])
+                ),
+            }
+        metrics["per_stratum"] = per_stratum
+        metrics["macro_stratum_success_rate"] = (
+            float(np.mean([row["success_rate"] for row in per_stratum.values()]))
+            if per_stratum
+            else 0.0
+        )
         summary[method] = metrics
 
     def add_paired_comparison(
@@ -461,7 +503,7 @@ def _evaluate_controller(
     method: str,
     controller,
     env,
-    episode_specs: Iterable[tuple[str, int]],
+    episode_specs: Iterable[Dict[str, Any]],
     *,
     model_run: str,
     output_dir: Path,
@@ -472,19 +514,33 @@ def _evaluate_controller(
 ) -> list[Dict[str, Any]]:
     if completed_keys is None:
         completed_keys = set()
+    normalized_specs = []
+    for spec in episode_specs:
+        if isinstance(spec, dict):
+            normalized_specs.append(dict(spec))
+        else:
+            device_id, episode_seed = spec
+            normalized_specs.append(
+                {
+                    "task_id": f"random:{device_id}:{int(episode_seed)}",
+                    "device_id": str(device_id),
+                    "seed": int(episode_seed),
+                    "start": None,
+                }
+            )
     episode_specs = [
-        (str(device_id), int(episode_seed))
-        for device_id, episode_seed in episode_specs
+        spec
+        for spec in normalized_specs
         if (
             str(method),
             str(model_run),
-            str(device_id),
-            int(episode_seed),
+            str(spec["device_id"]),
+            int(spec["seed"]),
         ) not in completed_keys
     ]
-    specs_by_device: Dict[str, list[tuple[str, int]]] = {}
-    for device_id, episode_seed in episode_specs:
-        specs_by_device.setdefault(str(device_id), []).append((str(device_id), int(episode_seed)))
+    specs_by_device: Dict[str, list[Dict[str, Any]]] = {}
+    for spec in episode_specs:
+        specs_by_device.setdefault(str(spec["device_id"]), []).append(spec)
 
     records = []
     success_count = 0
@@ -507,14 +563,20 @@ def _evaluate_controller(
                 position=1,
                 dynamic_ncols=True,
             ) as device_bar:
-                for _same_device_id, episode_seed in device_bar:
+                for task_spec in device_bar:
+                    episode_seed = int(task_spec["seed"])
                     rollout = rollout_controller_episode(
                         controller,
                         env,
-                        episode_seed=int(episode_seed),
+                        episode_seed=episode_seed,
                         device_id=device_id,
+                        start_state=(
+                            np.asarray(task_spec["start"], dtype=np.float32)
+                            if task_spec.get("start") is not None
+                            else None
+                        ),
                     )
-                    record = _rollout_record(method, rollout, model_run)
+                    record = _rollout_record(method, rollout, model_run, task_spec)
                     records.append(record)
                     if on_record is not None:
                         on_record(record)
@@ -591,7 +653,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-episode-steps", type=int, default=180)
     parser.add_argument("--obstacle-config", choices=["none", "simple", "medium", "hard"], default="medium")
     parser.add_argument("--obstacles", type=float, nargs="*", default=None)
-    parser.add_argument("--device-catalog", required=True)
+    parser.add_argument("--device-catalog", default=None)
     parser.add_argument("--comm-alpha", type=float, default=2.0)
     parser.add_argument("--comm-bias", type=float, default=5.0)
     parser.add_argument("--comm-occlusion-penalty", type=float, default=6.0)
@@ -609,6 +671,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--taskscore-margin-clip", type=float, default=2.0)
     parser.add_argument("--num-critics", type=int, default=2)
     parser.add_argument("--env-name", default="comm_inspection_unified_baselines")
+    parser.add_argument("--scenario-config", default=None)
+    parser.add_argument("--task-bank", default=None)
+    parser.add_argument("--task-split", choices=["validation", "test"], default="test")
 
     parser.add_argument("--astar-position-resolution", type=float, default=0.25)
     parser.add_argument("--astar-heading-bins", type=int, default=24)
@@ -643,6 +708,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    scenario = None
+    args._scenario_data = None
+    if args.scenario_config:
+        scenario = load_scenario_config(args.scenario_config)
+        args._scenario_data = scenario
+        args.bounds = [float(value) for value in scenario["bounds"]]
+        args.max_episode_steps = int(scenario["max_episode_steps"])
+        args.device_catalog = scenario["device_catalog"]
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     methods = _parse_methods(args.methods)
@@ -660,11 +733,37 @@ def main() -> None:
     ]
     device = auto_device(args.device)
     spec_env = make_comm_inspection_env(args)
-    episode_specs = [
-        (device_id, int(args.seed) + device_index * 1_000_003 + start_index)
-        for device_index, device_id in enumerate(spec_env.device_ids)
-        for start_index in range(starts_per_device)
-    ]
+    if args.task_bank:
+        _task_bank, task_records = load_task_records(
+            args.task_bank,
+            split=str(args.task_split),
+            bounds=[float(value) for value in args.bounds],
+            scenario_id=str(scenario["scenario_id"]) if scenario is not None else None,
+        )
+        known_devices = set(spec_env.device_ids)
+        episode_specs = [
+            {
+                **row,
+                "seed": int(row["seed"]),
+                "device_id": str(row["device_id"]),
+                "start": [float(value) for value in row["start"]],
+            }
+            for row in task_records
+            if str(row["device_id"]) in known_devices
+        ]
+        if not episode_specs:
+            raise ValueError("task bank contains no records for devices in this environment")
+    else:
+        episode_specs = [
+            {
+                "task_id": f"random:{device_id}:{start_index:03d}",
+                "device_id": str(device_id),
+                "seed": int(args.seed) + device_index * 1_000_003 + start_index,
+                "start": None,
+            }
+            for device_index, device_id in enumerate(spec_env.device_ids)
+            for start_index in range(starts_per_device)
+        ]
     viz_cfg = VisualizationConfig(
         save_visualizations=bool(args.save_visualizations),
         max_successes=int(args.viz_max_successes),
@@ -914,8 +1013,12 @@ def main() -> None:
         "stage": args.stage,
         "methods": methods,
         "episode_specs": [
-            {"device_id": device_id, "seed": episode_seed}
-            for device_id, episode_seed in episode_specs
+            {
+                key: value
+                for key, value in spec.items()
+                if key in {"task_id", "stratum", "difficulty", "device_id", "seed", "start"}
+            }
+            for spec in episode_specs
         ],
         "qrl_checkpoints": args.qrl_checkpoints,
         "sac_checkpoints": [str(path) for path in sac_paths],
@@ -923,6 +1026,11 @@ def main() -> None:
         "context_checkpoint_metadata": context_checkpoint_metadata,
         "summary": summary,
         "episode_results": records,
+        "scenario_config": (
+            str(Path(args.scenario_config).resolve()) if args.scenario_config else None
+        ),
+        "task_bank": str(Path(args.task_bank).resolve()) if args.task_bank else None,
+        "task_split": str(args.task_split),
         "config": vars(args),
     }
     with open(output_dir / "baseline_results.json", "w", encoding="utf-8") as f:

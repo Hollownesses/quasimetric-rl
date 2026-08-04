@@ -15,7 +15,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from minimal_qrl.envs import CircleObstacle
+from minimal_qrl.envs import CircleObstacle, Obstacle
 
 
 METERS_PER_ENV_UNIT = 10.0
@@ -320,7 +320,62 @@ def build_scalability_scenarios(
     return list(scenarios_by_id.values())
 
 
+def _validate_common_scenario(scenario: Mapping[str, Any]) -> None:
+    """Validate fields shared by metric and hand-designed scenarios."""
+
+    bounds = [float(v) for v in scenario["bounds"]]
+    if len(bounds) != 4 or not (bounds[0] < bounds[2] and bounds[1] < bounds[3]):
+        raise ValueError("bounds must be [x_min, y_min, x_max, y_max]")
+    devices = list(scenario["device_catalog"]["devices"])
+    if len(devices) != int(scenario["device_count"]):
+        raise ValueError("device_count does not match device_catalog")
+    ids = [str(item["id"]) for item in devices]
+    if len(ids) != len(set(ids)):
+        raise ValueError("device ids must be unique")
+    for point in (
+        [
+            scenario["device_catalog"]["ground_station"]["position"],
+            scenario["device_catalog"]["ground_station"]["los_anchor"],
+        ]
+        + [item["position"] for item in devices]
+        + [item["observation_anchor"] for item in devices]
+    ):
+        x, y = float(point[0]), float(point[1])
+        if not (bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]):
+            raise ValueError(f"catalog point outside bounds: {point}")
+    for obstacle in scenario["obstacles"]:
+        obstacle_type = str(obstacle.get("type", "circle"))
+        if obstacle_type == "circle":
+            x = float(obstacle["x"])
+            y = float(obstacle["y"])
+            radius = float(obstacle["radius"])
+            if radius <= 0.0:
+                raise ValueError("obstacle radius must be positive")
+            inside = (
+                bounds[0] <= x - radius
+                and x + radius <= bounds[2]
+                and bounds[1] <= y - radius
+                and y + radius <= bounds[3]
+            )
+        elif obstacle_type == "rectangle":
+            x_min = float(obstacle["x_min"])
+            x_max = float(obstacle["x_max"])
+            y_min = float(obstacle["y_min"])
+            y_max = float(obstacle["y_max"])
+            if not (x_min < x_max and y_min < y_max):
+                raise ValueError("rectangle obstacle must have positive width and height")
+            inside = (
+                bounds[0] <= x_min < x_max <= bounds[2]
+                and bounds[1] <= y_min < y_max <= bounds[3]
+            )
+        else:
+            raise ValueError(f"unsupported obstacle type: {obstacle_type}")
+        if not inside:
+            raise ValueError(f"obstacle outside bounds: {obstacle}")
+
+
 def validate_metric_scenario(scenario: Mapping[str, Any]) -> None:
+    _validate_common_scenario(scenario)
     side_m = float(scenario["physical_side_m"])
     area_m2 = float(scenario["physical_area_m2"])
     if not math.isclose(area_m2, side_m * side_m, rel_tol=0.0, abs_tol=1e-8):
@@ -330,8 +385,6 @@ def validate_metric_scenario(scenario: Mapping[str, Any]) -> None:
     if bounds != [0.0, 0.0, expected_side, expected_side]:
         raise ValueError("bounds do not match the metric coordinate mapping")
     devices = list(scenario["device_catalog"]["devices"])
-    if len(devices) != int(scenario["device_count"]):
-        raise ValueError("device_count does not match device_catalog")
     ids = [str(item["id"]) for item in devices]
     metadata = dict(scenario.get("metadata", {}))
     if metadata.get("layout_kind") == "density_preserving_tiled":
@@ -348,30 +401,6 @@ def validate_metric_scenario(scenario: Mapping[str, Any]) -> None:
             raise ValueError("tiled device count does not match tile density")
     elif ids != list(DEVICE_ORDER[: len(ids)]):
         raise ValueError("device catalog does not follow the nested device order")
-    for point in (
-        [
-            scenario["device_catalog"]["ground_station"]["position"],
-            scenario["device_catalog"]["ground_station"]["los_anchor"],
-        ]
-        + [item["position"] for item in devices]
-        + [item["observation_anchor"] for item in devices]
-    ):
-        x, y = float(point[0]), float(point[1])
-        if not (bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]):
-            raise ValueError(f"catalog point outside bounds: {point}")
-    for obstacle in scenario["obstacles"]:
-        x = float(obstacle["x"])
-        y = float(obstacle["y"])
-        radius = float(obstacle["radius"])
-        if radius <= 0.0:
-            raise ValueError("obstacle radius must be positive")
-        if not (
-            bounds[0] <= x - radius
-            and x + radius <= bounds[2]
-            and bounds[1] <= y - radius
-            and y + radius <= bounds[3]
-        ):
-            raise ValueError(f"obstacle outside bounds: {obstacle}")
 
 
 def write_scalability_scenarios(
@@ -402,12 +431,47 @@ def load_metric_scenario(path: str | Path) -> dict[str, Any]:
     return scenario
 
 
+def load_scenario_config(path: str | Path) -> dict[str, Any]:
+    """Load either a controlled metric scenario or a diagnostic scenario."""
+
+    with Path(path).open("r", encoding="utf-8") as handle:
+        scenario = json.load(handle)
+    if not isinstance(scenario, dict):
+        raise ValueError("scenario config root must be a JSON object")
+    if str(scenario.get("scenario_family", "metric")) == "metric":
+        validate_metric_scenario(scenario)
+    else:
+        _validate_common_scenario(scenario)
+    return scenario
+
+
 def scenario_to_env_kwargs(scenario: Mapping[str, Any]) -> dict[str, Any]:
-    validate_metric_scenario(scenario)
-    obstacles = [
-        CircleObstacle(x=float(item["x"]), y=float(item["y"]), radius=float(item["radius"]))
-        for item in scenario["obstacles"]
-    ]
+    if str(scenario.get("scenario_family", "metric")) == "metric":
+        validate_metric_scenario(scenario)
+    else:
+        _validate_common_scenario(scenario)
+    obstacles = []
+    for item in scenario["obstacles"]:
+        obstacle_type = str(item.get("type", "circle"))
+        if obstacle_type == "circle":
+            obstacles.append(
+                CircleObstacle(
+                    x=float(item["x"]),
+                    y=float(item["y"]),
+                    radius=float(item["radius"]),
+                )
+            )
+        elif obstacle_type == "rectangle":
+            obstacles.append(
+                Obstacle(
+                    x_min=float(item["x_min"]),
+                    x_max=float(item["x_max"]),
+                    y_min=float(item["y_min"]),
+                    y_max=float(item["y_max"]),
+                )
+            )
+        else:  # guarded by validation, retained for defensive clarity
+            raise ValueError(f"unsupported obstacle type: {obstacle_type}")
     return {
         "device_catalog": copy.deepcopy(scenario["device_catalog"]),
         "bounds": tuple(float(v) for v in scenario["bounds"]),

@@ -55,7 +55,10 @@ from minimal_qrl.subgoal_actor import (
     load_subgoal_actor_checkpoint,
     select_teacher_subgoal,
 )
-from minimal_qrl.industry_exp.scalability_scenarios import load_metric_scenario
+from minimal_qrl.industry_exp.scalability_scenarios import (
+    load_scenario_config,
+    scenario_to_env_kwargs,
+)
 
 
 @dataclass
@@ -106,6 +109,9 @@ def _obstacles_from_args(args) -> List[CircleObstacle]:
 
 
 def make_comm_inspection_env(args) -> CommInspectionDubinsUAV2D:
+    scenario = getattr(args, "_scenario_data", None)
+    if scenario is not None:
+        return CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
     if not getattr(args, "device_catalog", None):
         raise ValueError("--device-catalog is required")
     env = CommInspectionDubinsUAV2D(
@@ -212,6 +218,47 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def load_task_records(
+    task_bank_path: str | os.PathLike[str],
+    *,
+    split: str,
+    bounds: List[float],
+    scenario_id: Optional[str] = None,
+) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Load one fixed task-bank split and map normalized starts to the map."""
+
+    with open(task_bank_path, "r", encoding="utf-8") as handle:
+        task_bank = json.load(handle)
+    if not isinstance(task_bank, dict) or not isinstance(task_bank.get("records"), list):
+        raise ValueError("task bank must be an object containing a records list")
+    width = float(bounds[2] - bounds[0])
+    height = float(bounds[3] - bounds[1])
+    task_records: List[Dict[str, Any]] = []
+    for row in task_bank["records"]:
+        if str(row["split"]) != str(split):
+            continue
+        record_scenario_id = row.get("scenario_id")
+        if (
+            record_scenario_id is not None
+            and scenario_id is not None
+            and str(record_scenario_id) != str(scenario_id)
+        ):
+            continue
+        normalized = row["start_normalized"]
+        if not isinstance(normalized, list) or len(normalized) != 3:
+            raise ValueError(f"invalid start_normalized in task {row.get('task_id')}")
+        mapped = dict(row)
+        mapped["start"] = [
+            float(bounds[0]) + float(normalized[0]) * width,
+            float(bounds[1]) + float(normalized[1]) * height,
+            float(normalized[2]),
+        ]
+        task_records.append(mapped)
+    if not task_records:
+        raise ValueError(f"task bank contains no {split!r} records for this scenario")
+    return task_bank, task_records
 
 
 def _evaluate_comm_lookahead_sequences(
@@ -1169,6 +1216,7 @@ def evaluate_execution_mode(
     first_decision_times: List[float] = []
     all_decision_times: List[float] = []
     per_device_records: Dict[str, List[Dict[str, float]]] = {device_id: [] for device_id in device_ids}
+    per_stratum_records: Dict[str, List[Dict[str, float]]] = {}
 
     visualization_index: Dict[str, List[Dict[str, Any]]] = {
         "success": [],
@@ -1185,7 +1233,7 @@ def evaluate_execution_mode(
 
     if task_records is None:
         trial_specs = [
-            (device_index, device_id, start_index, int(seed + device_index * 1_000_003 + start_index), None)
+            (device_index, device_id, start_index, int(seed + device_index * 1_000_003 + start_index), None, None)
             for device_index, device_id in enumerate(device_ids)
             for start_index in range(starts_per_device)
         ]
@@ -1198,10 +1246,11 @@ def evaluate_execution_mode(
                 int(row["sample_index"]),
                 int(row["seed"]),
                 np.asarray(row["start"], dtype=np.float32),
+                row,
             )
             for row in task_records
         ]
-    for i, (device_index, device_id, start_index, episode_seed, start_state) in enumerate(
+    for i, (device_index, device_id, start_index, episode_seed, start_state, task_record) in enumerate(
         tqdm(trial_specs, desc=f"{output_name}_success_rate", leave=False)
     ):
         rollout = rollout_execution_episode(
@@ -1261,6 +1310,16 @@ def evaluate_execution_mode(
                 "first_decision_time_sec": decision_times[0] if decision_times else 0.0,
             }
         )
+        if task_record is not None and task_record.get("stratum") is not None:
+            stratum = str(task_record["stratum"])
+            per_stratum_records.setdefault(stratum, []).append(
+                {
+                    "success": float(bool(rollout["success"])),
+                    "steps": float(step_count),
+                    "cost": float(episode_cost),
+                    "communication_feasible_ratio": device_comm_ratio,
+                }
+            )
         final_obs_margins.append(_safe_float(final_info.get("obs_margin")))
         final_comm_margins.append(_safe_float(final_info.get("comm_margin")))
         final_task_scores.append(_safe_float(final_info.get("task_score")))
@@ -1335,6 +1394,17 @@ def evaluate_execution_mode(
                 np.mean([row["first_decision_time_sec"] for row in records])
             ),
         }
+    per_stratum = {}
+    for stratum, records in sorted(per_stratum_records.items()):
+        per_stratum[stratum] = {
+            "num_trials": len(records),
+            "success_rate": float(np.mean([row["success"] for row in records])),
+            "avg_steps": float(np.mean([row["steps"] for row in records])),
+            "avg_total_cost": float(np.mean([row["cost"] for row in records])),
+            "communication_feasible_ratio": float(
+                np.mean([row["communication_feasible_ratio"] for row in records])
+            ),
+        }
     metrics = {
         "success_rate": success_rate,
         "avg_steps_success": float(np.mean(success_steps)) if success_steps else 0.0,
@@ -1385,6 +1455,12 @@ def evaluate_execution_mode(
             np.mean([values["communication_feasible_ratio"] for values in per_device.values()])
         ),
         "per_device": per_device,
+        "per_stratum": per_stratum,
+        "macro_stratum_success_rate": (
+            float(np.mean([values["success_rate"] for values in per_stratum.values()]))
+            if per_stratum
+            else 0.0
+        ),
     }
     return metrics, visualization_index
 
@@ -1503,18 +1579,17 @@ def main():
 
     scenario = None
     if args.scenario_config:
-        scenario = load_metric_scenario(args.scenario_config)
+        scenario = load_scenario_config(args.scenario_config)
+        args._scenario_data = scenario
         args.bounds = [float(v) for v in scenario["bounds"]]
         args.omega_max = float(scenario["omega_max"])
         args.v = float(scenario["v"])
         args.dt = float(scenario["dt"])
         args.max_episode_steps = int(scenario["max_episode_steps"])
         args.obstacle_config = "none"
-        args.obstacles = [
-            value
-            for item in scenario["obstacles"]
-            for value in (float(item["x"]), float(item["y"]), float(item["radius"]))
-        ]
+        # The scenario path supports typed circle/rectangle obstacles.  Do not
+        # flatten it through the legacy circle-only --obstacles argument.
+        args.obstacles = None
         args.device_catalog = scenario["device_catalog"]
         for field in (
             "comm_alpha",
@@ -1550,29 +1625,12 @@ def main():
 
     task_records = None
     if args.task_bank:
-        with open(args.task_bank, "r", encoding="utf-8") as handle:
-            task_bank = json.load(handle)
-        width = float(args.bounds[2] - args.bounds[0])
-        height = float(args.bounds[3] - args.bounds[1])
-        task_records = []
-        for row in task_bank["records"]:
-            if str(row["split"]) != str(args.task_split):
-                continue
-            record_scenario_id = row.get("scenario_id")
-            if (
-                record_scenario_id is not None
-                and scenario is not None
-                and str(record_scenario_id) != str(scenario["scenario_id"])
-            ):
-                continue
-            normalized = row["start_normalized"]
-            mapped = dict(row)
-            mapped["start"] = [
-                float(args.bounds[0]) + float(normalized[0]) * width,
-                float(args.bounds[1]) + float(normalized[1]) * height,
-                float(normalized[2]),
-            ]
-            task_records.append(mapped)
+        _task_bank, task_records = load_task_records(
+            args.task_bank,
+            split=str(args.task_split),
+            bounds=[float(value) for value in args.bounds],
+            scenario_id=str(scenario["scenario_id"]) if scenario is not None else None,
+        )
 
     execution_modes = _parse_execution_modes(args.execution_modes)
     lookahead_heuristics = _parse_lookahead_heuristics(args.lookahead_heuristics)
