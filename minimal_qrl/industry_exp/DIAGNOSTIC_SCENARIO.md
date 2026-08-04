@@ -54,3 +54,14 @@ bash minimal_qrl/run_comm_inspection_diagnostic.sh
 
 Use `TASK_SPLIT=validation` while tuning. Reserve the default `test` split for
 the final paired report.
+
+Visualize all three strata (three individual PNG files plus one overview):
+
+```bash
+PHASE=visualize TASK_SPLIT=validation SAMPLE_INDEX=0 \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+Use `SAMPLE_INDEX=N` to highlight another fixed start in each stratum. The
+underlying Python entry point also accepts `--scenario-config` and `--task-bank`
+to render previously generated canonical JSON files directly.

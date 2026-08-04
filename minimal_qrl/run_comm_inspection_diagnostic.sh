@@ -3,6 +3,7 @@
 #
 # Examples:
 #   PHASE=prepare bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=visualize bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=train_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." CONTEXT_CHECKPOINTS="..." \
@@ -62,6 +63,17 @@ eval_qrl() {
     --device "${DEVICE:-auto}"
 }
 
+visualize() {
+  "$PYTHON_BIN" -m minimal_qrl.visualize_diagnostic_scenarios \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --task-bank "$TASK_BANK" \
+    --split "${TASK_SPLIT:-validation}" \
+    --sample-index "${SAMPLE_INDEX:-0}" \
+    --communication-resolution "${COMMUNICATION_RESOLUTION:-180}" \
+    --dpi "${VIZ_DPI:-180}" \
+    --output-dir "${VISUALIZATION_DIR:-$OUTPUT_ROOT/visualizations}"
+}
+
 benchmark() {
   local qrl_checkpoints="${QRL_CHECKPOINTS:-${QRL_CHECKPOINT:-$TRAIN_DIR/checkpoint_final.pth}}"
   local extra_args=()
@@ -98,6 +110,9 @@ benchmark() {
 case "$PHASE" in
   prepare)
     ;;
+  visualize)
+    visualize
+    ;;
   train_qrl)
     train_qrl
     ;;
@@ -108,12 +123,13 @@ case "$PHASE" in
     benchmark
     ;;
   all)
+    visualize
     train_qrl
     eval_qrl
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, train_qrl, eval_qrl, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, benchmark, or all)" >&2
     exit 2
     ;;
 esac
