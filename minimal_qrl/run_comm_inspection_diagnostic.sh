@@ -6,7 +6,8 @@
 #   PHASE=visualize bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=train_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
-#   PHASE=benchmark QRL_CHECKPOINTS="..." CONTEXT_CHECKPOINTS="..." \
+#   PHASE=benchmark QRL_CHECKPOINTS="..." \
+#     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 
 set -euo pipefail
@@ -83,6 +84,9 @@ benchmark() {
   if [[ -n "${CONTEXT_CHECKPOINTS:-}" ]]; then
     read -r -a context_array <<< "$CONTEXT_CHECKPOINTS"
     extra_args+=(--context-checkpoints "${context_array[@]}")
+  fi
+  if [[ "${TRAIN_SAC:-0}" == "1" ]]; then
+    extra_args+=(--train-sac)
   fi
   if [[ "${TRAIN_CONTEXT_AGENTS:-0}" == "1" ]]; then
     extra_args+=(--train-context-agents)
