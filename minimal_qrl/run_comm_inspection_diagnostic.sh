@@ -34,6 +34,9 @@ CONFIG_DIR="$OUTPUT_ROOT/config"
 SCENARIO_CONFIG="$CONFIG_DIR/diagnostic_scenario.json"
 TASK_BANK="$CONFIG_DIR/diagnostic_task_bank.json"
 TRAIN_DIR="${TRAIN_DIR:-$OUTPUT_ROOT/qrl_training}"
+SHARED_ORACLE_DIR="${SHARED_ORACLE_DIR:-./results/shared_oracle_banks/chemical_process}"
+ORACLE_VALIDATION_BANK="${ORACLE_VALIDATION_BANK:-$SHARED_ORACLE_DIR/hybrid_astar_validation_192.json}"
+ORACLE_FINAL_TEST_BANK="${ORACLE_FINAL_TEST_BANK:-$SHARED_ORACLE_DIR/hybrid_astar_final_test_192.json}"
 
 "$PYTHON_BIN" -m minimal_qrl.industry_exp.diagnostic_scenario \
   --output-dir "$CONFIG_DIR"
@@ -43,6 +46,14 @@ train_qrl() {
 
   if [[ "${ORACLE_BANK_EVAL:-1}" == "1" ]]; then
     oracle_bank_eval_flag+=(--oracle-bank-eval)
+    if [[ ! -f "$ORACLE_VALIDATION_BANK" ]]; then
+      echo "Missing fixed validation oracle bank: $ORACLE_VALIDATION_BANK" >&2
+      exit 1
+    fi
+    if [[ ! -f "$ORACLE_FINAL_TEST_BANK" ]]; then
+      echo "Missing fixed final-test oracle bank: $ORACLE_FINAL_TEST_BANK" >&2
+      exit 1
+    fi
   fi
 
   "$PYTHON_BIN" minimal_qrl/train.py \
@@ -67,6 +78,8 @@ train_qrl() {
     --eval-interval "${EVAL_INTERVAL:-1000}" \
     ${oracle_bank_eval_flag[@]+"${oracle_bank_eval_flag[@]}"} \
     --oracle-bank-dir "${ORACLE_BANK_DIR:-$TRAIN_DIR/oracle_banks}" \
+    --oracle-validation-bank "$ORACLE_VALIDATION_BANK" \
+    --oracle-final-test-bank "$ORACLE_FINAL_TEST_BANK" \
     --oracle-bank-size "${ORACLE_BANK_SIZE:-192}" \
     --oracle-bank-seed "${ORACLE_BANK_SEED:-20260729}" \
     --oracle-astar-timeout-sec "${ORACLE_ASTAR_TIMEOUT_SEC:-60}" \
@@ -218,6 +231,7 @@ benchmark() {
     --device "${DEVICE:-auto}" \
     --mppi-horizon "${MPPI_HORIZON:-10}" \
     --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \
+    --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}" \
     --astar-timeout-sec "${ASTAR_TIMEOUT_SEC:-30}" \
     --astar-terminal-samples "${ASTAR_TERMINAL_SAMPLES:-128}" \
     ${save_visualizations_flag[@]+"${save_visualizations_flag[@]}"} \
