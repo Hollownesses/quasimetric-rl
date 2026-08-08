@@ -12,6 +12,9 @@
 #   PHASE=prepare bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=visualize bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=train_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl QRL_DATASET_MODE=qrl_explore \
+#     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_explore \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
@@ -43,6 +46,8 @@ ORACLE_FINAL_TEST_BANK="${ORACLE_FINAL_TEST_BANK:-$SHARED_ORACLE_DIR/hybrid_asta
 
 train_qrl() {
   local oracle_bank_eval_flag=()
+  local dataset_budget_args=()
+  local qrl_dataset_mode="${QRL_DATASET_MODE:-standard}"
 
   if [[ "${ORACLE_BANK_EVAL:-1}" == "1" ]]; then
     oracle_bank_eval_flag+=(--oracle-bank-eval)
@@ -56,13 +61,32 @@ train_qrl() {
     fi
   fi
 
+  if [[ "$qrl_dataset_mode" == "qrl_explore" ]]; then
+    dataset_budget_args+=(
+      --comm-dataset-mode qrl_explore
+      --explore-attempted-env-steps "${EXPLORE_ATTEMPTED_ENV_STEPS:-200000}"
+      --explore-start-position-resolution "${EXPLORE_START_POSITION_RESOLUTION:-1.0}"
+      --explore-start-heading-bins "${EXPLORE_START_HEADING_BINS:-12}"
+      --explore-action-hold-min-steps "${EXPLORE_ACTION_HOLD_MIN_STEPS:-5}"
+      --explore-action-hold-max-steps "${EXPLORE_ACTION_HOLD_MAX_STEPS:-20}"
+      --explore-straight-action-probability "${EXPLORE_STRAIGHT_ACTION_PROBABILITY:-0.2}"
+      --explore-exclusion-task-bank "${EXPLORE_EXCLUSION_TASK_BANK:-$TASK_BANK}"
+      --explore-exclusion-radius "${EXPLORE_EXCLUSION_RADIUS:-0.25}"
+    )
+  elif [[ "$qrl_dataset_mode" == "standard" ]]; then
+    dataset_budget_args+=(--target-env-transitions "${TARGET_ENV_TRANSITIONS:-120000}")
+  else
+    echo "Unknown QRL_DATASET_MODE=$qrl_dataset_mode (expected standard or qrl_explore)" >&2
+    exit 2
+  fi
+
   "$PYTHON_BIN" minimal_qrl/train.py \
     --scenario-config "$SCENARIO_CONFIG" \
     --output-dir "$TRAIN_DIR" \
     --seed "${SEED:-42}" \
     --device "${DEVICE:-cpu}" \
     --num-episodes "${NUM_EPISODES:-500}" \
-    --target-env-transitions "${TARGET_ENV_TRANSITIONS:-120000}" \
+    ${dataset_budget_args[@]+"${dataset_budget_args[@]}"} \
     --batch-size "${BATCH_SIZE:-256}" \
     --total-steps "${TOTAL_STEPS:-120000}" \
     --num-critics "${NUM_CRITICS:-2}" \

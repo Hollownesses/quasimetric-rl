@@ -7,7 +7,12 @@ import math
 import numpy as np
 import pytest
 
-from minimal_qrl.dataset import collect_goal_set_comm_episode_pair, create_dataset
+from minimal_qrl.dataset import (
+    QRLExploreConfig,
+    build_qrl_exploration_start_bank,
+    collect_goal_set_comm_episode_pair,
+    create_dataset,
+)
 from minimal_qrl.envs import (
     CircleObstacle,
     CommInspectionDubinsUAV2D,
@@ -223,3 +228,102 @@ def test_dataset_task_goals_are_catalog_devices_and_teacher_reuses_device():
         device_indices.update(int(v) for v in infos["device_index"].tolist() if int(v) >= 0)
     assert device_indices <= set(range(len(env.device_ids)))
     assert device_indices
+
+
+def test_qrl_explore_start_bank_is_stratified_deterministic_and_excludes_eval_starts():
+    env = make_env()
+    config = QRLExploreConfig(
+        start_position_resolution=2.0,
+        start_heading_bins=4,
+        exclusion_radius=0.1,
+        excluded_start_states=((1.0, 1.0, 0.0),),
+    )
+    first = build_qrl_exploration_start_bank(env, config, seed=17)
+    second = build_qrl_exploration_start_bank(env, config, seed=17)
+
+    np.testing.assert_array_equal(first, second)
+    assert first.shape[1] == 3
+    assert not np.any(np.linalg.norm(first[:, :2] - np.array([1.0, 1.0]), axis=1) <= 0.1)
+    assert all(env.is_valid_state(state) for state in first)
+
+    spatial_count = len(first) // config.start_heading_bins
+    first_round_positions = {tuple(state[:2]) for state in first[:spatial_count]}
+    assert len(first_round_positions) == spatial_count
+    headings_by_position = {}
+    for x, y, theta in first:
+        headings_by_position.setdefault((float(x), float(y)), set()).add(round(float(theta), 5))
+    assert all(
+        len(headings) == config.start_heading_bins
+        for headings in headings_by_position.values()
+    )
+
+
+def test_qrl_explore_uses_exact_attempted_budget_without_teacher_and_keeps_outcomes():
+    env = make_env(max_steps=7)
+    stats = {}
+    config = QRLExploreConfig(
+        attempted_env_steps=41,
+        start_position_resolution=2.0,
+        start_heading_bins=4,
+        action_hold_min_steps=2,
+        action_hold_max_steps=4,
+        straight_action_probability=0.25,
+        diagnostic_regions={
+            "left": (0.0, 0.0, 5.0, 10.0),
+            "right": (5.0, 0.0, 10.0, 10.0),
+        },
+    )
+    episodes = list(
+        create_dataset(
+            env,
+            max_steps_per_episode=7,
+            seed=23,
+            task_aware_teacher_ratio=1.0,
+            target_env_transitions=999,
+            collection_stats=stats,
+            qrl_explore_config=config,
+        )
+    )
+    real_episodes = [
+        episode
+        for episode in episodes
+        if not bool(episode.transition_infos["abstract_goal_edge"].all())
+    ]
+
+    assert stats["attempted_env_step_budget"] == 41
+    assert stats["attempted_env_steps"] == 41
+    assert stats["stored_real_transitions"] == 41
+    assert sum(episode.num_transitions for episode in real_episodes) == 41
+    assert sorted(stats["per_device_real_transitions"].values()) == [20, 21]
+    assert sum(stats["outcomes"].values()) == stats["episodes"]
+    assert stats["failed_episodes"] == stats["episodes"] - stats["outcomes"]["success"]
+    assert stats["natural_exit_episodes"] == stats["outcomes"]["timeout"]
+    assert stats["unique_start_indices"] > 1
+    assert stats["unique_state_heading_bins"] > 1
+    assert stats["action_segments"] < stats["attempted_env_steps"]
+    for episode in real_episodes:
+        infos = episode.transition_infos
+        assert bool(infos["exploration"].all())
+        assert not bool(infos["teacher_guided"].any())
+        assert int(infos["exploration_start_index"][0]) >= 0
+        assert int(infos["exploration_episode_id"][0]) >= 0
+        assert int(infos["exploration_outcome"][0]) > 0
+
+    repeated_stats = {}
+    repeated_episodes = list(
+        create_dataset(
+            make_env(max_steps=7),
+            max_steps_per_episode=7,
+            seed=23,
+            collection_stats=repeated_stats,
+            qrl_explore_config=config,
+        )
+    )
+    assert repeated_stats == stats
+    assert len(repeated_episodes) == len(episodes)
+    for first_episode, repeated_episode in zip(episodes, repeated_episodes):
+        np.testing.assert_array_equal(first_episode.actions, repeated_episode.actions)
+        np.testing.assert_array_equal(
+            first_episode.all_observations,
+            repeated_episode.all_observations,
+        )

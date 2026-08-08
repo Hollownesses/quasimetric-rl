@@ -137,6 +137,12 @@ def build_diagnostic_scenario() -> dict[str, Any]:
             "corridor_safe_route": "lower",
             "corridor_shadow_route": "upper",
             "task_strata": list(CHALLENGE_STRATA),
+            "exploration_diagnostic_regions": {
+                "u_trap_interior": [2.8, 1.9, 5.2, 5.4],
+                "u_trap_west_exit": [0.0, 1.9, 2.8, 5.4],
+                "corridor_upper": [9.0, 7.5, 15.0, 12.0],
+                "corridor_lower": [9.0, 0.0, 15.0, 6.0],
+            },
         },
     }
     # This validates both the schema and catalog terminal-set feasibility.

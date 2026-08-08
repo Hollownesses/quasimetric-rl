@@ -5,7 +5,8 @@ import numpy as np
 import random
 import torch
 import warnings
-from typing import Any, Iterator, Optional, List, Tuple
+from dataclasses import dataclass
+from typing import Any, Iterator, Mapping, Optional, List, Sequence, Tuple
 import gym
 
 from quasimetric_rl.data import EpisodeData
@@ -15,6 +16,38 @@ from minimal_qrl.envs.base import BaseNavigationEnv
 TASK_AWARE_TEACHER_MAX_ATTEMPTS = 8
 TASK_AWARE_TEACHER_KP = 4.0
 TASK_AWARE_TEACHER_ACTION_NOISE_STD = 0.0
+
+EXPLORE_OUTCOME_UNKNOWN = 0
+EXPLORE_OUTCOME_SUCCESS = 1
+EXPLORE_OUTCOME_COLLISION = 2
+EXPLORE_OUTCOME_OUT_OF_BOUNDS = 3
+EXPLORE_OUTCOME_TIMEOUT = 4
+EXPLORE_OUTCOME_BUDGET_CUTOFF = 5
+
+EXPLORE_OUTCOME_NAMES = {
+    EXPLORE_OUTCOME_UNKNOWN: "unknown",
+    EXPLORE_OUTCOME_SUCCESS: "success",
+    EXPLORE_OUTCOME_COLLISION: "collision",
+    EXPLORE_OUTCOME_OUT_OF_BOUNDS: "out_of_bounds",
+    EXPLORE_OUTCOME_TIMEOUT: "timeout",
+    EXPLORE_OUTCOME_BUDGET_CUTOFF: "budget_cutoff",
+}
+
+
+@dataclass(frozen=True)
+class QRLExploreConfig:
+    """Goal-blind, coverage-oriented data collection for communication QRL."""
+
+    attempted_env_steps: int = 200_000
+    start_position_resolution: float = 1.0
+    start_heading_bins: int = 12
+    action_hold_min_steps: int = 5
+    action_hold_max_steps: int = 20
+    straight_action_probability: float = 0.2
+    exclusion_radius: float = 0.25
+    excluded_start_states: Tuple[Tuple[float, float, float], ...] = ()
+    start_states: Tuple[Tuple[float, float, float], ...] = ()
+    diagnostic_regions: Optional[Mapping[str, Sequence[float]]] = None
 
 
 def _actions_to_array(actions: List) -> np.ndarray:
@@ -30,6 +63,109 @@ def _normalize_angle(theta: float) -> float:
     return float((float(theta) + np.pi) % (2.0 * np.pi) - np.pi)
 
 
+def build_qrl_exploration_start_bank(
+    env: gym.Env,
+    config: QRLExploreConfig,
+    *,
+    seed: Optional[int],
+) -> np.ndarray:
+    """Build a deterministic free-space x-y-heading bank without using a task target.
+
+    The ordering covers every retained spatial cell once before revisiting a
+    position with another heading. This matters when the interaction budget is
+    too small to consume every position-heading combination.
+    """
+
+    resolution = float(config.start_position_resolution)
+    heading_bins = int(config.start_heading_bins)
+    if not np.isfinite(resolution) or resolution <= 0.0:
+        raise ValueError("QRL-explore start_position_resolution must be positive")
+    if heading_bins <= 0:
+        raise ValueError("QRL-explore start_heading_bins must be positive")
+    bounds = (
+        float(getattr(env, "x_min")),
+        float(getattr(env, "y_min")),
+        float(getattr(env, "x_max")),
+        float(getattr(env, "y_max")),
+    )
+    x_values = np.arange(bounds[0] + 0.5 * resolution, bounds[2], resolution)
+    y_values = np.arange(bounds[1] + 0.5 * resolution, bounds[3], resolution)
+    excluded = np.asarray(config.excluded_start_states, dtype=np.float32)
+    if excluded.size == 0:
+        excluded = np.zeros((0, 3), dtype=np.float32)
+    else:
+        excluded = excluded.reshape((-1, 3))
+    exclusion_radius_sq = max(0.0, float(config.exclusion_radius)) ** 2
+
+    positions: list[tuple[float, float]] = []
+    for y in y_values:
+        for x in x_values:
+            probe = np.asarray([x, y, 0.0], dtype=np.float32)
+            if not bool(env.is_valid_state(probe)):
+                continue
+            if len(excluded) > 0:
+                delta = excluded[:, :2] - probe[None, :2]
+                if bool(np.any(np.sum(delta * delta, axis=1) <= exclusion_radius_sq)):
+                    continue
+            positions.append((float(x), float(y)))
+    if not positions:
+        raise ValueError("QRL-explore start bank contains no valid free-space cells")
+
+    rng = np.random.default_rng(None if seed is None else int(seed) + 73_856_093)
+    states: list[tuple[float, float, float]] = []
+    position_indices = np.arange(len(positions), dtype=np.int64)
+    base_heading_offsets = np.arange(len(positions), dtype=np.int64) % heading_bins
+    rng.shuffle(base_heading_offsets)
+    for heading_round in range(heading_bins):
+        order = position_indices.copy()
+        rng.shuffle(order)
+        for position_index in order:
+            x, y = positions[int(position_index)]
+            heading_index = (
+                int(base_heading_offsets[int(position_index)]) + heading_round
+            ) % heading_bins
+            theta = -np.pi + 2.0 * np.pi * float(heading_index) / float(heading_bins)
+            states.append((x, y, _normalize_angle(theta)))
+    return np.asarray(states, dtype=np.float32)
+
+
+def _state_heading_key(
+    state: np.ndarray,
+    env: gym.Env,
+    *,
+    position_resolution: float,
+    heading_bins: int,
+) -> tuple[int, int, int]:
+    state = np.asarray(state, dtype=np.float32).reshape(3)
+    x_bin = int(np.floor((float(state[0]) - float(env.x_min)) / position_resolution))
+    y_bin = int(np.floor((float(state[1]) - float(env.y_min)) / position_resolution))
+    angle = (_normalize_angle(float(state[2])) + np.pi) % (2.0 * np.pi)
+    theta_bin = int(np.floor(angle / (2.0 * np.pi) * heading_bins)) % heading_bins
+    return x_bin, y_bin, theta_bin
+
+
+def _trajectory_has_loop(keys: Sequence[tuple[int, int, int]], min_separation: int = 10) -> bool:
+    first_seen: dict[tuple[int, int, int], int] = {}
+    for index, key in enumerate(keys):
+        previous = first_seen.get(key)
+        if previous is not None and index - previous >= int(min_separation):
+            return True
+        first_seen.setdefault(key, index)
+    return False
+
+
+def _validated_diagnostic_regions(
+    regions: Optional[Mapping[str, Sequence[float]]],
+) -> dict[str, tuple[float, float, float, float]]:
+    result: dict[str, tuple[float, float, float, float]] = {}
+    for name, raw_bounds in (regions or {}).items():
+        values = tuple(float(value) for value in raw_bounds)
+        if len(values) != 4 or values[2] <= values[0] or values[3] <= values[1]:
+            raise ValueError(f"invalid QRL-explore diagnostic region {name!r}: {raw_bounds}")
+        result[str(name)] = values
+    return result
+
+
 def _goal_set_transition_infos(
     *,
     n: int,
@@ -41,6 +177,11 @@ def _goal_set_transition_infos(
     abstract_goal_edge: bool = False,
     source_terminal_goal_state: bool = False,
     teacher_guided: bool = False,
+    exploration: bool = False,
+    exploration_start_index: int = -1,
+    exploration_episode_id: int = -1,
+    exploration_outcome: int = EXPLORE_OUTCOME_UNKNOWN,
+    exploration_loop_detected: bool = False,
 ) -> dict:
     infos = {
         "abstract_goal_edge": np.full((n,), bool(abstract_goal_edge), dtype=np.bool_),
@@ -48,6 +189,13 @@ def _goal_set_transition_infos(
         "task_goal_observations": np.repeat(task_goal_obs[None, :], n, axis=0).astype(np.float32),
         "context_id": np.full((n,), int(context_id), dtype=np.int64),
         "teacher_guided": np.full((n,), bool(teacher_guided), dtype=np.bool_),
+        "exploration": np.full((n,), bool(exploration), dtype=np.bool_),
+        "exploration_start_index": np.full((n,), int(exploration_start_index), dtype=np.int64),
+        "exploration_episode_id": np.full((n,), int(exploration_episode_id), dtype=np.int64),
+        "exploration_outcome": np.full((n,), int(exploration_outcome), dtype=np.int64),
+        "exploration_loop_detected": np.full(
+            (n,), bool(exploration_loop_detected), dtype=np.bool_
+        ),
     }
     device_index = int(getattr(env, "active_device_index", -1)) if env is not None else -1
     infos["device_index"] = np.full((n,), device_index, dtype=np.int64)
@@ -609,6 +757,362 @@ def create_budgeted_comm_dataset(
         context_id += 1
 
 
+def collect_qrl_explore_episode_pair(
+    env: gym.Env,
+    *,
+    start_state: np.ndarray,
+    start_index: int,
+    max_steps: int,
+    seed: Optional[int],
+    context_id: int,
+    device_id: str,
+    config: QRLExploreConfig,
+    budget_cutoff: bool,
+) -> tuple[EpisodeData, Optional[EpisodeData], dict[str, Any]]:
+    """Collect one persistent-random, target-blind exploration trajectory."""
+
+    if int(max_steps) <= 0:
+        raise ValueError("QRL-explore episode max_steps must be positive")
+    rng = np.random.default_rng(seed)
+    obs, reset_info = env.reset(
+        seed=seed,
+        options={"device_id": str(device_id), "start": np.asarray(start_state).tolist()},
+    )
+    task_goal_obs = env.abstract_goal_observation().astype(np.float32)
+    observations = [obs.copy()]
+    raw_states = [np.asarray(env.state, dtype=np.float32).copy()]
+    actions: list[np.ndarray] = []
+    next_observations: list[np.ndarray] = []
+    rewards: list[float] = []
+    terminals: list[bool] = []
+    timeouts: list[bool] = []
+    final_info = dict(reset_info)
+    action_segments = 0
+    nonzero_action_steps = 0
+
+    hold_min = int(config.action_hold_min_steps)
+    hold_max = int(config.action_hold_max_steps)
+    if hold_min <= 0 or hold_max < hold_min:
+        raise ValueError("QRL-explore action hold range must satisfy 1 <= min <= max")
+    straight_probability = float(config.straight_action_probability)
+    if not 0.0 <= straight_probability <= 1.0:
+        raise ValueError("QRL-explore straight_action_probability must be in [0, 1]")
+    nonzero_scales = np.asarray([-1.0, -0.5, 0.5, 1.0], dtype=np.float32)
+
+    while len(actions) < int(max_steps):
+        if float(rng.uniform()) < straight_probability:
+            omega = 0.0
+        else:
+            omega = float(rng.choice(nonzero_scales)) * float(env.omega_max)
+        hold_steps = int(rng.integers(hold_min, hold_max + 1))
+        action_segments += 1
+        for _ in range(min(hold_steps, int(max_steps) - len(actions))):
+            action = np.asarray([omega], dtype=np.float32)
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            actions.append(action)
+            nonzero_action_steps += int(abs(omega) > 1e-12)
+            observations.append(next_obs.copy())
+            raw_states.append(np.asarray(env.state, dtype=np.float32).copy())
+            next_observations.append(next_obs.copy())
+            rewards.append(float(reward))
+            terminals.append(bool(terminated))
+            timeouts.append(bool(truncated))
+            final_info = dict(info)
+            if terminated or truncated:
+                break
+        if bool(terminals[-1]) or bool(timeouts[-1]):
+            break
+
+    if not actions:
+        raise RuntimeError("QRL-explore produced an empty trajectory")
+    if not terminals[-1] and not timeouts[-1]:
+        timeouts[-1] = True
+
+    if bool(final_info.get("success", False)):
+        outcome = EXPLORE_OUTCOME_SUCCESS
+    elif bool(final_info.get("collision", False)):
+        outcome = EXPLORE_OUTCOME_COLLISION
+    elif bool(final_info.get("out_of_bounds", False)):
+        outcome = EXPLORE_OUTCOME_OUT_OF_BOUNDS
+    elif bool(budget_cutoff):
+        outcome = EXPLORE_OUTCOME_BUDGET_CUTOFF
+    else:
+        outcome = EXPLORE_OUTCOME_TIMEOUT
+
+    keys = [
+        _state_heading_key(
+            state,
+            env,
+            position_resolution=float(config.start_position_resolution),
+            heading_bins=int(config.start_heading_bins),
+        )
+        for state in raw_states
+    ]
+    loop_detected = _trajectory_has_loop(keys)
+    actions_array = _actions_to_array(actions)
+    n = len(actions)
+    episode = EpisodeData.from_simple_trajectory(
+        observations=np.asarray(observations[:-1], dtype=np.float32),
+        actions=actions_array,
+        next_observations=np.asarray(next_observations, dtype=np.float32),
+        rewards=np.asarray(rewards, dtype=np.float32),
+        terminals=np.asarray(terminals, dtype=np.bool_),
+        timeouts=np.asarray(timeouts, dtype=np.bool_),
+        transition_infos=_goal_set_transition_infos(
+            n=n,
+            task_goal_obs=task_goal_obs,
+            context_id=context_id,
+            env=env,
+            global_push_seed=None if seed is None else int(seed + 49_979_687),
+            include_global_push_pairs=True,
+            exploration=True,
+            exploration_start_index=int(start_index),
+            exploration_episode_id=int(context_id),
+            exploration_outcome=int(outcome),
+            exploration_loop_detected=bool(loop_detected),
+        ),
+    )
+
+    abstract_episode = None
+    try:
+        terminal_obs = np.asarray(observations[-1], dtype=np.float32)
+        if outcome != EXPLORE_OUTCOME_SUCCESS:
+            terminal_state = env.sample_task_terminal_state(
+                seed=None if seed is None else int(seed + 104_729)
+            )
+            terminal_obs = env.state_to_observation(terminal_state).astype(np.float32)
+        abstract_episode = _make_goal_set_abstract_edge(
+            env,
+            terminal_obs=terminal_obs,
+            task_goal_obs=task_goal_obs,
+            context_id=context_id,
+            action_template=actions_array[-1],
+            action_dtype=actions_array.dtype,
+        )
+    except RuntimeError:
+        abstract_episode = None
+
+    return episode, abstract_episode, {
+        "outcome": EXPLORE_OUTCOME_NAMES[int(outcome)],
+        "loop_detected": bool(loop_detected),
+        "action_segments": int(action_segments),
+        "nonzero_action_steps": int(nonzero_action_steps),
+        "state_heading_keys": keys,
+        "raw_states": raw_states,
+    }
+
+
+def create_qrl_explore_comm_dataset(
+    env: gym.Env,
+    *,
+    config: QRLExploreConfig,
+    max_steps_per_episode: int,
+    seed: Optional[int],
+    collection_stats: Optional[dict[str, Any]] = None,
+) -> Iterator[EpisodeData]:
+    """Collect an exact attempted-step budget with no goal-directed controller.
+
+    Every executed transition is retained. Synthetic terminal-set edges are
+    emitted separately and never count against the environment interaction
+    budget.
+    """
+
+    budget = int(config.attempted_env_steps)
+    if budget <= 0:
+        raise ValueError("QRL-explore attempted_env_steps must be positive")
+    if int(max_steps_per_episode) <= 0:
+        raise ValueError("QRL-explore max_steps_per_episode must be positive")
+    device_ids = list(getattr(env, "device_ids", ()))
+    if not device_ids:
+        raise ValueError("QRL-explore communication dataset requires device_ids")
+    if config.start_states:
+        start_bank = np.asarray(config.start_states, dtype=np.float32).reshape((-1, 3))
+    else:
+        start_bank = build_qrl_exploration_start_bank(env, config, seed=seed)
+    if len(start_bank) == 0:
+        raise ValueError("QRL-explore start bank is empty")
+    regions = _validated_diagnostic_regions(config.diagnostic_regions)
+
+    per_device_targets = {
+        device_id: budget // len(device_ids) + int(index < budget % len(device_ids))
+        for index, device_id in enumerate(device_ids)
+    }
+    stats = collection_stats if collection_stats is not None else {}
+    stats.clear()
+    stats.update(
+        {
+            "collection_mode": "qrl_explore",
+            "attempted_env_step_budget": budget,
+            "attempted_env_steps": 0,
+            "stored_real_transitions": 0,
+            "synthetic_abstract_edges": 0,
+            "episodes": 0,
+            "loop_episodes": 0,
+            "action_segments": 0,
+            "nonzero_action_steps": 0,
+            "outcomes": {name: 0 for name in EXPLORE_OUTCOME_NAMES.values() if name != "unknown"},
+            "start_bank_size": int(len(start_bank)),
+            "unique_start_indices": 0,
+            "unique_state_heading_bins": 0,
+            "directed_state_heading_edges": 0,
+            "per_device_real_transitions": {device_id: 0 for device_id in device_ids},
+            "per_device_target_transitions": dict(per_device_targets),
+            "per_device_episodes": {device_id: 0 for device_id in device_ids},
+            "per_device_outcomes": {
+                device_id: {
+                    name: 0 for name in EXPLORE_OUTCOME_NAMES.values() if name != "unknown"
+                }
+                for device_id in device_ids
+            },
+            "diagnostic_region_episode_visits": {name: 0 for name in regions},
+            "diagnostic_directed_region_crossings": {
+                f"{source}->{target}": 0
+                for source in regions
+                for target in regions
+                if source != target
+            },
+            "per_device_diagnostic_region_episode_visits": {
+                device_id: {name: 0 for name in regions}
+                for device_id in device_ids
+            },
+            "per_device_diagnostic_directed_region_crossings": {
+                device_id: {
+                    f"{source}->{target}": 0
+                    for source in regions
+                    for target in regions
+                    if source != target
+                }
+                for device_id in device_ids
+            },
+        }
+    )
+    used_start_indices: set[int] = set()
+    visited_keys: set[tuple[int, int, int]] = set()
+    directed_edges: set[tuple[tuple[int, int, int], tuple[int, int, int]]] = set()
+    start_cursors = {
+        device_id: (index * 104_729) % len(start_bank)
+        for index, device_id in enumerate(device_ids)
+    }
+    context_id = 0
+    device_cursor = 0
+
+    while int(stats["attempted_env_steps"]) < budget:
+        for _ in range(len(device_ids)):
+            device_id = device_ids[device_cursor % len(device_ids)]
+            device_cursor += 1
+            if int(stats["per_device_real_transitions"][device_id]) < int(
+                per_device_targets[device_id]
+            ):
+                break
+        else:  # pragma: no cover - guarded by the exact total budget
+            raise RuntimeError("QRL-explore exhausted all per-device budgets early")
+
+        env.set_task_by_device_id(device_id)
+        start_index = -1
+        start_state = None
+        for _ in range(len(start_bank)):
+            candidate_index = int(start_cursors[device_id] % len(start_bank))
+            start_cursors[device_id] += 1
+            candidate = start_bank[candidate_index]
+            if env.is_valid_state(candidate) and not env.is_terminal_goal_state(candidate):
+                start_index = candidate_index
+                start_state = candidate
+                break
+        if start_state is None:
+            raise RuntimeError(f"QRL-explore found no non-terminal start for {device_id}")
+
+        remaining_total = budget - int(stats["attempted_env_steps"])
+        remaining_device = int(per_device_targets[device_id]) - int(
+            stats["per_device_real_transitions"][device_id]
+        )
+        episode_limit = min(int(max_steps_per_episode), remaining_total, remaining_device)
+        budget_cutoff = episode_limit < int(max_steps_per_episode)
+        episode_seed = None if seed is None else int(seed + 1_000_003 + context_id * 104_729)
+        episode, abstract_episode, diagnostics = collect_qrl_explore_episode_pair(
+            env,
+            start_state=start_state,
+            start_index=start_index,
+            max_steps=episode_limit,
+            seed=episode_seed,
+            context_id=context_id,
+            device_id=device_id,
+            config=config,
+            budget_cutoff=budget_cutoff,
+        )
+        real_steps = int(episode.num_transitions)
+        yield episode
+        if abstract_episode is not None:
+            yield abstract_episode
+            stats["synthetic_abstract_edges"] = int(stats["synthetic_abstract_edges"]) + 1
+
+        stats["attempted_env_steps"] = int(stats["attempted_env_steps"]) + real_steps
+        stats["stored_real_transitions"] = int(stats["stored_real_transitions"]) + real_steps
+        stats["episodes"] = int(stats["episodes"]) + 1
+        stats["per_device_real_transitions"][device_id] += real_steps
+        stats["per_device_episodes"][device_id] += 1
+        outcome = str(diagnostics["outcome"])
+        stats["outcomes"][outcome] += 1
+        stats["per_device_outcomes"][device_id][outcome] += 1
+        stats["loop_episodes"] = int(stats["loop_episodes"]) + int(
+            diagnostics["loop_detected"]
+        )
+        stats["action_segments"] = int(stats["action_segments"]) + int(
+            diagnostics["action_segments"]
+        )
+        stats["nonzero_action_steps"] = int(stats["nonzero_action_steps"]) + int(
+            diagnostics["nonzero_action_steps"]
+        )
+        used_start_indices.add(int(start_index))
+        keys = diagnostics["state_heading_keys"]
+        visited_keys.update(keys)
+        directed_edges.update((left, right) for left, right in zip(keys[:-1], keys[1:]) if left != right)
+
+        raw_states = np.asarray(diagnostics["raw_states"], dtype=np.float32)
+        first_region_index: dict[str, int] = {}
+        last_region_index: dict[str, int] = {}
+        for region_name, (x_min, y_min, x_max, y_max) in regions.items():
+            mask = (
+                (raw_states[:, 0] >= x_min)
+                & (raw_states[:, 0] <= x_max)
+                & (raw_states[:, 1] >= y_min)
+                & (raw_states[:, 1] <= y_max)
+            )
+            indices = np.flatnonzero(mask)
+            if len(indices) > 0:
+                stats["diagnostic_region_episode_visits"][region_name] += 1
+                stats["per_device_diagnostic_region_episode_visits"][device_id][
+                    region_name
+                ] += 1
+                first_region_index[region_name] = int(indices[0])
+                last_region_index[region_name] = int(indices[-1])
+        for source in regions:
+            for target in regions:
+                if source == target or source not in first_region_index or target not in last_region_index:
+                    continue
+                if last_region_index[target] > first_region_index[source]:
+                    crossing_name = f"{source}->{target}"
+                    stats["diagnostic_directed_region_crossings"][crossing_name] += 1
+                    stats["per_device_diagnostic_directed_region_crossings"][device_id][
+                        crossing_name
+                    ] += 1
+
+        context_id += 1
+
+    stats["unique_start_indices"] = int(len(used_start_indices))
+    stats["unique_state_heading_bins"] = int(len(visited_keys))
+    stats["directed_state_heading_edges"] = int(len(directed_edges))
+    stats["mean_action_hold_steps"] = float(
+        stats["attempted_env_steps"] / max(int(stats["action_segments"]), 1)
+    )
+    stats["nonzero_action_step_ratio"] = float(
+        stats["nonzero_action_steps"] / max(int(stats["attempted_env_steps"]), 1)
+    )
+    stats["failed_episodes"] = int(stats["episodes"]) - int(
+        stats["outcomes"]["success"]
+    )
+    stats["natural_exit_episodes"] = int(stats["outcomes"]["timeout"])
+
+
 def create_dataset(
     env: gym.Env,
     num_episodes: int = 100,
@@ -618,6 +1122,7 @@ def create_dataset(
     task_aware_teacher_ratio: float = 0.0,
     target_env_transitions: Optional[int] = None,
     collection_stats: Optional[dict[str, Any]] = None,
+    qrl_explore_config: Optional[QRLExploreConfig] = None,
 ) -> Iterator[EpisodeData]:
     """
     创建数据集，支持多种环境
@@ -634,6 +1139,21 @@ def create_dataset(
     Yields:
         EpisodeData
     """
+    if qrl_explore_config is not None:
+        if not (
+            hasattr(env, "abstract_goal_observation")
+            and hasattr(env, "device_ids")
+        ):
+            raise ValueError("QRL-explore is only supported for communication goal-set environments")
+        yield from create_qrl_explore_comm_dataset(
+            env,
+            config=qrl_explore_config,
+            max_steps_per_episode=max_steps_per_episode,
+            seed=seed,
+            collection_stats=collection_stats,
+        )
+        return
+
     if (
         target_env_transitions is not None
         and hasattr(env, "abstract_goal_observation")

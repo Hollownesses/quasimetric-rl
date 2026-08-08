@@ -8,6 +8,7 @@ import os
 import sys
 import argparse
 import csv
+import hashlib
 import json
 import logging
 import platform
@@ -59,7 +60,11 @@ from minimal_qrl.envs import (
     CircleObstacle,
     CommInspectionDubinsUAV2D,
 )
-from minimal_qrl.dataset import create_dataset
+from minimal_qrl.dataset import (
+    QRLExploreConfig,
+    build_qrl_exploration_start_bank,
+    create_dataset,
+)
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
 from minimal_qrl.eval.comm_inspection_oracle_bank import (
     CommInspectionOracleBankConfig,
@@ -365,6 +370,83 @@ def _comm_inspection_global_push_conf(args) -> GlobalPushLoss.Conf:
     )
 
 
+def _load_excluded_exploration_starts(
+    task_bank_path: Optional[str],
+    bounds: Sequence[float],
+) -> tuple[tuple[float, float, float], ...]:
+    if not task_bank_path:
+        return ()
+    with open(task_bank_path, 'r', encoding='utf-8') as handle:
+        payload = json.load(handle)
+    x_min, y_min, x_max, y_max = (float(value) for value in bounds)
+    width = x_max - x_min
+    height = y_max - y_min
+    starts: list[tuple[float, float, float]] = []
+    for record in payload.get('records', []):
+        if 'start' in record:
+            raw = record['start']
+            starts.append((float(raw[0]), float(raw[1]), float(raw[2])))
+        elif 'start_normalized' in record:
+            raw = record['start_normalized']
+            starts.append(
+                (
+                    x_min + float(raw[0]) * width,
+                    y_min + float(raw[1]) * height,
+                    float(raw[2]),
+                )
+            )
+    return tuple(starts)
+
+
+def _exploration_regions_from_scenario(
+    scenario: Optional[Mapping[str, Any]],
+) -> Optional[Mapping[str, Sequence[float]]]:
+    if not scenario:
+        return None
+    metadata = scenario.get('metadata', {})
+    regions = metadata.get('exploration_diagnostic_regions')
+    return regions if isinstance(regions, Mapping) else None
+
+
+def _write_exploration_start_bank(
+    output_dir: str,
+    *,
+    states: np.ndarray,
+    args,
+    excluded_count: int,
+) -> str:
+    records = [
+        {
+            'start_index': int(index),
+            'state': [float(value) for value in state],
+        }
+        for index, state in enumerate(np.asarray(states, dtype=np.float32))
+    ]
+    payload: Dict[str, Any] = {
+        'schema_version': 1,
+        'generation_mode': 'fixed_goal_blind_stratified_xy_heading',
+        'seed': int(args.seed),
+        'position_resolution': float(args.explore_start_position_resolution),
+        'heading_bins': int(args.explore_start_heading_bins),
+        'exclusion_task_bank': (
+            os.path.abspath(args.explore_exclusion_task_bank)
+            if args.explore_exclusion_task_bank
+            else None
+        ),
+        'exclusion_radius': float(args.explore_exclusion_radius),
+        'excluded_eval_start_count': int(excluded_count),
+        'records': records,
+    }
+    digest_source = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')
+    ).encode('utf-8')
+    payload['content_digest'] = hashlib.sha256(digest_source).hexdigest()
+    path = os.path.join(output_dir, 'exploration_start_bank.json')
+    with open(path, 'w', encoding='utf-8') as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    return path
+
+
 def train(args):
     """训练主函数"""
     end_to_end_start = perf_counter()
@@ -377,6 +459,9 @@ def train(args):
         args._scenario_data = load_scenario_config(args.scenario_config)
         args.env_type = 'comm_inspection_dubins_uav'
         args.max_steps_per_episode = int(args._scenario_data['max_episode_steps'])
+    if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
+        args.task_aware_teacher_ratio = 0.0
+        args.target_env_transitions = None
     # 设置随机种子
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -438,6 +523,59 @@ def train(args):
     
     # 创建环境工厂函数
     create_env_fn = create_env_factory(args.env_type, **env_kwargs)
+    qrl_explore_config: Optional[QRLExploreConfig] = None
+    exploration_start_bank_path: Optional[str] = None
+    if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
+        if args.env_type != 'comm_inspection_dubins_uav':
+            raise ValueError('--comm-dataset-mode qrl_explore 仅支持 comm_inspection_dubins_uav')
+        explore_env = create_env_fn()
+        excluded_starts = _load_excluded_exploration_starts(
+            getattr(args, 'explore_exclusion_task_bank', None),
+            (explore_env.x_min, explore_env.y_min, explore_env.x_max, explore_env.y_max),
+        )
+        base_explore_config = QRLExploreConfig(
+            attempted_env_steps=int(args.explore_attempted_env_steps),
+            start_position_resolution=float(args.explore_start_position_resolution),
+            start_heading_bins=int(args.explore_start_heading_bins),
+            action_hold_min_steps=int(args.explore_action_hold_min_steps),
+            action_hold_max_steps=int(args.explore_action_hold_max_steps),
+            straight_action_probability=float(args.explore_straight_action_probability),
+            exclusion_radius=float(args.explore_exclusion_radius),
+            excluded_start_states=excluded_starts,
+            diagnostic_regions=_exploration_regions_from_scenario(args._scenario_data),
+        )
+        start_bank = build_qrl_exploration_start_bank(
+            explore_env,
+            base_explore_config,
+            seed=int(args.seed),
+        )
+        qrl_explore_config = QRLExploreConfig(
+            attempted_env_steps=base_explore_config.attempted_env_steps,
+            start_position_resolution=base_explore_config.start_position_resolution,
+            start_heading_bins=base_explore_config.start_heading_bins,
+            action_hold_min_steps=base_explore_config.action_hold_min_steps,
+            action_hold_max_steps=base_explore_config.action_hold_max_steps,
+            straight_action_probability=base_explore_config.straight_action_probability,
+            exclusion_radius=base_explore_config.exclusion_radius,
+            excluded_start_states=base_explore_config.excluded_start_states,
+            start_states=tuple(tuple(float(value) for value in state) for state in start_bank),
+            diagnostic_regions=base_explore_config.diagnostic_regions,
+        )
+        exploration_start_bank_path = _write_exploration_start_bank(
+            output_dir,
+            states=start_bank,
+            args=args,
+            excluded_count=len(excluded_starts),
+        )
+        logger.info(
+            'QRL-explore 已启用: attempted_env_steps=%d, teacher_ratio=0, '
+            'start_bank=%d, persistent_action_hold=[%d,%d], bank_path=%s',
+            int(qrl_explore_config.attempted_env_steps),
+            int(len(start_bank)),
+            int(qrl_explore_config.action_hold_min_steps),
+            int(qrl_explore_config.action_hold_max_steps),
+            exploration_start_bank_path,
+        )
     
     # 注册环境（如果还没注册）
     from quasimetric_rl.data.base import CREATE_ENV_REGISTRY
@@ -458,6 +596,7 @@ def train(args):
                 ),
                 target_env_transitions=getattr(args, 'target_env_transitions', None),
                 collection_stats=collection_stats,
+                qrl_explore_config=qrl_explore_config,
             )
         
         register_offline_env(
@@ -480,6 +619,25 @@ def train(args):
     logger.info(f"数据集大小: {len(dataset)} 个转移")
     if collection_stats:
         logger.info(f"数据收集统计: {collection_stats}")
+    if qrl_explore_config is not None:
+        exploration_stats = dict(collection_stats)
+        exploration_stats.update(
+            {
+                'start_bank_path': os.path.abspath(exploration_start_bank_path),
+                'exclusion_task_bank': (
+                    os.path.abspath(args.explore_exclusion_task_bank)
+                    if args.explore_exclusion_task_bank
+                    else None
+                ),
+                'seed': int(args.seed),
+            }
+        )
+        exploration_stats_path = os.path.join(
+            output_dir, 'exploration_collection_stats.json'
+        )
+        with open(exploration_stats_path, 'w', encoding='utf-8') as handle:
+            json.dump(exploration_stats, handle, ensure_ascii=False, indent=2)
+        logger.info('保存 QRL-explore 收集统计: %s', exploration_stats_path)
     
     # 创建 QRL Agent 和 Losses
     logger.info("创建 QRL Agent 和 Losses...")
@@ -1413,6 +1571,60 @@ def main():
     parser.add_argument('--task-aware-teacher-ratio', type=float, default=1.0,
                         help='通信巡检 goal-set 数据中额外追加的 Dubins guidance 成功轨迹比例；'
                              '1.0 表示每个 random rollout 额外收集 1 条 teacher 轨迹')
+    parser.add_argument(
+        '--comm-dataset-mode',
+        choices=['standard', 'qrl_explore'],
+        default='standard',
+        help='通信巡检数据模式：standard=现有 random+teacher；qrl_explore=无目标持久随机探索',
+    )
+    parser.add_argument(
+        '--explore-attempted-env-steps',
+        type=int,
+        default=200_000,
+        help='QRL-explore 实际执行且全部保留的环境步预算',
+    )
+    parser.add_argument(
+        '--explore-start-position-resolution',
+        type=float,
+        default=1.0,
+        help='QRL-explore 固定自由空间起点库的位置网格分辨率',
+    )
+    parser.add_argument(
+        '--explore-start-heading-bins',
+        type=int,
+        default=12,
+        help='QRL-explore 固定起点库的航向分层数',
+    )
+    parser.add_argument(
+        '--explore-action-hold-min-steps',
+        type=int,
+        default=5,
+        help='QRL-explore 每段持久随机角速度的最短保持步数',
+    )
+    parser.add_argument(
+        '--explore-action-hold-max-steps',
+        type=int,
+        default=20,
+        help='QRL-explore 每段持久随机角速度的最长保持步数',
+    )
+    parser.add_argument(
+        '--explore-straight-action-probability',
+        type=float,
+        default=0.2,
+        help='QRL-explore 每个动作段选择直行的概率；其余均匀选择左右大小曲率',
+    )
+    parser.add_argument(
+        '--explore-exclusion-task-bank',
+        type=str,
+        default=None,
+        help='QRL-explore 起点库需要排除的 validation/test task-bank JSON',
+    )
+    parser.add_argument(
+        '--explore-exclusion-radius',
+        type=float,
+        default=0.25,
+        help='QRL-explore 起点与评估 task-bank 起点的最小平面距离',
+    )
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--target-env-transitions', type=int, default=None,

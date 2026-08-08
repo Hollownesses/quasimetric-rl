@@ -53,3 +53,38 @@ def test_comm_training_shell_forwards_global_push_environment_variables():
         '--global-push-softplus-beta '
         '"${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}"'
     ) in script
+
+
+def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(train_module, "train", lambda args: captured.setdefault("args", args))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "minimal_qrl/train.py",
+            "--env-type",
+            "comm_inspection_dubins_uav",
+            "--comm-dataset-mode",
+            "qrl_explore",
+        ],
+    )
+
+    train_module.main()
+    args = captured["args"]
+    assert args.comm_dataset_mode == "qrl_explore"
+    assert args.explore_attempted_env_steps == 200_000
+    assert args.explore_start_heading_bins == 12
+    assert args.explore_action_hold_min_steps == 5
+    assert args.explore_action_hold_max_steps == 20
+
+
+def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget():
+    script = (
+        Path(__file__).with_name("run_comm_inspection_diagnostic.sh")
+        .read_text(encoding="utf-8")
+    )
+
+    assert 'qrl_dataset_mode="${QRL_DATASET_MODE:-standard}"' in script
+    assert '--explore-attempted-env-steps "${EXPLORE_ATTEMPTED_ENV_STEPS:-200000}"' in script
+    assert '--target-env-transitions "${TARGET_ENV_TRANSITIONS:-120000}"' in script
