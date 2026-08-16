@@ -311,6 +311,8 @@ def _goal_set_transition_infos(
     exploration_episode_id: int = -1,
     exploration_outcome: int = EXPLORE_OUTCOME_UNKNOWN,
     exploration_loop_detected: bool = False,
+    task_success_episode: bool = False,
+    goal_return_costs: Optional[Sequence[float]] = None,
 ) -> dict:
     infos = {
         "abstract_goal_edge": np.full((n,), bool(abstract_goal_edge), dtype=np.bool_),
@@ -325,7 +327,22 @@ def _goal_set_transition_infos(
         "exploration_loop_detected": np.full(
             (n,), bool(exploration_loop_detected), dtype=np.bool_
         ),
+        "task_success_episode": np.full(
+            (n,), bool(task_success_episode), dtype=np.bool_
+        ),
     }
+    if goal_return_costs is None:
+        goal_return_array = np.zeros((n,), dtype=np.float32)
+    else:
+        goal_return_array = np.asarray(goal_return_costs, dtype=np.float32).reshape(-1)
+        if len(goal_return_array) != n:
+            raise ValueError("goal_return_costs must match transition count")
+        if np.any(~np.isfinite(goal_return_array)) or np.any(goal_return_array < 0.0):
+            raise ValueError("goal_return_costs must be finite and nonnegative")
+    infos["goal_return_cost"] = goal_return_array
+    infos["goal_return_mask"] = np.full(
+        (n,), bool(task_success_episode), dtype=np.bool_
+    )
     device_index = int(getattr(env, "active_device_index", -1)) if env is not None else -1
     infos["device_index"] = np.full((n,), device_index, dtype=np.int64)
 
@@ -345,6 +362,13 @@ def _goal_set_transition_infos(
     infos["global_push_goal_observations"] = goal_pairs
     infos["global_push_pair_mask"] = pair_mask
     return infos
+
+
+def _remaining_nonnegative_costs(rewards: Sequence[float]) -> np.ndarray:
+    """Executed suffix costs; valid as task-goal upper bounds on successful paths."""
+
+    costs = np.maximum(0.0, -np.asarray(rewards, dtype=np.float32).reshape(-1))
+    return np.cumsum(costs[::-1], dtype=np.float64)[::-1].astype(np.float32)
 
 
 def _make_goal_set_abstract_edge(
@@ -544,11 +568,13 @@ def collect_goal_set_comm_episode_pair(
 
     actions_array = _actions_to_array(actions)
     n = len(actions)
+    success = bool(final_info.get("success", False)) and n > 0
+    rewards_array = np.asarray(rewards, dtype=np.float32)
     episode = EpisodeData.from_simple_trajectory(
         observations=np.array(observations[:-1], dtype=np.float32),
         actions=actions_array,
         next_observations=np.array(next_observations, dtype=np.float32),
-        rewards=np.array(rewards, dtype=np.float32),
+        rewards=rewards_array,
         terminals=np.array(terminals, dtype=np.bool_),
         timeouts=np.array(timeouts, dtype=np.bool_),
         transition_infos=_goal_set_transition_infos(
@@ -558,13 +584,17 @@ def collect_goal_set_comm_episode_pair(
             env=env,
             global_push_seed=None if seed is None else int(seed + 32452843),
             include_global_push_pairs=True,
+            task_success_episode=success,
+            goal_return_costs=(
+                _remaining_nonnegative_costs(rewards_array) if success else None
+            ),
         ),
     )
 
     abstract_episode = None
     try:
         terminal_obs = np.asarray(obs, dtype=np.float32)
-        if not (bool(final_info.get("success", False)) and n > 0):
+        if not success:
             terminal_state = env.sample_task_terminal_state(
                 seed=None if seed is None else int(seed + 104729)
             )
@@ -682,11 +712,12 @@ def collect_task_aware_comm_teacher_episode_pair(
 
         actions_array = _actions_to_array(actions)
         n = len(actions)
+        rewards_array = np.asarray(rewards, dtype=np.float32)
         episode = EpisodeData.from_simple_trajectory(
                 observations=np.array(observations[:-1], dtype=np.float32),
                 actions=actions_array,
                 next_observations=np.array(next_observations, dtype=np.float32),
-                rewards=np.array(rewards, dtype=np.float32),
+                rewards=rewards_array,
                 terminals=np.array(terminals, dtype=np.bool_),
                 timeouts=np.array(timeouts, dtype=np.bool_),
                 transition_infos=_goal_set_transition_infos(
@@ -697,6 +728,8 @@ def collect_task_aware_comm_teacher_episode_pair(
                     global_push_seed=None if seed is None else int(seed + 49979687 + attempt),
                     include_global_push_pairs=True,
                     teacher_guided=True,
+                    task_success_episode=True,
+                    goal_return_costs=_remaining_nonnegative_costs(rewards_array),
                 ),
         )
         terminal_obs = np.asarray(observations[-1], dtype=np.float32)
@@ -1015,11 +1048,13 @@ def collect_qrl_explore_episode_pair(
     loop_detected = _trajectory_has_loop(keys)
     actions_array = _actions_to_array(actions)
     n = len(actions)
+    rewards_array = np.asarray(rewards, dtype=np.float32)
+    success = outcome == EXPLORE_OUTCOME_SUCCESS
     episode = EpisodeData.from_simple_trajectory(
         observations=np.asarray(observations[:-1], dtype=np.float32),
         actions=actions_array,
         next_observations=np.asarray(next_observations, dtype=np.float32),
-        rewards=np.asarray(rewards, dtype=np.float32),
+        rewards=rewards_array,
         terminals=np.asarray(terminals, dtype=np.bool_),
         timeouts=np.asarray(timeouts, dtype=np.bool_),
         transition_infos=_goal_set_transition_infos(
@@ -1034,6 +1069,10 @@ def collect_qrl_explore_episode_pair(
             exploration_episode_id=int(context_id),
             exploration_outcome=int(outcome),
             exploration_loop_detected=bool(loop_detected),
+            task_success_episode=success,
+            goal_return_costs=(
+                _remaining_nonnegative_costs(rewards_array) if success else None
+            ),
         ),
     )
 
@@ -1127,6 +1166,7 @@ def create_qrl_explore_comm_dataset(
             "attempted_env_step_budget": budget,
             "attempted_env_steps": 0,
             "stored_real_transitions": 0,
+            "successful_real_transitions": 0,
             "synthetic_abstract_edges": 0,
             "episodes": 0,
             "loop_episodes": 0,
@@ -1139,6 +1179,9 @@ def create_qrl_explore_comm_dataset(
             "unique_state_heading_bins": 0,
             "directed_state_heading_edges": 0,
             "per_device_real_transitions": {device_id: 0 for device_id in device_ids},
+            "per_device_successful_real_transitions": {
+                device_id: 0 for device_id in device_ids
+            },
             "per_device_target_transitions": dict(per_device_targets),
             "per_device_episodes": {device_id: 0 for device_id in device_ids},
             "per_device_outcomes": {
@@ -1276,6 +1319,11 @@ def create_qrl_explore_comm_dataset(
         outcome = str(diagnostics["outcome"])
         stats["outcomes"][outcome] += 1
         stats["per_device_outcomes"][device_id][outcome] += 1
+        if outcome == "success":
+            stats["successful_real_transitions"] = int(
+                stats["successful_real_transitions"]
+            ) + real_steps
+            stats["per_device_successful_real_transitions"][device_id] += real_steps
         stats["loop_episodes"] = int(stats["loop_episodes"]) + int(
             diagnostics["loop_detected"]
         )

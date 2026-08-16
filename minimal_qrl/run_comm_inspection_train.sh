@@ -68,6 +68,12 @@ fi
   --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.6}" \
   --global-push-state-goal-ratio "${GLOBAL_PUSH_STATE_GOAL_RATIO:-0.4}" \
   --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
+  --qrl-temporal-constraint-weight "${QRL_TEMPORAL_CONSTRAINT_WEIGHT:-1.0}" \
+  --qrl-temporal-min-future-steps "${QRL_TEMPORAL_MIN_FUTURE_STEPS:-2}" \
+  --qrl-goal-return-constraint-weight "${QRL_GOAL_RETURN_CONSTRAINT_WEIGHT:-1.0}" \
+  --qrl-nstep-goal-constraint-weight "${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-0.0}" \
+  --qrl-nstep-target-tau "${QRL_NSTEP_TARGET_TAU:-0.005}" \
+  --qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}" \
   --task-aware-teacher-ratio "${TASK_AWARE_TEACHER_RATIO:-1.0}" \
   --log-interval "${LOG_INTERVAL:-100}" \
   --save-interval "${SAVE_INTERVAL:-2000}" \

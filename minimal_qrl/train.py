@@ -50,6 +50,11 @@ from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import Lo
 from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.latent_dynamics import LatentDynamicsLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.abstract_goal_edge import AbstractGoalEdgeLoss
+from quasimetric_rl.modules.quasimetric_critic.losses.temporal_path import (
+    GoalReturnConstraintLoss,
+    NstepGoalConsistencyLoss,
+    TemporalPathConstraintLoss,
+)
 from quasimetric_rl.data import BatchData, Dataset, EpisodeData, register_offline_env
 from minimal_qrl.envs import (
     SimpleGrid2D,
@@ -667,6 +672,31 @@ def train(args):
     dataset = dataset_conf.make(dummy=False)
     data_time_sec = float(prior_timing.get('data_time_sec', 0.0)) + (perf_counter() - data_start)
     logger.info(f"数据集大小: {len(dataset)} 个转移")
+    success_transition_mask = dataset.raw_data.transition_infos.get(
+        'task_success_episode'
+    )
+    if success_transition_mask is not None:
+        success_transition_count = int(
+            success_transition_mask.to(dtype=torch.bool).sum().item()
+        )
+        success_weight = float(args.qrl_success_transition_weight)
+        weighted_success = success_weight * success_transition_count
+        weighted_total = weighted_success + len(dataset) - success_transition_count
+        expected_success_sample_ratio = float(
+            weighted_success / max(weighted_total, 1.0)
+        )
+        collection_stats.update({
+            'natural_success_transition_count': success_transition_count,
+            'success_transition_sample_weight': success_weight,
+            'expected_success_transition_sample_ratio': expected_success_sample_ratio,
+        })
+        logger.info(
+            '自然成功轨迹转移: %d/%d; 采样权重=%.3f; 预期 batch 占比=%.4f',
+            success_transition_count,
+            len(dataset),
+            success_weight,
+            expected_success_sample_ratio,
+        )
     if collection_stats:
         logger.info(f"数据收集统计: {collection_stats}")
     if qrl_explore_config is not None:
@@ -764,6 +794,18 @@ def train(args):
                         cost_source=qrl_cost_source,
                     ),
                     abstract_goal_edge=AbstractGoalEdgeLoss.Conf(weight=float(args.abstract_goal_edge_loss_weight)),
+                    temporal_path=TemporalPathConstraintLoss.Conf(
+                        weight=float(args.qrl_temporal_constraint_weight),
+                        min_future_steps=int(args.qrl_temporal_min_future_steps),
+                    ),
+                    goal_return=GoalReturnConstraintLoss.Conf(
+                        weight=float(args.qrl_goal_return_constraint_weight),
+                    ),
+                    nstep_goal=NstepGoalConsistencyLoss.Conf(
+                        weight=float(args.qrl_nstep_goal_constraint_weight),
+                        min_future_steps=int(args.qrl_temporal_min_future_steps),
+                        target_tau=float(args.qrl_nstep_target_tau),
+                    ),
                     critic_optim=AdamWSpec.Conf(lr=5e-5),
                     lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
                 )
@@ -809,6 +851,11 @@ def train(args):
         drop_last=True,
         num_workers=0,  # 简化版本，不使用多进程
         pin_memory=use_pin_memory,
+        successful_transition_weight=(
+            float(args.qrl_success_transition_weight)
+            if args.env_type == 'comm_inspection_dubins_uav'
+            else 1.0
+        ),
     )
     
     # 创建 TensorBoard writer（使用带时间戳的子目录，便于区分不同训练）
@@ -1618,6 +1665,42 @@ def main():
                         help='goal-set GlobalPush 辅助项权重：同上下文普通 state-state 几何结构')
     parser.add_argument('--abstract-goal-edge-loss-weight', type=float, default=1.0,
                         help='抽象零代价边 d(s_terminal, G_task)^2 的损失权重')
+    parser.add_argument(
+        '--qrl-temporal-constraint-weight',
+        type=float,
+        default=1.0,
+        help='真实交互轨迹 state-to-future-state 多步上界损失权重',
+    )
+    parser.add_argument(
+        '--qrl-temporal-min-future-steps',
+        type=int,
+        default=2,
+        help='多步轨迹上界的最小时序跨度；2 表示排除已有单步约束',
+    )
+    parser.add_argument(
+        '--qrl-goal-return-constraint-weight',
+        type=float,
+        default=1.0,
+        help='自然成功交互轨迹到 G_task 的 remaining-cost 上界损失权重',
+    )
+    parser.add_argument(
+        '--qrl-nstep-goal-constraint-weight',
+        type=float,
+        default=0.0,
+        help='可选 EMA target-critic n-step task-goal 自举上界权重；默认关闭',
+    )
+    parser.add_argument(
+        '--qrl-nstep-target-tau',
+        type=float,
+        default=0.005,
+        help='n-step task-goal 自举中 EMA target critic 的软更新率',
+    )
+    parser.add_argument(
+        '--qrl-success-transition-weight',
+        type=float,
+        default=4.0,
+        help='自然成功轨迹 transition 在 offline dataloader 中的相对采样权重',
+    )
     parser.add_argument('--task-aware-teacher-ratio', type=float, default=1.0,
                         help='通信巡检 goal-set 数据中额外追加的 Dubins guidance 成功轨迹比例；'
                              '1.0 表示每个 random rollout 额外收集 1 条 teacher 轨迹')

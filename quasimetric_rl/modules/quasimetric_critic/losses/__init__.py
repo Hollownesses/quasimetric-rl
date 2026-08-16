@@ -35,6 +35,11 @@ from .global_push import GlobalPushLoss
 from .local_constraint import LocalConstraintLoss
 from .latent_dynamics import LatentDynamicsLoss
 from .abstract_goal_edge import AbstractGoalEdgeLoss
+from .temporal_path import (
+    GoalReturnConstraintLoss,
+    NstepGoalConsistencyLoss,
+    TemporalPathConstraintLoss,
+)
 
 
 class QuasimetricCriticLosses(CriticLossBase):
@@ -44,6 +49,9 @@ class QuasimetricCriticLosses(CriticLossBase):
         local_constraint: LocalConstraintLoss.Conf = LocalConstraintLoss.Conf()
         latent_dynamics: LatentDynamicsLoss.Conf = LatentDynamicsLoss.Conf()
         abstract_goal_edge: AbstractGoalEdgeLoss.Conf = AbstractGoalEdgeLoss.Conf()
+        temporal_path: TemporalPathConstraintLoss.Conf = TemporalPathConstraintLoss.Conf()
+        goal_return: GoalReturnConstraintLoss.Conf = GoalReturnConstraintLoss.Conf()
+        nstep_goal: NstepGoalConsistencyLoss.Conf = NstepGoalConsistencyLoss.Conf()
 
         critic_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-4)
         lagrange_mult_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-2)
@@ -56,6 +64,9 @@ class QuasimetricCriticLosses(CriticLossBase):
                 local_constraint=self.local_constraint.make(),
                 latent_dynamics=self.latent_dynamics.make(),
                 abstract_goal_edge=self.abstract_goal_edge.make(),
+                temporal_path=self.temporal_path.make(),
+                goal_return=self.goal_return.make(),
+                nstep_goal=self.nstep_goal.make(critic),
                 critic_optim_spec=self.critic_optim.make(),
                 lagrange_mult_optim_spec=self.lagrange_mult_optim.make(),
             )
@@ -64,6 +75,9 @@ class QuasimetricCriticLosses(CriticLossBase):
     local_constraint: LocalConstraintLoss
     latent_dynamics: LatentDynamicsLoss
     abstract_goal_edge: AbstractGoalEdgeLoss
+    temporal_path: TemporalPathConstraintLoss
+    goal_return: GoalReturnConstraintLoss
+    nstep_goal: NstepGoalConsistencyLoss
 
     critic_optim: OptimWrapper
     critic_sched: torch.optim.lr_scheduler._LRScheduler
@@ -72,13 +86,17 @@ class QuasimetricCriticLosses(CriticLossBase):
 
     def __init__(self, critic: QuasimetricCritic, *, total_optim_steps: int, global_push: GlobalPushLoss,
                  local_constraint: LocalConstraintLoss, latent_dynamics: LatentDynamicsLoss,
-                 abstract_goal_edge: AbstractGoalEdgeLoss,
+                 abstract_goal_edge: AbstractGoalEdgeLoss, temporal_path: TemporalPathConstraintLoss,
+                 goal_return: GoalReturnConstraintLoss, nstep_goal: NstepGoalConsistencyLoss,
                  critic_optim_spec: AdamWSpec, lagrange_mult_optim_spec: AdamWSpec):
         super().__init__()
         self.global_push = global_push
         self.local_constraint = local_constraint
         self.latent_dynamics = latent_dynamics
         self.abstract_goal_edge = abstract_goal_edge
+        self.temporal_path = temporal_path
+        self.goal_return = goal_return
+        self.nstep_goal = nstep_goal
 
         self.critic_optim, self.critic_sched = critic_optim_spec.create_optim_scheduler(
             critic.parameters(), total_optim_steps)
@@ -97,10 +115,14 @@ class QuasimetricCriticLosses(CriticLossBase):
                 local_constraint=self.local_constraint(data, critic_batch_info),
                 latent_dynamics=self.latent_dynamics(data, critic_batch_info),
                 abstract_goal_edge=self.abstract_goal_edge(data, critic_batch_info),
+                temporal_path=self.temporal_path(data, critic_batch_info),
+                goal_return=self.goal_return(data, critic_batch_info),
+                nstep_goal=self.nstep_goal(data, critic_batch_info),
             ))
             result.loss.backward()
 
         if optimize:
+            self.nstep_goal.update_target(critic_batch_info.critic)
             self.critic_sched.step()
             self.lagrange_mult_sched.step()
         return result

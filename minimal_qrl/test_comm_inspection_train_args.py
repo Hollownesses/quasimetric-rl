@@ -80,6 +80,11 @@ def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
     assert np.isclose(args.explore_straight_action_probability, 0.5)
     assert np.isclose(args.explore_start_boundary_margin, 0.5)
     assert args.explore_local_safety_lookahead_steps == 10
+    assert np.isclose(args.qrl_temporal_constraint_weight, 1.0)
+    assert args.qrl_temporal_min_future_steps == 2
+    assert np.isclose(args.qrl_goal_return_constraint_weight, 1.0)
+    assert np.isclose(args.qrl_nstep_goal_constraint_weight, 0.0)
+    assert np.isclose(args.qrl_success_transition_weight, 4.0)
 
 
 def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget():
@@ -94,5 +99,10 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert 'qrl_explore_v2' not in script
     assert '--explore-action-hold-min-steps "${EXPLORE_ACTION_HOLD_MIN_STEPS:-3}"' in script
     assert '--explore-start-boundary-margin "${EXPLORE_START_BOUNDARY_MARGIN:-0.5}"' in script
+    assert '--qrl-temporal-constraint-weight "${QRL_TEMPORAL_CONSTRAINT_WEIGHT:-1.0}"' in script
+    assert '--qrl-goal-return-constraint-weight "${QRL_GOAL_RETURN_CONSTRAINT_WEIGHT:-1.0}"' in script
+    assert '--qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}"' in script
+    assert 'teacher_ratio="0.0"' in script
+    assert '--task-aware-teacher-ratio "$teacher_ratio"' in script
     assert 'local_nav_eval()' in script
     assert '--astar-heuristic-weight "${LOCAL_NAV_ASTAR_HEURISTIC_WEIGHT:-1.0}"' in script

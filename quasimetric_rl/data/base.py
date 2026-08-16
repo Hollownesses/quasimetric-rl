@@ -216,6 +216,7 @@ class Dataset:
     obs_indices_to_obs_index_in_episode: torch.Tensor
     indices_to_episode_indices: torch.Tensor  # episode indices refers to indices in this split
     indices_to_episode_timesteps: torch.Tensor
+    obs_indices_to_cumulative_cost: torch.Tensor
     max_episode_length: int
     # -----
 
@@ -247,11 +248,17 @@ class Dataset:
         obs_indices_to_obs_index_in_episode = []
         indices_to_episode_indices = []
         indices_to_episode_timesteps = []
+        obs_indices_to_cumulative_cost = []
         for eidx, episode in enumerate(episodes):
             l = episode.num_transitions
             obs_indices_to_obs_index_in_episode.append(torch.arange(l + 1, dtype=torch.int64))
             indices_to_episode_indices.append(torch.full([l], eidx, dtype=torch.int64))
             indices_to_episode_timesteps.append(torch.arange(l, dtype=torch.int64))
+            costs = (-episode.rewards.to(dtype=torch.float32)).clamp_min(0.0)
+            obs_indices_to_cumulative_cost.append(torch.cat([
+                torch.zeros(1, dtype=costs.dtype),
+                torch.cumsum(costs, dim=0),
+            ]))
 
         assert len(episodes) > 0, "must have at least one episode"
         self.raw_data = MultiEpisodeData.cat(episodes)
@@ -259,6 +266,7 @@ class Dataset:
         self.obs_indices_to_obs_index_in_episode = torch.cat(obs_indices_to_obs_index_in_episode, dim=0)
         self.indices_to_episode_indices = torch.cat(indices_to_episode_indices, dim=0)
         self.indices_to_episode_timesteps = torch.cat(indices_to_episode_timesteps, dim=0)
+        self.obs_indices_to_cumulative_cost = torch.cat(obs_indices_to_cumulative_cost, dim=0)
         self.max_episode_length = self.raw_data.episode_lengths.max().item()
 
     def get_observations(self, obs_indices: torch.Tensor):
@@ -285,7 +293,20 @@ class Dataset:
         deltas = torch.distributions.Categorical(
             probs=pdeltas,
         ).sample()
-        future_observations = self.get_observations(obs_indices + 1 + deltas)
+        future_obs_indices = obs_indices + 1 + deltas
+        future_observations = self.get_observations(future_obs_indices)
+        future_costs = (
+            self.obs_indices_to_cumulative_cost[future_obs_indices]
+            - self.obs_indices_to_cumulative_cost[obs_indices]
+        )
+        transition_infos = {
+            k: v[indices]
+            for k, v in self.raw_data.transition_infos.items()
+        }
+        transition_infos.update({
+            "temporal_future_cost": future_costs,
+            "temporal_future_steps": deltas + 1,
+        })
 
         return BatchData(
             observations=obs,
@@ -295,10 +316,7 @@ class Dataset:
             rewards=self.raw_data.rewards[indices],
             terminals=terminals,
             timeouts=self.raw_data.timeouts[indices],
-            transition_infos={
-                k: v[indices]
-                for k, v in self.raw_data.transition_infos.items()
-            },
+            transition_infos=transition_infos,
         )
 
     def __len__(self):
@@ -318,9 +336,25 @@ class Dataset:
                        drop_last: bool = False,
                        pin_memory: bool = False,
                        num_workers: int = 0, persistent_workers: bool = False,
+                       successful_transition_weight: float = 1.0,
                        **kwargs) -> torch.utils.data.DataLoader:
+        successful_transition_weight = float(successful_transition_weight)
+        if successful_transition_weight <= 0.0:
+            raise ValueError("successful_transition_weight must be positive")
+        success_mask = self.raw_data.transition_infos.get("task_success_episode")
+        if success_mask is not None and successful_transition_weight != 1.0:
+            sample_weights = torch.ones(len(self), dtype=torch.float64)
+            success_mask = success_mask.to(dtype=torch.bool)
+            sample_weights[success_mask] = successful_transition_weight
+            base_sampler = torch.utils.data.WeightedRandomSampler(
+                sample_weights,
+                num_samples=len(self),
+                replacement=True,
+            )
+        else:
+            base_sampler = torch.utils.data.RandomSampler(self)
         sampler = torch.utils.data.BatchSampler(
-            torch.utils.data.RandomSampler(self),
+            base_sampler,
             batch_size=batch_size,
             drop_last=drop_last,
         )

@@ -50,6 +50,7 @@ train_qrl() {
   local oracle_bank_eval_flag=()
   local dataset_budget_args=()
   local qrl_dataset_mode="${QRL_DATASET_MODE:-standard}"
+  local teacher_ratio="${TASK_AWARE_TEACHER_RATIO:-1.0}"
 
   if [[ "${ORACLE_BANK_EVAL:-1}" == "1" ]]; then
     oracle_bank_eval_flag+=(--oracle-bank-eval)
@@ -64,6 +65,9 @@ train_qrl() {
   fi
 
   if [[ "$qrl_dataset_mode" == "qrl_explore" ]]; then
+    # QRL-explore is deliberately expert-free.  Keep this invariant even if a
+    # caller has TASK_AWARE_TEACHER_RATIO set in the surrounding shell.
+    teacher_ratio="0.0"
     dataset_budget_args+=(
       --comm-dataset-mode "$qrl_dataset_mode"
       --explore-attempted-env-steps "${EXPLORE_ATTEMPTED_ENV_STEPS:-200000}"
@@ -100,7 +104,13 @@ train_qrl() {
     --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.6}" \
     --global-push-state-goal-ratio "${GLOBAL_PUSH_STATE_GOAL_RATIO:-0.4}" \
     --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
-    --task-aware-teacher-ratio "${TASK_AWARE_TEACHER_RATIO:-1.0}" \
+    --qrl-temporal-constraint-weight "${QRL_TEMPORAL_CONSTRAINT_WEIGHT:-1.0}" \
+    --qrl-temporal-min-future-steps "${QRL_TEMPORAL_MIN_FUTURE_STEPS:-2}" \
+    --qrl-goal-return-constraint-weight "${QRL_GOAL_RETURN_CONSTRAINT_WEIGHT:-1.0}" \
+    --qrl-nstep-goal-constraint-weight "${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-0.0}" \
+    --qrl-nstep-target-tau "${QRL_NSTEP_TARGET_TAU:-0.005}" \
+    --qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}" \
+    --task-aware-teacher-ratio "$teacher_ratio" \
     --log-interval "${LOG_INTERVAL:-100}" \
     --save-interval "${SAVE_INTERVAL:-2000}" \
     --eval-interval "${EVAL_INTERVAL:-1000}" \

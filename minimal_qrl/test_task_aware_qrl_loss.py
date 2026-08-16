@@ -13,6 +13,11 @@ from quasimetric_rl.data import BatchData
 from quasimetric_rl.modules.quasimetric_critic.losses import CriticBatchInfo
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
+from quasimetric_rl.modules.quasimetric_critic.losses.temporal_path import (
+    GoalReturnConstraintLoss,
+    NstepGoalConsistencyLoss,
+    TemporalPathConstraintLoss,
+)
 
 
 def make_batch(rewards):
@@ -96,6 +101,108 @@ def test_global_push_prefers_explicit_free_state_pairs():
     )
     result = loss(data, batch_info)
     assert torch.isclose(result.info["global_push_state_state/dist"], torch.tensor(3.0))
+
+
+def test_temporal_path_uses_executed_multistep_cost_as_one_sided_bound():
+    class IdentityEncoder(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class L1Quasimetric(torch.nn.Module):
+        def forward(self, source, goal):
+            return torch.abs(goal - source).sum(dim=-1)
+
+    class DummyCritic(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = IdentityEncoder()
+            self.quasimetric_model = L1Quasimetric()
+
+    data = make_batch([-1.0, -1.0])
+    data.future_observations = torch.tensor([[3.0, 0.0], [1.0, 0.0]])
+    data.transition_infos = {
+        "temporal_future_cost": torch.tensor([2.0, 5.0]),
+        "temporal_future_steps": torch.tensor([3, 3]),
+        "abstract_goal_edge": torch.zeros(2, dtype=torch.bool),
+    }
+    critic = DummyCritic()
+    batch_info = CriticBatchInfo(critic=critic, zx=torch.zeros(2, 2), zy=torch.zeros(2, 2))
+    result = TemporalPathConstraintLoss(weight=1.0, min_future_steps=2)(data, batch_info)
+
+    # Only the first behavior path violates its bound: ((3 - 2) / (2 + 1))^2 / 2.
+    assert torch.isclose(result.loss, torch.tensor(1.0 / 18.0))
+    assert torch.isclose(result.info["count"], torch.tensor(2.0))
+
+
+def test_goal_return_uses_only_naturally_successful_transitions():
+    class IdentityEncoder(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class L1Quasimetric(torch.nn.Module):
+        def forward(self, source, goal):
+            return torch.abs(goal - source).sum(dim=-1)
+
+    class DummyCritic(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = IdentityEncoder()
+            self.quasimetric_model = L1Quasimetric()
+
+    data = make_batch([-1.0, -1.0])
+    data.transition_infos = {
+        "task_goal_observations": torch.tensor([[4.0, 0.0], [100.0, 0.0]]),
+        "goal_return_cost": torch.tensor([2.0, 0.1]),
+        "goal_return_mask": torch.tensor([True, False]),
+        "abstract_goal_edge": torch.zeros(2, dtype=torch.bool),
+    }
+    critic = DummyCritic()
+    batch_info = CriticBatchInfo(critic=critic, zx=torch.zeros(2, 2), zy=torch.zeros(2, 2))
+    result = GoalReturnConstraintLoss(weight=1.0)(data, batch_info)
+
+    assert torch.isclose(result.loss, torch.tensor(4.0 / 9.0))
+    assert torch.isclose(result.info["count"], torch.tensor(1.0))
+
+
+def test_optional_nstep_goal_uses_frozen_future_goal_estimate():
+    class IdentityEncoder(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class L1Quasimetric(torch.nn.Module):
+        def forward(self, source, goal):
+            return torch.abs(goal - source).sum(dim=-1)
+
+    class DummyCritic(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = IdentityEncoder()
+            self.quasimetric_model = L1Quasimetric()
+
+        def forward(self, source, goal):
+            return self.quasimetric_model(self.encoder(source), self.encoder(goal))
+
+    data = make_batch([-1.0])
+    data.future_observations = torch.tensor([[1.0, 0.0]])
+    data.transition_infos = {
+        "task_goal_observations": torch.tensor([[4.0, 0.0]]),
+        "temporal_future_cost": torch.tensor([0.5]),
+        "temporal_future_steps": torch.tensor([3]),
+        "abstract_goal_edge": torch.zeros(1, dtype=torch.bool),
+    }
+    critic = DummyCritic()
+    batch_info = CriticBatchInfo(critic=critic, zx=torch.zeros(1, 2), zy=torch.zeros(1, 2))
+    loss = NstepGoalConsistencyLoss(
+        critic=critic,
+        weight=1.0,
+        min_future_steps=2,
+        target_tau=0.005,
+    )
+    result = loss(data, batch_info)
+
+    # d(s, G)=4, while the semi-gradient bound is 0.5+d_target(s_3,G)=3.5.
+    assert torch.isclose(result.loss, torch.tensor(1.0 / 81.0))
+    assert torch.isclose(result.info["target_future_dist"], torch.tensor(3.0))
 
 
 if __name__ == "__main__":
