@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -28,6 +29,16 @@ from minimal_qrl.industry_exp.scalability_scenarios import (
     load_scenario_config,
     scenario_to_env_kwargs,
 )
+
+
+def _scenario_fingerprint(scenario: Mapping[str, Any]) -> str:
+    canonical = json.dumps(
+        scenario,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def build_probe_records(scenario: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -194,6 +205,111 @@ def compute_oracle_records(
             }
         )
     return records
+
+
+def load_reusable_oracle_records(
+    path: str | Path,
+    scenario: Mapping[str, Any],
+    probes: Sequence[Mapping[str, Any]],
+    config: HybridAStarConfig,
+    *,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Load cached Hybrid A* labels after validating their complete provenance."""
+
+    source_path = Path(path)
+    with source_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"reused oracle JSON must contain an object: {source_path}")
+
+    current_fingerprint = _scenario_fingerprint(scenario)
+    source_fingerprint = payload.get("scenario_fingerprint")
+    if source_fingerprint is None:
+        source_scenario_path = payload.get("scenario_config")
+        if not source_scenario_path or not Path(source_scenario_path).is_file():
+            raise ValueError(
+                "cannot validate reused oracle scenario: JSON has neither a "
+                "scenario_fingerprint nor a readable scenario_config"
+            )
+        source_scenario = load_scenario_config(source_scenario_path)
+        source_fingerprint = _scenario_fingerprint(source_scenario)
+    if str(source_fingerprint) != current_fingerprint:
+        raise ValueError("reused oracle scenario does not match the current scenario")
+
+    source_config = payload.get("oracle_config")
+    if not isinstance(source_config, Mapping):
+        raise ValueError("reused oracle JSON is missing oracle_config")
+    expected_config = {
+        "seed": int(seed),
+        "astar_position_resolution": float(config.position_resolution),
+        "astar_heading_bins": int(config.heading_bins),
+        "astar_primitive_steps": int(config.primitive_steps),
+        "astar_heuristic_weight": float(config.heuristic_weight),
+        "astar_max_expansions": int(config.max_expansions),
+        "astar_timeout_sec": float(config.timeout_sec),
+        "astar_terminal_samples": int(config.terminal_samples),
+    }
+    for key, expected in expected_config.items():
+        if key not in source_config:
+            raise ValueError(f"reused oracle_config is missing {key!r}")
+        actual = source_config[key]
+        matches = (
+            math.isclose(float(actual), float(expected), rel_tol=0.0, abs_tol=1e-12)
+            if isinstance(expected, float)
+            else int(actual) == expected
+        )
+        if not matches:
+            raise ValueError(
+                f"reused oracle_config mismatch for {key}: "
+                f"cached={actual!r}, current={expected!r}"
+            )
+
+    source_records = payload.get("oracle_records")
+    if not isinstance(source_records, list) or not source_records:
+        raise ValueError("reused oracle JSON has no oracle_records")
+    records_by_id = {}
+    for record in source_records:
+        if not isinstance(record, Mapping) or "probe_id" not in record:
+            raise ValueError("every reused oracle record must have a probe_id")
+        probe_id = str(record["probe_id"])
+        if probe_id in records_by_id:
+            raise ValueError(f"duplicate reused oracle probe_id: {probe_id}")
+        records_by_id[probe_id] = record
+
+    expected_ids = {str(probe["probe_id"]) for probe in probes}
+    if set(records_by_id) != expected_ids:
+        missing = sorted(expected_ids - set(records_by_id))
+        extra = sorted(set(records_by_id) - expected_ids)
+        raise ValueError(
+            f"reused oracle probe set mismatch: missing={missing}, extra={extra}"
+        )
+
+    validated = []
+    required_oracle_fields = {
+        "oracle_solved",
+        "oracle_cost",
+        "oracle_first_action",
+        "oracle_first_action_coarse",
+    }
+    for probe in probes:
+        probe_id = str(probe["probe_id"])
+        record = records_by_id[probe_id]
+        if str(record.get("device_id")) != str(probe["device_id"]):
+            raise ValueError(f"reused oracle device mismatch for {probe_id}")
+        cached_state = np.asarray(record.get("state"), dtype=np.float64)
+        current_state = np.asarray(probe["state"], dtype=np.float64)
+        if cached_state.shape != current_state.shape or not np.allclose(
+            cached_state, current_state, rtol=0.0, atol=1e-7
+        ):
+            raise ValueError(f"reused oracle state mismatch for {probe_id}")
+        missing_fields = sorted(required_oracle_fields - set(record))
+        if missing_fields:
+            raise ValueError(
+                f"reused oracle record {probe_id} is missing {missing_fields}"
+            )
+        validated.append({**dict(record), **dict(probe)})
+    return validated
 
 
 def evaluate_checkpoint(
@@ -373,6 +489,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scenario-config", required=True)
     parser.add_argument("--checkpoints", nargs="+", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--reuse-oracle-json",
+        default=None,
+        help=(
+            "reuse Hybrid A* oracle_records from an earlier "
+            "u_trap_local_navigability.json after strict compatibility checks"
+        ),
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--num-critics", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260802)
@@ -404,7 +528,20 @@ def main() -> None:
         timeout_sec=float(args.astar_timeout_sec),
         terminal_samples=int(args.astar_terminal_samples),
     )
-    oracle_records = compute_oracle_records(env, probes, oracle_config, seed=int(args.seed))
+    if args.reuse_oracle_json:
+        oracle_records = load_reusable_oracle_records(
+            args.reuse_oracle_json,
+            scenario,
+            probes,
+            oracle_config,
+            seed=int(args.seed),
+        )
+        print(
+            f"Reused {len(oracle_records)} Hybrid A* oracle records from "
+            f"{args.reuse_oracle_json}"
+        )
+    else:
+        oracle_records = compute_oracle_records(env, probes, oracle_config, seed=int(args.seed))
     checkpoint_records = {}
     summaries = {}
     for checkpoint_index, checkpoint in enumerate(args.checkpoints):
@@ -422,6 +559,7 @@ def main() -> None:
     payload = {
         "schema_version": 1,
         "scenario_config": str(Path(args.scenario_config).resolve()),
+        "scenario_fingerprint": _scenario_fingerprint(scenario),
         "probe_definition": scenario["metadata"]["u_trap_local_navigability_probes"],
         "oracle_config": vars(args),
         "oracle_records": oracle_records,

@@ -129,10 +129,14 @@ train_qrl() {
 local_nav_eval() {
   local qrl_checkpoints="${QRL_CHECKPOINTS:-${QRL_CHECKPOINT:-$TRAIN_DIR/checkpoint_final.pth}}"
   local checkpoint_array=()
+  local reuse_oracle_args=()
   read -r -a checkpoint_array <<< "$qrl_checkpoints"
   if (( ${#checkpoint_array[@]} == 0 )); then
     echo "QRL_CHECKPOINTS must contain at least one checkpoint" >&2
     exit 2
+  fi
+  if [[ -n "${LOCAL_NAV_REUSE_ORACLE_JSON:-}" ]]; then
+    reuse_oracle_args+=(--reuse-oracle-json "$LOCAL_NAV_REUSE_ORACLE_JSON")
   fi
 
   "$PYTHON_BIN" -m minimal_qrl.eval.u_trap_local_navigability \
@@ -148,7 +152,8 @@ local_nav_eval() {
     --astar-heuristic-weight "${LOCAL_NAV_ASTAR_HEURISTIC_WEIGHT:-1.0}" \
     --astar-max-expansions "${LOCAL_NAV_ASTAR_MAX_EXPANSIONS:-200000}" \
     --astar-timeout-sec "${LOCAL_NAV_ASTAR_TIMEOUT_SEC:-120}" \
-    --astar-terminal-samples "${LOCAL_NAV_ASTAR_TERMINAL_SAMPLES:-128}"
+    --astar-terminal-samples "${LOCAL_NAV_ASTAR_TERMINAL_SAMPLES:-128}" \
+    ${reuse_oracle_args[@]+"${reuse_oracle_args[@]}"}
 }
 
 eval_qrl() {

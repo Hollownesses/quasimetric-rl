@@ -105,4 +105,6 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert 'teacher_ratio="0.0"' in script
     assert '--task-aware-teacher-ratio "$teacher_ratio"' in script
     assert 'local_nav_eval()' in script
+    assert 'LOCAL_NAV_REUSE_ORACLE_JSON' in script
+    assert '--reuse-oracle-json "$LOCAL_NAV_REUSE_ORACLE_JSON"' in script
     assert '--astar-heuristic-weight "${LOCAL_NAV_ASTAR_HEURISTIC_WEIGHT:-1.0}"' in script
