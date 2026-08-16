@@ -327,3 +327,44 @@ def test_qrl_explore_uses_exact_attempted_budget_without_teacher_and_keeps_outco
             first_episode.all_observations,
             repeated_episode.all_observations,
         )
+
+
+def test_qrl_explore_uses_weighted_start_strata_and_reports_route_coverage():
+    env = make_env(max_steps=7)
+    stats = {}
+    config = QRLExploreConfig(
+        attempted_env_steps=84,
+        start_position_resolution=2.0,
+        start_heading_bins=4,
+        action_hold_min_steps=3,
+        action_hold_max_steps=5,
+        straight_action_probability=0.5,
+        start_boundary_margin=0.5,
+        local_safety_lookahead_steps=5,
+        start_strata=(
+            ("west", 0.75, (0.0, 0.0, 4.9, 10.0)),
+            ("east", 0.25, (5.1, 0.0, 10.0, 10.0)),
+        ),
+        diagnostic_regions={
+            "west": (0.0, 0.0, 4.9, 10.0),
+            "east": (5.1, 0.0, 10.0, 10.0),
+        },
+        diagnostic_routes={"west_to_east": ("west", "east")},
+    )
+    list(
+        create_dataset(
+            env,
+            max_steps_per_episode=7,
+            seed=29,
+            collection_stats=stats,
+            qrl_explore_config=config,
+        )
+    )
+
+    assert stats["collection_mode"] == "qrl_explore"
+    assert stats["attempted_env_steps"] == 84
+    assert sum(stats["start_stratum_episodes"].values()) == stats["episodes"]
+    assert stats["start_stratum_episodes"]["west"] > stats["start_stratum_episodes"]["east"]
+    assert stats["start_stratum_weights"] == {"west": 0.75, "east": 0.25}
+    assert set(stats["diagnostic_route_traversals"]) == {"west_to_east"}
+    assert 0.0 <= stats["safety_resampled_segment_ratio"] <= 1.0

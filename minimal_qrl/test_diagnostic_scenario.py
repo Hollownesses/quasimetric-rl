@@ -35,6 +35,21 @@ def test_diagnostic_scenario_has_u_shape_rectangles_and_feasible_devices():
     scenario = build_diagnostic_scenario()
     assert scenario["scenario_id"] == SCENARIO_ID
     assert scenario["metadata"]["corridor_safe_route"] == "lower"
+    strata = scenario["metadata"]["exploration_start_strata"]
+    assert np.isclose(sum(float(record["weight"]) for record in strata), 1.0)
+    assert {record["name"] for record in strata} == {
+        "u_trap_interior",
+        "u_trap_exit",
+        "corridor_fork",
+        "comm_shadow_boundary",
+        "uniform_free_space",
+    }
+    routes = scenario["metadata"]["exploration_diagnostic_routes"]
+    assert set(routes) == {
+        "u_inside_to_exit",
+        "corridor_upper_complete",
+        "corridor_lower_complete",
+    }
     env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
     assert len(env.obstacles) == 4
     assert all(isinstance(obstacle, Obstacle) for obstacle in env.obstacles)
@@ -42,6 +57,22 @@ def test_diagnostic_scenario_has_u_shape_rectangles_and_feasible_devices():
         env.set_task_by_device_id(device_id)
         terminal = env.sample_task_terminal_state(seed=1000 + index)
         assert env.is_task_feasible(terminal)
+
+
+def test_u_trap_local_probe_bank_has_four_depths_and_four_headings():
+    scenario = build_diagnostic_scenario()
+    probe_config = scenario["metadata"]["u_trap_local_navigability_probes"]
+    assert len(probe_config["positions"]) == 4
+    assert len(probe_config["headings"]) == 4
+    env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
+    for position in probe_config["positions"]:
+        for heading in probe_config["headings"]:
+            state = np.asarray(
+                [position["x"], probe_config["centerline_y"], heading["theta"]],
+                dtype=np.float32,
+            )
+            assert env.is_valid_state(state)
+            assert not env.is_task_feasible(state)
 
 
 def test_fixed_task_bank_is_deterministic_balanced_and_semantic():

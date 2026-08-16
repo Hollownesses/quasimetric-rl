@@ -408,6 +408,32 @@ def _exploration_regions_from_scenario(
     return regions if isinstance(regions, Mapping) else None
 
 
+def _exploration_routes_from_scenario(
+    scenario: Optional[Mapping[str, Any]],
+) -> Optional[Mapping[str, Sequence[str]]]:
+    if not scenario:
+        return None
+    routes = scenario.get('metadata', {}).get('exploration_diagnostic_routes')
+    return routes if isinstance(routes, Mapping) else None
+
+
+def _exploration_start_strata_from_scenario(
+    scenario: Optional[Mapping[str, Any]],
+) -> tuple[tuple[str, float, tuple[float, float, float, float]], ...]:
+    if not scenario:
+        return ()
+    raw_strata = scenario.get('metadata', {}).get('exploration_start_strata', ())
+    result = []
+    for record in raw_strata:
+        if not isinstance(record, Mapping):
+            raise ValueError('exploration_start_strata records must be mappings')
+        bounds = tuple(float(value) for value in record['bounds'])
+        if len(bounds) != 4:
+            raise ValueError('exploration_start_strata bounds must contain four values')
+        result.append((str(record['name']), float(record['weight']), bounds))
+    return tuple(result)
+
+
 def _write_exploration_start_bank(
     output_dir: str,
     *,
@@ -425,6 +451,7 @@ def _write_exploration_start_bank(
     payload: Dict[str, Any] = {
         'schema_version': 1,
         'generation_mode': 'fixed_goal_blind_stratified_xy_heading',
+        'collection_mode': 'qrl_explore',
         'seed': int(args.seed),
         'position_resolution': float(args.explore_start_position_resolution),
         'heading_bins': int(args.explore_start_heading_bins),
@@ -435,6 +462,17 @@ def _write_exploration_start_bank(
         ),
         'exclusion_radius': float(args.explore_exclusion_radius),
         'excluded_eval_start_count': int(excluded_count),
+        'start_boundary_margin': float(args.explore_start_boundary_margin),
+        'start_strata': [
+            {
+                'name': name,
+                'weight': float(weight),
+                'bounds': [float(value) for value in bounds],
+            }
+            for name, weight, bounds in _exploration_start_strata_from_scenario(
+                getattr(args, '_scenario_data', None)
+            )
+        ],
         'records': records,
     }
     digest_source = json.dumps(
@@ -527,7 +565,7 @@ def train(args):
     exploration_start_bank_path: Optional[str] = None
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         if args.env_type != 'comm_inspection_dubins_uav':
-            raise ValueError('--comm-dataset-mode qrl_explore 仅支持 comm_inspection_dubins_uav')
+            raise ValueError('QRL-explore 数据模式仅支持 comm_inspection_dubins_uav')
         explore_env = create_env_fn()
         excluded_starts = _load_excluded_exploration_starts(
             getattr(args, 'explore_exclusion_task_bank', None),
@@ -543,7 +581,15 @@ def train(args):
             exclusion_radius=float(args.explore_exclusion_radius),
             excluded_start_states=excluded_starts,
             diagnostic_regions=_exploration_regions_from_scenario(args._scenario_data),
+            diagnostic_routes=_exploration_routes_from_scenario(args._scenario_data),
+            start_strata=_exploration_start_strata_from_scenario(args._scenario_data),
+            start_boundary_margin=float(args.explore_start_boundary_margin),
+            local_safety_lookahead_steps=int(args.explore_local_safety_lookahead_steps),
         )
+        if not base_explore_config.start_strata:
+            raise ValueError(
+                'qrl_explore requires metadata.exploration_start_strata in the scenario'
+            )
         start_bank = build_qrl_exploration_start_bank(
             explore_env,
             base_explore_config,
@@ -560,6 +606,10 @@ def train(args):
             excluded_start_states=base_explore_config.excluded_start_states,
             start_states=tuple(tuple(float(value) for value in state) for state in start_bank),
             diagnostic_regions=base_explore_config.diagnostic_regions,
+            diagnostic_routes=base_explore_config.diagnostic_routes,
+            start_strata=base_explore_config.start_strata,
+            start_boundary_margin=base_explore_config.start_boundary_margin,
+            local_safety_lookahead_steps=base_explore_config.local_safety_lookahead_steps,
         )
         exploration_start_bank_path = _write_exploration_start_bank(
             output_dir,
@@ -1575,7 +1625,8 @@ def main():
         '--comm-dataset-mode',
         choices=['standard', 'qrl_explore'],
         default='standard',
-        help='通信巡检数据模式：standard=现有 random+teacher；qrl_explore=无目标持久随机探索',
+        help='通信巡检数据模式：standard=现有 random+teacher；'
+             'qrl_explore=覆盖驱动、局部安全的无目标探索',
     )
     parser.add_argument(
         '--explore-attempted-env-steps',
@@ -1598,19 +1649,19 @@ def main():
     parser.add_argument(
         '--explore-action-hold-min-steps',
         type=int,
-        default=5,
+        default=3,
         help='QRL-explore 每段持久随机角速度的最短保持步数',
     )
     parser.add_argument(
         '--explore-action-hold-max-steps',
         type=int,
-        default=20,
+        default=10,
         help='QRL-explore 每段持久随机角速度的最长保持步数',
     )
     parser.add_argument(
         '--explore-straight-action-probability',
         type=float,
-        default=0.2,
+        default=0.5,
         help='QRL-explore 每个动作段选择直行的概率；其余均匀选择左右大小曲率',
     )
     parser.add_argument(
@@ -1624,6 +1675,18 @@ def main():
         type=float,
         default=0.25,
         help='QRL-explore 起点与评估 task-bank 起点的最小平面距离',
+    )
+    parser.add_argument(
+        '--explore-start-boundary-margin',
+        type=float,
+        default=0.5,
+        help='QRL-explore 固定起点相对地图边界的安全缓冲',
+    )
+    parser.add_argument(
+        '--explore-local-safety-lookahead-steps',
+        type=int,
+        default=10,
+        help='QRL-explore 目标无关局部碰撞重采样的前视步数',
     )
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')

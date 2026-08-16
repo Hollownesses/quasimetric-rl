@@ -41,13 +41,19 @@ class QRLExploreConfig:
     attempted_env_steps: int = 200_000
     start_position_resolution: float = 1.0
     start_heading_bins: int = 12
-    action_hold_min_steps: int = 5
-    action_hold_max_steps: int = 20
-    straight_action_probability: float = 0.2
+    action_hold_min_steps: int = 3
+    action_hold_max_steps: int = 10
+    straight_action_probability: float = 0.5
     exclusion_radius: float = 0.25
     excluded_start_states: Tuple[Tuple[float, float, float], ...] = ()
     start_states: Tuple[Tuple[float, float, float], ...] = ()
     diagnostic_regions: Optional[Mapping[str, Sequence[float]]] = None
+    diagnostic_routes: Optional[Mapping[str, Sequence[str]]] = None
+    start_strata: Tuple[
+        Tuple[str, float, Tuple[float, float, float, float]], ...
+    ] = ()
+    start_boundary_margin: float = 0.5
+    local_safety_lookahead_steps: int = 10
 
 
 def _actions_to_array(actions: List) -> np.ndarray:
@@ -96,10 +102,16 @@ def build_qrl_exploration_start_bank(
     else:
         excluded = excluded.reshape((-1, 3))
     exclusion_radius_sq = max(0.0, float(config.exclusion_radius)) ** 2
+    boundary_margin = max(0.0, float(config.start_boundary_margin))
 
     positions: list[tuple[float, float]] = []
     for y in y_values:
         for x in x_values:
+            if not (
+                bounds[0] + boundary_margin <= x <= bounds[2] - boundary_margin
+                and bounds[1] + boundary_margin <= y <= bounds[3] - boundary_margin
+            ):
+                continue
             probe = np.asarray([x, y, 0.0], dtype=np.float32)
             if not bool(env.is_valid_state(probe)):
                 continue
@@ -164,6 +176,123 @@ def _validated_diagnostic_regions(
             raise ValueError(f"invalid QRL-explore diagnostic region {name!r}: {raw_bounds}")
         result[str(name)] = values
     return result
+
+
+def _validated_diagnostic_routes(
+    routes: Optional[Mapping[str, Sequence[str]]],
+    regions: Mapping[str, Sequence[float]],
+) -> dict[str, tuple[str, ...]]:
+    result: dict[str, tuple[str, ...]] = {}
+    for raw_name, raw_regions in (routes or {}).items():
+        name = str(raw_name)
+        route = tuple(str(region) for region in raw_regions)
+        if not name or name in result or len(route) < 2:
+            raise ValueError(f"invalid QRL-explore diagnostic route {name!r}")
+        missing = [region for region in route if region not in regions]
+        if missing:
+            raise ValueError(
+                f"diagnostic route {name!r} references unknown regions: {missing}"
+            )
+        result[name] = route
+    return result
+
+
+def _trajectory_matches_region_route(
+    region_indices: Mapping[str, np.ndarray],
+    route: Sequence[str],
+) -> bool:
+    """Whether one trajectory visits every named region in the given order."""
+
+    cursor = -1
+    for region_name in route:
+        indices = np.asarray(region_indices.get(region_name, ()), dtype=np.int64)
+        later = indices[indices > cursor]
+        if len(later) == 0:
+            return False
+        cursor = int(later[0])
+    return True
+
+
+def _validated_start_strata(
+    strata: Sequence[Tuple[str, float, Sequence[float]]],
+) -> tuple[tuple[str, float, tuple[float, float, float, float]], ...]:
+    result = []
+    names = set()
+    for raw_name, raw_weight, raw_bounds in strata:
+        name = str(raw_name)
+        weight = float(raw_weight)
+        bounds = tuple(float(value) for value in raw_bounds)
+        if not name or name in names:
+            raise ValueError(f"invalid or duplicate QRL-explore start stratum {name!r}")
+        if not np.isfinite(weight) or weight <= 0.0:
+            raise ValueError(f"QRL-explore start stratum {name!r} must have positive weight")
+        if len(bounds) != 4 or bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+            raise ValueError(f"invalid QRL-explore start stratum bounds for {name!r}")
+        names.add(name)
+        result.append((name, weight, bounds))
+    return tuple(result)
+
+
+def _weighted_stratum_schedule(
+    strata: Sequence[tuple[str, float, tuple[float, float, float, float]]],
+    *,
+    seed: Optional[int],
+    slots: int = 100,
+) -> tuple[str, ...]:
+    if not strata:
+        return ()
+    weights = np.asarray([item[1] for item in strata], dtype=np.float64)
+    weights /= float(weights.sum())
+    raw_counts = weights * max(int(slots), len(strata))
+    counts = np.floor(raw_counts).astype(np.int64)
+    counts[counts == 0] = 1
+    target_slots = max(int(slots), len(strata))
+    while int(counts.sum()) < target_slots:
+        index = int(np.argmax(raw_counts - counts))
+        counts[index] += 1
+    while int(counts.sum()) > target_slots:
+        candidates = np.flatnonzero(counts > 1)
+        index = int(candidates[np.argmin(raw_counts[candidates] - counts[candidates])])
+        counts[index] -= 1
+    schedule = [
+        name
+        for (name, _weight, _bounds), count in zip(strata, counts)
+        for _ in range(int(count))
+    ]
+    rng = np.random.default_rng(None if seed is None else int(seed) + 91_771)
+    rng.shuffle(schedule)
+    return tuple(schedule)
+
+
+def _locally_safe_steps(
+    env: gym.Env,
+    state: np.ndarray,
+    omega: float,
+    max_steps: int,
+) -> int:
+    """Return collision-free rollout length using only local dynamics/geometry."""
+
+    x, y, theta = (float(value) for value in np.asarray(state).reshape(3))
+    safe_steps = 0
+    for _ in range(max(0, int(max_steps))):
+        theta_new = _normalize_angle(theta + float(omega) * float(env.dt))
+        x_new = x + float(env.v) * np.cos(theta_new) * float(env.dt)
+        y_new = y + float(env.v) * np.sin(theta_new) * float(env.dt)
+        if not (
+            float(env.x_min) <= x_new <= float(env.x_max)
+            and float(env.y_min) <= y_new <= float(env.y_max)
+        ):
+            break
+        if hasattr(env, "_check_collision") and bool(
+            env._check_collision(x, y, x_new, y_new)
+        ):
+            break
+        probe = np.asarray([x_new, y_new, theta_new], dtype=np.float32)
+        if not bool(env.is_valid_state(probe)):
+            break
+        safe_steps += 1
+        x, y, theta = x_new, y_new, theta_new
+    return int(safe_steps)
 
 
 def _goal_set_transition_infos(
@@ -789,6 +918,7 @@ def collect_qrl_explore_episode_pair(
     final_info = dict(reset_info)
     action_segments = 0
     nonzero_action_steps = 0
+    safety_resampled_segments = 0
 
     hold_min = int(config.action_hold_min_steps)
     hold_max = int(config.action_hold_max_steps)
@@ -797,14 +927,48 @@ def collect_qrl_explore_episode_pair(
     straight_probability = float(config.straight_action_probability)
     if not 0.0 <= straight_probability <= 1.0:
         raise ValueError("QRL-explore straight_action_probability must be in [0, 1]")
-    nonzero_scales = np.asarray([-1.0, -0.5, 0.5, 1.0], dtype=np.float32)
+    action_scales = np.asarray([-1.0, -0.5, 0.0, 0.5, 1.0], dtype=np.float32)
+    action_probabilities = np.asarray(
+        [
+            0.25 * (1.0 - straight_probability),
+            0.25 * (1.0 - straight_probability),
+            straight_probability,
+            0.25 * (1.0 - straight_probability),
+            0.25 * (1.0 - straight_probability),
+        ],
+        dtype=np.float64,
+    )
+    safety_lookahead = max(0, int(config.local_safety_lookahead_steps))
 
     while len(actions) < int(max_steps):
-        if float(rng.uniform()) < straight_probability:
-            omega = 0.0
-        else:
-            omega = float(rng.choice(nonzero_scales)) * float(env.omega_max)
         hold_steps = int(rng.integers(hold_min, hold_max + 1))
+        scale = float(rng.choice(action_scales, p=action_probabilities))
+        omega = scale * float(env.omega_max)
+        if safety_lookahead > 0:
+            requested_safety = min(hold_steps, safety_lookahead)
+            proposed_safe_steps = _locally_safe_steps(
+                env, env.state, omega, requested_safety
+            )
+            if proposed_safe_steps < requested_safety:
+                safety_by_scale = np.asarray(
+                    [
+                        _locally_safe_steps(
+                            env,
+                            env.state,
+                            float(candidate_scale) * float(env.omega_max),
+                            requested_safety,
+                        )
+                        for candidate_scale in action_scales
+                    ],
+                    dtype=np.int64,
+                )
+                best_safety = int(safety_by_scale.max())
+                best_indices = np.flatnonzero(safety_by_scale == best_safety)
+                chosen_index = int(rng.choice(best_indices))
+                omega = float(action_scales[chosen_index]) * float(env.omega_max)
+                safety_resampled_segments += 1
+                if best_safety > 0:
+                    hold_steps = min(hold_steps, best_safety)
         action_segments += 1
         for _ in range(min(hold_steps, int(max_steps) - len(actions))):
             action = np.asarray([omega], dtype=np.float32)
@@ -897,6 +1061,7 @@ def collect_qrl_explore_episode_pair(
         "loop_detected": bool(loop_detected),
         "action_segments": int(action_segments),
         "nonzero_action_steps": int(nonzero_action_steps),
+        "safety_resampled_segments": int(safety_resampled_segments),
         "state_heading_keys": keys,
         "raw_states": raw_states,
     }
@@ -932,6 +1097,23 @@ def create_qrl_explore_comm_dataset(
     if len(start_bank) == 0:
         raise ValueError("QRL-explore start bank is empty")
     regions = _validated_diagnostic_regions(config.diagnostic_regions)
+    routes = _validated_diagnostic_routes(config.diagnostic_routes, regions)
+    start_strata = _validated_start_strata(config.start_strata)
+    stratum_schedule = _weighted_stratum_schedule(start_strata, seed=seed)
+    start_indices_by_stratum: dict[str, np.ndarray] = {}
+    for stratum_name, _weight, (x_min, y_min, x_max, y_max) in start_strata:
+        mask = (
+            (start_bank[:, 0] >= x_min)
+            & (start_bank[:, 0] <= x_max)
+            & (start_bank[:, 1] >= y_min)
+            & (start_bank[:, 1] <= y_max)
+        )
+        indices = np.flatnonzero(mask).astype(np.int64)
+        if len(indices) == 0:
+            raise ValueError(
+                f"QRL-explore start stratum {stratum_name!r} contains no start-bank states"
+            )
+        start_indices_by_stratum[stratum_name] = indices
 
     per_device_targets = {
         device_id: budget // len(device_ids) + int(index < budget % len(device_ids))
@@ -950,6 +1132,7 @@ def create_qrl_explore_comm_dataset(
             "loop_episodes": 0,
             "action_segments": 0,
             "nonzero_action_steps": 0,
+            "safety_resampled_segments": 0,
             "outcomes": {name: 0 for name in EXPLORE_OUTCOME_NAMES.values() if name != "unknown"},
             "start_bank_size": int(len(start_bank)),
             "unique_start_indices": 0,
@@ -963,6 +1146,18 @@ def create_qrl_explore_comm_dataset(
                     name: 0 for name in EXPLORE_OUTCOME_NAMES.values() if name != "unknown"
                 }
                 for device_id in device_ids
+            },
+            "start_stratum_episodes": {
+                name: 0 for name, _weight, _bounds in start_strata
+            },
+            "per_device_start_stratum_episodes": {
+                device_id: {
+                    name: 0 for name, _weight, _bounds in start_strata
+                }
+                for device_id in device_ids
+            },
+            "start_stratum_weights": {
+                name: float(weight) for name, weight, _bounds in start_strata
             },
             "diagnostic_region_episode_visits": {name: 0 for name in regions},
             "diagnostic_directed_region_crossings": {
@@ -984,14 +1179,29 @@ def create_qrl_explore_comm_dataset(
                 }
                 for device_id in device_ids
             },
+            "diagnostic_route_traversals": {name: 0 for name in routes},
+            "per_device_diagnostic_route_traversals": {
+                device_id: {name: 0 for name in routes}
+                for device_id in device_ids
+            },
         }
     )
     used_start_indices: set[int] = set()
     visited_keys: set[tuple[int, int, int]] = set()
     directed_edges: set[tuple[tuple[int, int, int], tuple[int, int, int]]] = set()
-    start_cursors = {
-        device_id: (index * 104_729) % len(start_bank)
-        for index, device_id in enumerate(device_ids)
+    start_cursors: dict[tuple[str, str], int] = {}
+    for device_index, device_id in enumerate(device_ids):
+        start_cursors[(device_id, "__uniform__")] = (
+            device_index * 104_729
+        ) % len(start_bank)
+        for stratum_index, (stratum_name, _weight, _bounds) in enumerate(start_strata):
+            candidates = start_indices_by_stratum[stratum_name]
+            start_cursors[(device_id, stratum_name)] = (
+                device_index * 104_729 + stratum_index * 7_919
+            ) % len(candidates)
+    stratum_schedule_cursors = {
+        device_id: device_index * 17
+        for device_index, device_id in enumerate(device_ids)
     }
     context_id = 0
     device_cursor = 0
@@ -1008,11 +1218,24 @@ def create_qrl_explore_comm_dataset(
             raise RuntimeError("QRL-explore exhausted all per-device budgets early")
 
         env.set_task_by_device_id(device_id)
+        requested_start_stratum = ""
+        if stratum_schedule:
+            schedule_cursor = int(stratum_schedule_cursors[device_id])
+            requested_start_stratum = stratum_schedule[
+                schedule_cursor % len(stratum_schedule)
+            ]
+            stratum_schedule_cursors[device_id] = schedule_cursor + 1
+            candidate_indices = start_indices_by_stratum[requested_start_stratum]
+            cursor_key = (device_id, requested_start_stratum)
+        else:
+            candidate_indices = np.arange(len(start_bank), dtype=np.int64)
+            cursor_key = (device_id, "__uniform__")
         start_index = -1
         start_state = None
-        for _ in range(len(start_bank)):
-            candidate_index = int(start_cursors[device_id] % len(start_bank))
-            start_cursors[device_id] += 1
+        for _ in range(len(candidate_indices)):
+            cursor = int(start_cursors[cursor_key])
+            candidate_index = int(candidate_indices[cursor % len(candidate_indices)])
+            start_cursors[cursor_key] = cursor + 1
             candidate = start_bank[candidate_index]
             if env.is_valid_state(candidate) and not env.is_terminal_goal_state(candidate):
                 start_index = candidate_index
@@ -1062,6 +1285,14 @@ def create_qrl_explore_comm_dataset(
         stats["nonzero_action_steps"] = int(stats["nonzero_action_steps"]) + int(
             diagnostics["nonzero_action_steps"]
         )
+        stats["safety_resampled_segments"] = int(
+            stats["safety_resampled_segments"]
+        ) + int(diagnostics["safety_resampled_segments"])
+        if requested_start_stratum:
+            stats["start_stratum_episodes"][requested_start_stratum] += 1
+            stats["per_device_start_stratum_episodes"][device_id][
+                requested_start_stratum
+            ] += 1
         used_start_indices.add(int(start_index))
         keys = diagnostics["state_heading_keys"]
         visited_keys.update(keys)
@@ -1070,6 +1301,7 @@ def create_qrl_explore_comm_dataset(
         raw_states = np.asarray(diagnostics["raw_states"], dtype=np.float32)
         first_region_index: dict[str, int] = {}
         last_region_index: dict[str, int] = {}
+        region_indices: dict[str, np.ndarray] = {}
         for region_name, (x_min, y_min, x_max, y_max) in regions.items():
             mask = (
                 (raw_states[:, 0] >= x_min)
@@ -1079,6 +1311,7 @@ def create_qrl_explore_comm_dataset(
             )
             indices = np.flatnonzero(mask)
             if len(indices) > 0:
+                region_indices[region_name] = indices
                 stats["diagnostic_region_episode_visits"][region_name] += 1
                 stats["per_device_diagnostic_region_episode_visits"][device_id][
                     region_name
@@ -1095,6 +1328,12 @@ def create_qrl_explore_comm_dataset(
                     stats["per_device_diagnostic_directed_region_crossings"][device_id][
                         crossing_name
                     ] += 1
+        for route_name, route in routes.items():
+            if _trajectory_matches_region_route(region_indices, route):
+                stats["diagnostic_route_traversals"][route_name] += 1
+                stats["per_device_diagnostic_route_traversals"][device_id][
+                    route_name
+                ] += 1
 
         context_id += 1
 
@@ -1106,6 +1345,9 @@ def create_qrl_explore_comm_dataset(
     )
     stats["nonzero_action_step_ratio"] = float(
         stats["nonzero_action_steps"] / max(int(stats["attempted_env_steps"]), 1)
+    )
+    stats["safety_resampled_segment_ratio"] = float(
+        stats["safety_resampled_segments"] / max(int(stats["action_segments"]), 1)
     )
     stats["failed_episodes"] = int(stats["episodes"]) - int(
         stats["outcomes"]["success"]

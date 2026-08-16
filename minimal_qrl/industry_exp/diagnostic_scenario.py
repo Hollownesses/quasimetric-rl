@@ -140,8 +140,66 @@ def build_diagnostic_scenario() -> dict[str, Any]:
             "exploration_diagnostic_regions": {
                 "u_trap_interior": [2.8, 1.9, 5.2, 5.4],
                 "u_trap_west_exit": [0.0, 1.9, 2.8, 5.4],
+                "corridor_west_entry": [7.5, 4.5, 9.0, 9.0],
                 "corridor_upper": [9.0, 7.5, 15.0, 12.0],
                 "corridor_lower": [9.0, 0.0, 15.0, 6.0],
+                "corridor_east_exit": [15.0, 4.5, 17.0, 9.0],
+            },
+            "exploration_diagnostic_routes": {
+                "u_inside_to_exit": ["u_trap_interior", "u_trap_west_exit"],
+                "corridor_upper_complete": [
+                    "corridor_west_entry",
+                    "corridor_upper",
+                    "corridor_east_exit",
+                ],
+                "corridor_lower_complete": [
+                    "corridor_west_entry",
+                    "corridor_lower",
+                    "corridor_east_exit",
+                ],
+            },
+            "exploration_start_strata": [
+                {
+                    "name": "u_trap_interior",
+                    "weight": 0.30,
+                    "bounds": [2.9, 2.0, 5.1, 5.3],
+                },
+                {
+                    "name": "u_trap_exit",
+                    "weight": 0.15,
+                    "bounds": [1.5, 2.0, 2.8, 5.3],
+                },
+                {
+                    "name": "corridor_fork",
+                    "weight": 0.20,
+                    "bounds": [7.5, 4.0, 8.9, 9.0],
+                },
+                {
+                    "name": "comm_shadow_boundary",
+                    "weight": 0.15,
+                    "bounds": [8.5, 7.6, 10.5, 10.5],
+                },
+                {
+                    "name": "uniform_free_space",
+                    "weight": 0.20,
+                    "bounds": [0.0, 0.0, 18.0, 12.0],
+                },
+            ],
+            "u_trap_local_navigability_probes": {
+                "device_id": "u_trap_target",
+                "centerline_y": 3.65,
+                "positions": [
+                    {"label": "deep", "x": 4.8},
+                    {"label": "middle", "x": 4.0},
+                    {"label": "mouth", "x": 3.2},
+                    {"label": "outside", "x": 2.4},
+                ],
+                "headings": [
+                    {"label": "west", "theta": math.pi},
+                    {"label": "north", "theta": 0.5 * math.pi},
+                    {"label": "east", "theta": 0.0},
+                    {"label": "south", "theta": -0.5 * math.pi},
+                ],
             },
         },
     }

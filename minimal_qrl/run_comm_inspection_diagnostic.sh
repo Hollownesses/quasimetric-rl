@@ -16,6 +16,8 @@
 #     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_explore \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -63,13 +65,15 @@ train_qrl() {
 
   if [[ "$qrl_dataset_mode" == "qrl_explore" ]]; then
     dataset_budget_args+=(
-      --comm-dataset-mode qrl_explore
+      --comm-dataset-mode "$qrl_dataset_mode"
       --explore-attempted-env-steps "${EXPLORE_ATTEMPTED_ENV_STEPS:-200000}"
       --explore-start-position-resolution "${EXPLORE_START_POSITION_RESOLUTION:-1.0}"
       --explore-start-heading-bins "${EXPLORE_START_HEADING_BINS:-12}"
-      --explore-action-hold-min-steps "${EXPLORE_ACTION_HOLD_MIN_STEPS:-5}"
-      --explore-action-hold-max-steps "${EXPLORE_ACTION_HOLD_MAX_STEPS:-20}"
-      --explore-straight-action-probability "${EXPLORE_STRAIGHT_ACTION_PROBABILITY:-0.2}"
+      --explore-action-hold-min-steps "${EXPLORE_ACTION_HOLD_MIN_STEPS:-3}"
+      --explore-action-hold-max-steps "${EXPLORE_ACTION_HOLD_MAX_STEPS:-10}"
+      --explore-straight-action-probability "${EXPLORE_STRAIGHT_ACTION_PROBABILITY:-0.5}"
+      --explore-start-boundary-margin "${EXPLORE_START_BOUNDARY_MARGIN:-0.5}"
+      --explore-local-safety-lookahead-steps "${EXPLORE_LOCAL_SAFETY_LOOKAHEAD_STEPS:-10}"
       --explore-exclusion-task-bank "${EXPLORE_EXCLUSION_TASK_BANK:-$TASK_BANK}"
       --explore-exclusion-radius "${EXPLORE_EXCLUSION_RADIUS:-0.25}"
     )
@@ -110,6 +114,31 @@ train_qrl() {
     --oracle-final-bootstrap-samples "${ORACLE_FINAL_BOOTSTRAP_SAMPLES:-2000}" \
     --visualization-interval "${VIS_INTERVAL:-1000}" \
     --planning-eval-interval 0
+}
+
+local_nav_eval() {
+  local qrl_checkpoints="${QRL_CHECKPOINTS:-${QRL_CHECKPOINT:-$TRAIN_DIR/checkpoint_final.pth}}"
+  local checkpoint_array=()
+  read -r -a checkpoint_array <<< "$qrl_checkpoints"
+  if (( ${#checkpoint_array[@]} == 0 )); then
+    echo "QRL_CHECKPOINTS must contain at least one checkpoint" >&2
+    exit 2
+  fi
+
+  "$PYTHON_BIN" -m minimal_qrl.eval.u_trap_local_navigability \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --checkpoints "${checkpoint_array[@]}" \
+    --output-dir "${LOCAL_NAV_EVAL_DIR:-$OUTPUT_ROOT/u_trap_local_navigability}" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --seed "${LOCAL_NAV_SEED:-20260802}" \
+    --astar-position-resolution "${LOCAL_NAV_ASTAR_POSITION_RESOLUTION:-0.25}" \
+    --astar-heading-bins "${LOCAL_NAV_ASTAR_HEADING_BINS:-24}" \
+    --astar-primitive-steps "${LOCAL_NAV_ASTAR_PRIMITIVE_STEPS:-5}" \
+    --astar-heuristic-weight "${LOCAL_NAV_ASTAR_HEURISTIC_WEIGHT:-1.0}" \
+    --astar-max-expansions "${LOCAL_NAV_ASTAR_MAX_EXPANSIONS:-200000}" \
+    --astar-timeout-sec "${LOCAL_NAV_ASTAR_TIMEOUT_SEC:-120}" \
+    --astar-terminal-samples "${LOCAL_NAV_ASTAR_TERMINAL_SAMPLES:-128}"
 }
 
 eval_qrl() {
@@ -276,6 +305,9 @@ case "$PHASE" in
   eval_qrl)
     eval_qrl
     ;;
+  local_nav_eval)
+    local_nav_eval
+    ;;
   benchmark)
     benchmark
     ;;
@@ -286,7 +318,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

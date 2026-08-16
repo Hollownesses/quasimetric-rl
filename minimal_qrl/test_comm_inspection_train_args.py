@@ -75,8 +75,11 @@ def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
     assert args.comm_dataset_mode == "qrl_explore"
     assert args.explore_attempted_env_steps == 200_000
     assert args.explore_start_heading_bins == 12
-    assert args.explore_action_hold_min_steps == 5
-    assert args.explore_action_hold_max_steps == 20
+    assert args.explore_action_hold_min_steps == 3
+    assert args.explore_action_hold_max_steps == 10
+    assert np.isclose(args.explore_straight_action_probability, 0.5)
+    assert np.isclose(args.explore_start_boundary_margin, 0.5)
+    assert args.explore_local_safety_lookahead_steps == 10
 
 
 def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget():
@@ -88,3 +91,8 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert 'qrl_dataset_mode="${QRL_DATASET_MODE:-standard}"' in script
     assert '--explore-attempted-env-steps "${EXPLORE_ATTEMPTED_ENV_STEPS:-200000}"' in script
     assert '--target-env-transitions "${TARGET_ENV_TRANSITIONS:-120000}"' in script
+    assert 'qrl_explore_v2' not in script
+    assert '--explore-action-hold-min-steps "${EXPLORE_ACTION_HOLD_MIN_STEPS:-3}"' in script
+    assert '--explore-start-boundary-margin "${EXPLORE_START_BOUNDARY_MARGIN:-0.5}"' in script
+    assert 'local_nav_eval()' in script
+    assert '--astar-heuristic-weight "${LOCAL_NAV_ASTAR_HEURISTIC_WEIGHT:-1.0}"' in script
