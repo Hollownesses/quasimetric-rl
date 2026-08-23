@@ -11,6 +11,7 @@ from minimal_qrl.baselines import (
     GoalSetSACConfig,
     HybridAStarConfig,
     HybridAStarController,
+    HybridAStarValueOracle,
     MPPIConfig,
     MPPIController,
     simulate_action_sequences,
@@ -70,6 +71,25 @@ class ZeroValueAgent(GoalConditionedAgentBase):
     def batch_value(self, obs_batch, goal_obs_batch):
         del goal_obs_batch
         return np.zeros((len(obs_batch),), dtype=np.float32)
+
+
+class ConstantTerminalValue:
+    def __init__(self, value=1.0):
+        self.value = float(value)
+        self.queries = 0
+
+    def begin_episode(self, env, *, seed):
+        del env, seed
+        self.queries = 0
+        return {"oracle_value_source": "test"}
+
+    def batch_value(self, env, states):
+        del env
+        self.queries += len(states)
+        return np.full((len(states),), self.value, dtype=np.float32)
+
+    def end_episode(self):
+        return {"oracle_value_queries": self.queries}
 
 
 def test_incremental_result_writer_flushes_each_episode(tmp_path):
@@ -283,13 +303,54 @@ def test_mppi_variants_use_identical_rollout_budget():
     model = MPPIController(cfg, terminal_mode="model")
     qrl = MPPIController(cfg, terminal_mode="qrl", qrl_agent=ZeroValueAgent())
     none = MPPIController(cfg, terminal_mode="none")
+    oracle_value = ConstantTerminalValue()
+    oracle = MPPIController(
+        cfg,
+        terminal_mode="oracle",
+        terminal_value_provider=oracle_value,
+    )
     model.begin_episode(env, goal_obs, seed=8)
     qrl.begin_episode(env, goal_obs, seed=8)
     none.begin_episode(env, goal_obs, seed=8)
+    oracle.begin_episode(env, goal_obs, seed=8)
     _action, model_diag = model.act(obs, env)
     _action, qrl_diag = qrl.act(obs, env)
     _action, none_diag = none.act(obs, env)
-    assert model_diag["model_rollouts"] == qrl_diag["model_rollouts"] == none_diag["model_rollouts"] == 11
+    _action, oracle_diag = oracle.act(obs, env)
+    assert (
+        model_diag["model_rollouts"]
+        == qrl_diag["model_rollouts"]
+        == none_diag["model_rollouts"]
+        == oracle_diag["model_rollouts"]
+        == 11
+    )
+
+
+def test_hybrid_astar_value_oracle_builds_and_reuses_exact_lattice_table(tmp_path):
+    env = make_env(bounds=(0.0, 0.0, 6.0, 6.0), start=(2.0, 4.0, 0.0))
+    env.reset(seed=11)
+    config = HybridAStarConfig(
+        position_resolution=0.5,
+        heading_bins=12,
+        primitive_steps=2,
+        primitive_scales=(-1.0, 0.0, 1.0),
+        terminal_samples=0,
+    )
+    oracle = HybridAStarValueOracle(config, cache_dir=tmp_path)
+    diagnostics = oracle.begin_episode(env, seed=11)
+    terminal = env.sample_task_terminal_state(seed=91)
+    values = oracle.batch_value(env, np.stack([env.state, terminal]))
+
+    assert diagnostics["oracle_value_source"] == "hybrid_astar_lattice_reverse_dijkstra"
+    assert diagnostics["oracle_value_cache_hit"] is False
+    assert diagnostics["oracle_value_reachable_fraction"] > 0.0
+    assert np.isfinite(values[0]) and values[0] > 0.0
+    assert values[1] == 0.0
+
+    reloaded = HybridAStarValueOracle(config, cache_dir=tmp_path)
+    reload_diagnostics = reloaded.begin_episode(env, seed=11)
+    assert reload_diagnostics["oracle_value_cache_hit"] is True
+    assert np.allclose(reloaded.batch_value(env, np.stack([env.state, terminal])), values)
 
 
 def test_goal_set_sac_action_update_and_abstract_goal_replay():

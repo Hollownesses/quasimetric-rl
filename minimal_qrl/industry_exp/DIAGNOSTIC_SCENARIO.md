@@ -52,6 +52,19 @@ METHODS="mppi_no_terminal,qrl_mppi,context_her_ddpg_mppi" \
 bash minimal_qrl/run_comm_inspection_diagnostic.sh
 ```
 
+Run the highest-priority Oracle-MPPI falsification check on only the 12 fixed
+test U-traps. This uses the same horizon 10, 128 samples, MPPI noise,
+temperature, and running cost as the existing diagnostic benchmark; only the
+terminal value changes to the exhaustive Hybrid A* lattice cost-to-go:
+
+```bash
+PHASE=oracle_mppi bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+The first run constructs and caches the reverse Hybrid A* value table. Use
+`RESUME=1` after interruption. Results are written to
+`results/diagnostic_u_shadow_corridors/oracle_mppi_test_u_trap/` by default.
+
 Use `TASK_SPLIT=validation` while tuning. Reserve the default `test` split for
 the final paired report.
 

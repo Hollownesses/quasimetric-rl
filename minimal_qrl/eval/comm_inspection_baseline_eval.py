@@ -26,6 +26,7 @@ from minimal_qrl.baselines import (  # noqa: E402
     GoalSetSACConfig,
     HybridAStarConfig,
     HybridAStarController,
+    HybridAStarValueOracle,
     MPPIConfig,
     MPPIController,
     PolicyController,
@@ -55,7 +56,7 @@ CONTEXT_ALGORITHMS = {
 }
 CONTEXT_MPPI_METHODS = {f"{name}_mppi" for name in CONTEXT_ALGORITHMS}
 METHODS = {
-    "hybrid_astar", "mppi_no_terminal", "model_mppi", "goal_set_sac",
+    "hybrid_astar", "mppi_no_terminal", "model_mppi", "oracle_mppi", "goal_set_sac",
     "qrl_greedy", "qrl_mppi", *CONTEXT_ALGORITHMS, *CONTEXT_MPPI_METHODS,
 }
 SCALAR_METRICS = (
@@ -78,6 +79,12 @@ SCALAR_METRICS = (
     "planning_time_p99_sec",
     "expanded_nodes",
     "model_rollouts",
+    "oracle_value_build_time_sec",
+    "oracle_value_grid_states",
+    "oracle_value_reachable_fraction",
+    "oracle_value_queries",
+    "oracle_value_unreachable_queries",
+    "oracle_value_unreachable_ratio",
     "training_env_steps",
     "teacher_env_steps",
     "training_updates",
@@ -102,6 +109,9 @@ CSV_FIELDS = [
     "episode_seed",
     *SCALAR_METRICS,
     "planner_failure_reason",
+    "oracle_value_source",
+    "oracle_value_table_digest",
+    "oracle_value_cache_path",
 ]
 
 
@@ -246,6 +256,22 @@ def _rollout_record(
         "planning_time_p99_sec": float(diagnostics.get("planning_time_p99_sec", 0.0)),
         "expanded_nodes": float(diagnostics.get("expanded_nodes", 0.0)),
         "model_rollouts": float(diagnostics.get("model_rollouts", 0.0)),
+        "oracle_value_build_time_sec": float(
+            diagnostics.get("oracle_value_build_time_sec", 0.0)
+        ),
+        "oracle_value_grid_states": float(
+            diagnostics.get("oracle_value_grid_states", 0.0)
+        ),
+        "oracle_value_reachable_fraction": float(
+            diagnostics.get("oracle_value_reachable_fraction", 0.0)
+        ),
+        "oracle_value_queries": float(diagnostics.get("oracle_value_queries", 0.0)),
+        "oracle_value_unreachable_queries": float(
+            diagnostics.get("oracle_value_unreachable_queries", 0.0)
+        ),
+        "oracle_value_unreachable_ratio": float(
+            diagnostics.get("oracle_value_unreachable_ratio", 0.0)
+        ),
         "training_env_steps": float(diagnostics.get("training_env_steps", 0.0)),
         "teacher_env_steps": float(diagnostics.get("teacher_env_steps", 0.0)),
         "training_updates": float(diagnostics.get("training_updates", 0.0)),
@@ -260,6 +286,11 @@ def _rollout_record(
         "mrn_metric_mean": float(diagnostics.get("mrn_metric_mean", 0.0)),
         "mrn_residual_mean": float(diagnostics.get("mrn_residual_mean", 0.0)),
         "planner_failure_reason": str(diagnostics.get("planner_failure_reason", "")),
+        "oracle_value_source": str(diagnostics.get("oracle_value_source", "")),
+        "oracle_value_table_digest": str(
+            diagnostics.get("oracle_value_table_digest", "")
+        ),
+        "oracle_value_cache_path": str(diagnostics.get("oracle_value_cache_path", "")),
         "start": [float(v) for v in rollout["start"]],
         "inspection_target": [float(v) for v in rollout["inspection_target"]],
         "ground_station": [float(v) for v in rollout["ground_station"]],
@@ -674,6 +705,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scenario-config", default=None)
     parser.add_argument("--task-bank", default=None)
     parser.add_argument("--task-split", choices=["validation", "test"], default="test")
+    parser.add_argument(
+        "--task-strata",
+        default=None,
+        help="Optional comma-separated task-bank strata to evaluate (for example: u_trap).",
+    )
 
     parser.add_argument("--astar-position-resolution", type=float, default=0.25)
     parser.add_argument("--astar-heading-bins", type=int, default=24)
@@ -689,6 +725,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mppi-temperature", type=float, default=1.0)
     parser.add_argument("--mppi-terminal-weight", type=float, default=1.0)
     parser.add_argument("--mppi-terminal-samples", type=int, default=128)
+    parser.add_argument(
+        "--oracle-value-cache-dir",
+        default=None,
+        help="Directory for reusable exhaustive Hybrid A* cost-to-go tables.",
+    )
 
     parser.add_argument("--sac-batch-size", type=int, default=256)
     parser.add_argument("--sac-start-random-steps", type=int, default=5_000)
@@ -753,6 +794,19 @@ def main() -> None:
         ]
         if not episode_specs:
             raise ValueError("task bank contains no records for devices in this environment")
+        if args.task_strata:
+            requested_strata = {
+                item.strip() for item in str(args.task_strata).split(",") if item.strip()
+            }
+            known_strata = {str(row.get("stratum", "")) for row in episode_specs}
+            unknown_strata = requested_strata - known_strata
+            if unknown_strata:
+                raise ValueError(
+                    f"task bank split has no requested strata: {sorted(unknown_strata)}"
+                )
+            episode_specs = [
+                row for row in episode_specs if str(row.get("stratum", "")) in requested_strata
+            ]
     else:
         episode_specs = [
             {
@@ -821,6 +875,34 @@ def main() -> None:
         records.extend(_evaluate_controller(
             "model_mppi", MPPIController(mppi_cfg, terminal_mode="model"), env, episode_specs,
             model_run="model", output_dir=output_dir, viz_cfg=viz_cfg, counters=counters,
+            on_record=incremental_writer.write,
+            completed_keys=completed_keys,
+        ))
+    if "oracle_mppi" in methods:
+        env = make_comm_inspection_env(args)
+        oracle_cache_dir = (
+            Path(args.oracle_value_cache_dir)
+            if args.oracle_value_cache_dir
+            else output_dir / "oracle_value_cache"
+        )
+        oracle_value = HybridAStarValueOracle(
+            astar_cfg,
+            cache_dir=oracle_cache_dir,
+            unreachable_cost=float(mppi_cfg.invalid_penalty),
+        )
+        records.extend(_evaluate_controller(
+            "oracle_mppi",
+            MPPIController(
+                mppi_cfg,
+                terminal_mode="oracle",
+                terminal_value_provider=oracle_value,
+            ),
+            env,
+            episode_specs,
+            model_run="model",
+            output_dir=output_dir,
+            viz_cfg=viz_cfg,
+            counters=counters,
             on_record=incremental_writer.write,
             completed_keys=completed_keys,
         ))
