@@ -127,8 +127,23 @@ class GlobalPushLoss(CriticLossBase):
                     device=device,
                     dtype=data.observations.dtype,
                 )
+                task_sources = data.transition_infos.get(
+                    "global_push_task_source_observations"
+                )
+                if task_sources is None:
+                    z_task_source = critic_batch_info.zx[valid_task]
+                else:
+                    task_sources = task_sources.to(
+                        device=device,
+                        dtype=data.observations.dtype,
+                    )
+                    z_task_source = critic_batch_info.critic.encoder(
+                        task_sources[valid_task]
+                    )
                 z_task_goal = critic_batch_info.critic.encoder(task_goals[valid_task])
-                d_task = critic_batch_info.critic.quasimetric_model(critic_batch_info.zx[valid_task], z_task_goal)
+                d_task = critic_batch_info.critic.quasimetric_model(
+                    z_task_source, z_task_goal
+                )
                 loss_task = self._push_loss(d_task)
                 total_loss = total_loss + float(self.abstract_goal_ratio) * loss_task
                 info["global_push_task_set/dist"] = d_task.mean()

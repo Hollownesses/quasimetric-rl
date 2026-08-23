@@ -103,6 +103,48 @@ def test_global_push_prefers_explicit_free_state_pairs():
     assert torch.isclose(result.info["global_push_state_state/dist"], torch.tensor(3.0))
 
 
+def test_global_push_uses_explicit_uniform_task_sources():
+    class IdentityEncoder(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class L1Quasimetric(torch.nn.Module):
+        def forward(self, source, goal):
+            return torch.abs(goal - source).sum(dim=-1)
+
+    class DummyCritic(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = IdentityEncoder()
+            self.quasimetric_model = L1Quasimetric()
+
+    data = make_batch([-1.0, -1.0])
+    data.observations = torch.zeros(2, 2)
+    data.transition_infos = {
+        "task_goal_observations": torch.zeros(2, 2),
+        "global_push_task_source_observations": torch.tensor(
+            [[3.0, 0.0], [0.0, 5.0]]
+        ),
+        "abstract_goal_edge": torch.zeros(2, dtype=torch.bool),
+        "source_terminal_goal_state": torch.zeros(2, dtype=torch.bool),
+    }
+    critic = DummyCritic()
+    batch_info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(2, 2),
+        zy=torch.zeros(2, 2),
+    )
+    result = GlobalPushLoss(
+        softplus_beta=0.1,
+        softplus_offset=15.0,
+        abstract_goal_ratio=1.0,
+        state_goal_ratio=0.0,
+    )(data, batch_info)
+    assert torch.isclose(
+        result.info["global_push_task_set/dist"], torch.tensor(4.0)
+    )
+
+
 def test_temporal_path_uses_executed_multistep_cost_as_one_sided_bound():
     class IdentityEncoder(torch.nn.Module):
         def forward(self, value):

@@ -134,6 +134,11 @@ def main() -> None:
         total_steps=1,
     )
     checkpoint = torch.load(args.checkpoint, map_location=device)
+    training_mode = (
+        str(checkpoint.get("training_mode", "unknown"))
+        if isinstance(checkpoint, dict)
+        else "unknown"
+    )
     agent.load_state_dict(checkpoint["agent"] if isinstance(checkpoint, dict) else checkpoint)
     agent.to(device).eval()
     value = QRLGoalValueAdapter(agent, env, device, distance_scale=1.0)
@@ -199,9 +204,18 @@ def main() -> None:
             "target_min": float(args.false_zero_target_min),
         },
     }
+    training_labels = {
+        "dense_transition_original_qrl": (
+            "real one-step transitions only; no Oracle values"
+        ),
+        "full_graph_goal_set": (
+            "validated lattice macro-transitions only; no Oracle values"
+        ),
+    }.get(training_mode, "transition-only QRL; no Oracle values")
     payload = {
-        "experiment": "dense_transition_original_qrl_oracle_evaluation",
-        "training_labels": "real transitions only; no Oracle values",
+        "experiment": f"{training_mode}_oracle_evaluation",
+        "training_mode": training_mode,
+        "training_labels": training_labels,
         "oracle_role": "post-training evaluation only",
         "checkpoint": str(Path(args.checkpoint).resolve()),
         "scenario_config": str(Path(args.scenario_config).resolve()),

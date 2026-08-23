@@ -1,6 +1,7 @@
 """
 创建数据集用于 QRL 训练，支持多种环境
 """
+import hashlib
 import numpy as np
 import random
 import torch
@@ -9,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Iterator, Mapping, Optional, List, Sequence, Tuple
 import gym
 
-from quasimetric_rl.data import EpisodeData
+from quasimetric_rl.data import EpisodeData, IndependentTransitionDataset
 from minimal_qrl.envs.base import BaseNavigationEnv
 
 
@@ -79,6 +80,18 @@ class DenseUTrapTransitionConfig:
     failed_start_states: Tuple[Tuple[float, float, float], ...] = ()
     failure_position_radius: float = 0.75
     failure_heading_radius: float = 0.65
+
+
+@dataclass(frozen=True)
+class FullGraphGoalSetQRLConfig:
+    """Exact macro-transition graph for the baseline goal-set QRL diagnostic."""
+
+    device_id: str = "u_trap_target"
+    position_resolution: float = 0.25
+    heading_bins: int = 24
+    primitive_steps: int = 5
+    primitive_scales: Tuple[float, ...] = (-1.0, -0.5, 0.0, 0.5, 1.0)
+    uniform_push_seed: int = 20260824
 
 
 def _actions_to_array(actions: List) -> np.ndarray:
@@ -599,6 +612,238 @@ def create_dense_u_trap_transition_dataset(
             "mean_one_step_cost": float(accumulated_cost / max(np.sum(transition_counts), 1)),
             "local_batch_fraction": float(config.local_fraction),
         }
+
+
+def _goal_reachable_lattice_mask(graph) -> np.ndarray:
+    """Topology-only reverse reachability; no cost-to-go values are produced."""
+
+    direct_goal = graph.destinations < 0
+    reachable = np.asarray(graph.terminal, dtype=bool).copy()
+    reachable[graph.sources[direct_goal]] = True
+    normal_sources = graph.sources[~direct_goal]
+    normal_destinations = graph.destinations[~direct_goal]
+    order = np.argsort(normal_destinations, kind="stable")
+    normal_sources = normal_sources[order]
+    normal_destinations = normal_destinations[order]
+    offsets = np.zeros(len(graph.states) + 1, dtype=np.int64)
+    if len(normal_destinations):
+        offsets[1:] = np.cumsum(
+            np.bincount(normal_destinations, minlength=len(graph.states))
+        )
+    queue = list(int(index) for index in np.flatnonzero(reachable))
+    cursor = 0
+    while cursor < len(queue):
+        destination = queue[cursor]
+        cursor += 1
+        for edge_index in range(
+            int(offsets[destination]), int(offsets[destination + 1])
+        ):
+            source = int(normal_sources[edge_index])
+            if not reachable[source]:
+                reachable[source] = True
+                queue.append(source)
+    return reachable & np.asarray(graph.valid, dtype=bool)
+
+
+def _full_graph_digest(
+    *,
+    sources: np.ndarray,
+    destinations: np.ndarray,
+    costs: np.ndarray,
+    terminal: np.ndarray,
+) -> str:
+    digest = hashlib.sha256()
+    for value in (sources, destinations, costs, terminal):
+        array = np.ascontiguousarray(value)
+        digest.update(str(array.dtype).encode("ascii"))
+        digest.update(np.asarray(array.shape, dtype=np.int64).tobytes())
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def create_full_graph_goal_set_qrl_dataset(
+    env: gym.Env,
+    config: FullGraphGoalSetQRLConfig,
+    *,
+    collection_stats: Optional[dict[str, Any]] = None,
+) -> IndependentTransitionDataset:
+    """Build the exact LP/Dijkstra graph as QRL macro-transitions.
+
+    No continuous ``env.step`` rollout, Oracle value, or Hybrid A* path enters
+    this dataset.  The only dynamics records are the already-discretized
+    primitive edges of the finite lattice.  Every physical terminal lattice
+    state receives one explicit zero-cost edge to the unique abstract goal
+    observation ``G``.
+    """
+
+    from minimal_qrl.baselines import HybridAStarConfig
+    from minimal_qrl.industry_exp.exact_discrete_value_lp import (
+        DIRECT_GOAL,
+        build_discrete_value_graph,
+    )
+
+    if not hasattr(env, "abstract_goal_observation"):
+        raise ValueError("full-graph goal-set QRL requires an abstract goal environment")
+    env.reset(seed=int(config.uniform_push_seed), options={"device_id": config.device_id})
+    astar_config = HybridAStarConfig(
+        position_resolution=float(config.position_resolution),
+        heading_bins=int(config.heading_bins),
+        primitive_steps=int(config.primitive_steps),
+        primitive_scales=tuple(float(value) for value in config.primitive_scales),
+    )
+    graph = build_discrete_value_graph(env, astar_config)
+    reachable = _goal_reachable_lattice_mask(graph)
+    direct = graph.destinations == DIRECT_GOAL
+    edge_keep = reachable[graph.sources] & (
+        direct
+        | (
+            (graph.destinations >= 0)
+            & reachable[np.maximum(graph.destinations, 0)]
+        )
+    )
+    edge_sources = graph.sources[edge_keep].astype(np.int64, copy=False)
+    edge_destinations = graph.destinations[edge_keep].astype(np.int64, copy=False)
+    edge_costs = graph.costs[edge_keep].astype(np.float32, copy=False)
+    edge_action_indices = graph.action_indices[edge_keep].astype(np.int16, copy=False)
+    terminal_indices = np.flatnonzero(graph.terminal & reachable).astype(np.int64)
+    ordinary_count = int(len(edge_sources))
+    terminal_edge_count = int(len(terminal_indices))
+    total_count = ordinary_count + terminal_edge_count
+
+    # Encode each finite graph node once, then gather edge endpoints.  This is
+    # observation construction only; env.step() is deliberately never called.
+    state_observations = np.stack(
+        [env.state_to_observation(state) for state in graph.states]
+    ).astype(np.float32)
+    goal_observation = env.abstract_goal_observation().astype(np.float32)
+    observations = np.concatenate(
+        [state_observations[edge_sources], state_observations[terminal_indices]],
+        axis=0,
+    )
+    next_observations = np.empty_like(observations)
+    ordinary_destination = edge_destinations >= 0
+    next_observations[:ordinary_count][ordinary_destination] = state_observations[
+        edge_destinations[ordinary_destination]
+    ]
+    next_observations[:ordinary_count][~ordinary_destination] = goal_observation
+    next_observations[ordinary_count:] = goal_observation
+
+    action_scales = np.asarray(config.primitive_scales, dtype=np.float32)
+    actions = np.zeros((total_count, 1), dtype=np.float32)
+    actions[:ordinary_count, 0] = (
+        action_scales[edge_action_indices.astype(np.int64)] * float(env.omega_max)
+    )
+    rewards = np.concatenate(
+        [-edge_costs, np.zeros(terminal_edge_count, dtype=np.float32)]
+    )
+    terminals = np.zeros(total_count, dtype=np.bool_)
+    terminals[:ordinary_count] = ~ordinary_destination
+    terminals[ordinary_count:] = True
+    abstract_goal_edges = np.zeros(total_count, dtype=np.bool_)
+    abstract_goal_edges[ordinary_count:] = True
+    source_terminal = abstract_goal_edges.copy()
+
+    # Assign an independent state->G source to every non-abstract training row.
+    # A shuffled tiling makes the marginal exactly uniform up to one sample.
+    push_pool = np.flatnonzero(reachable & ~graph.terminal).astype(np.int64)
+    rng = np.random.default_rng(int(config.uniform_push_seed))
+    push_pool = push_pool[rng.permutation(len(push_pool))]
+    repeats = int(np.ceil(ordinary_count / max(len(push_pool), 1)))
+    push_indices = np.tile(push_pool, repeats)[:ordinary_count]
+    push_observations = np.empty_like(observations)
+    push_observations[:ordinary_count] = state_observations[push_indices]
+    push_observations[ordinary_count:] = goal_observation
+    push_counts = np.bincount(
+        np.searchsorted(np.sort(push_pool), push_indices),
+        minlength=len(push_pool),
+    )
+
+    graph_sources = np.concatenate([edge_sources, terminal_indices])
+    graph_destinations = np.concatenate(
+        [edge_destinations, np.full(terminal_edge_count, DIRECT_GOAL, dtype=np.int64)]
+    )
+    graph_costs = np.concatenate(
+        [edge_costs, np.zeros(terminal_edge_count, dtype=np.float32)]
+    )
+    transition_infos = {
+        "abstract_goal_edge": abstract_goal_edges,
+        "source_terminal_goal_state": source_terminal,
+        "task_goal_observations": np.repeat(
+            goal_observation[None, :], total_count, axis=0
+        ),
+        "global_push_task_source_observations": push_observations,
+        "context_id": np.full(total_count, 2_000_000, dtype=np.int64),
+        "full_graph_macro_transition": np.ones(total_count, dtype=np.bool_),
+        "full_graph_source_index": graph_sources,
+        "full_graph_destination_index": graph_destinations,
+        "full_graph_action_index": np.concatenate(
+            [
+                edge_action_indices,
+                np.full(terminal_edge_count, -1, dtype=np.int16),
+            ]
+        ),
+        "full_graph_direct_goal_edge": graph_destinations == DIRECT_GOAL,
+    }
+    dataset = IndependentTransitionDataset(
+        env=env,
+        observations=observations,
+        actions=actions,
+        next_observations=next_observations,
+        rewards=rewards,
+        terminals=terminals,
+        timeouts=np.zeros(total_count, dtype=np.bool_),
+        transition_infos=transition_infos,
+        name="full_graph_baseline_goal_set_qrl",
+    )
+
+    abstract_goal_index = int(env.task_context_indices["abstract_goal"])
+    if collection_stats is not None:
+        collection_stats["full_graph_goal_set_qrl"] = {
+            "generation_source": "validated_discrete_lattice_macro_edges",
+            "continuous_env_step_used": False,
+            "oracle_value_labels_used": False,
+            "hybrid_astar_trajectories_used": False,
+            "device_id": str(config.device_id),
+            "position_resolution": float(config.position_resolution),
+            "heading_bins": int(config.heading_bins),
+            "primitive_steps": int(config.primitive_steps),
+            "primitive_scales": [float(value) for value in config.primitive_scales],
+            "grid_states": int(len(graph.states)),
+            "valid_states": int(np.sum(graph.valid)),
+            "goal_reachable_states": int(np.sum(reachable)),
+            "goal_reachable_nonterminal_states": int(len(push_pool)),
+            "terminal_lattice_states": terminal_edge_count,
+            "ordinary_macro_edges": int(np.sum(edge_destinations >= 0)),
+            "direct_macro_edges_to_goal": int(np.sum(edge_destinations < 0)),
+            "terminal_zero_edges_to_goal": terminal_edge_count,
+            "training_transitions": total_count,
+            "uniform_global_push_min_count": int(np.min(push_counts)),
+            "uniform_global_push_max_count": int(np.max(push_counts)),
+            "lp_constraint_graph_digest": _full_graph_digest(
+                sources=edge_sources,
+                destinations=edge_destinations,
+                costs=edge_costs,
+                terminal=graph.terminal,
+            ),
+            "training_graph_digest": _full_graph_digest(
+                sources=graph_sources,
+                destinations=graph_destinations,
+                costs=graph_costs,
+                terminal=graph.terminal,
+            ),
+            "goal_node_audit": {
+                "construction": "one explicit extended-state observation G",
+                "shared_encoder_and_iqe": True,
+                "abstract_goal_feature_index": abstract_goal_index,
+                "goal_feature_value": float(goal_observation[abstract_goal_index]),
+                "physical_state_goal_feature_max": float(
+                    np.max(state_observations[:, abstract_goal_index])
+                ),
+                "terminal_to_goal_zero_edges": terminal_edge_count,
+                "fixed_single_terminal_point_used": False,
+            },
+        }
+    return dataset
 
 
 def _remaining_nonnegative_costs(rewards: Sequence[float]) -> np.ndarray:

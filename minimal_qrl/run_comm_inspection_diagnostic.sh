@@ -23,6 +23,7 @@
 #   PHASE=targeted_supervised_iqe bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=dense_transition_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=exact_value_lp bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -595,6 +596,94 @@ exact_value_lp() {
     ${real_dynamics_args[@]+"${real_dynamics_args[@]}"}
 }
 
+full_graph_goal_set_qrl() {
+  local experiment_dir="${FULL_GRAPH_QRL_DIR:-$OUTPUT_ROOT/full_graph_baseline_goal_set_qrl}"
+  local checkpoint="$experiment_dir/checkpoint_final.pth"
+  local local_eval_dir="${FULL_GRAPH_LOCAL_EVAL_DIR:-$experiment_dir/u_trap_local_eval}"
+  local mppi_dir="${FULL_GRAPH_MPPI_DIR:-$experiment_dir/mppi_test_u_trap}"
+  local reuse_oracle_args=()
+  if [[ -n "${FULL_GRAPH_REUSE_ORACLE_JSON:-}" ]]; then
+    reuse_oracle_args+=(--reuse-oracle-json "$FULL_GRAPH_REUSE_ORACLE_JSON")
+  fi
+
+  "$PYTHON_BIN" minimal_qrl/train.py \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --output-dir "$experiment_dir" \
+    --seed "${FULL_GRAPH_QRL_SEED:-42}" \
+    --device "${DEVICE:-cpu}" \
+    --comm-dataset-mode full_graph_goal_set \
+    --full-graph-device-id u_trap_target \
+    --full-graph-position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --full-graph-heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --full-graph-primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --full-graph-primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --full-graph-uniform-push-seed "${FULL_GRAPH_UNIFORM_PUSH_SEED:-20260824}" \
+    --batch-size "${BATCH_SIZE:-256}" \
+    --total-steps "${TOTAL_STEPS:-120000}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --qrl-cost-source negative_reward \
+    --global-push-softplus-offset "${GLOBAL_PUSH_SOFTPLUS_OFFSET:-15.0}" \
+    --global-push-softplus-beta "${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}" \
+    --global-push-abstract-goal-ratio 1.0 \
+    --global-push-state-goal-ratio 0.0 \
+    --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
+    --qrl-temporal-constraint-weight 0.0 \
+    --qrl-goal-return-constraint-weight 0.0 \
+    --qrl-nstep-goal-constraint-weight 0.0 \
+    --qrl-success-transition-weight 1.0 \
+    --task-aware-teacher-ratio 0.0 \
+    --log-interval "${LOG_INTERVAL:-100}" \
+    --save-interval "${SAVE_INTERVAL:-2000}" \
+    --eval-interval 0 \
+    --visualization-interval 0 \
+    --planning-eval-interval 0
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.qrl_oracle_diagnostics \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --checkpoint "$checkpoint" \
+    --output-dir "$experiment_dir/oracle_diagnostics" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --seed "${FULL_GRAPH_ORACLE_EVAL_SEED:-20260823}" \
+    --global-eval-samples "${FULL_GRAPH_ORACLE_EVAL_SAMPLES:-20000}" \
+    --astar-position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --astar-heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --astar-primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --oracle-value-cache-dir "${ORACLE_VALUE_CACHE_DIR:-$OUTPUT_ROOT/oracle_value_cache}"
+
+  "$PYTHON_BIN" -m minimal_qrl.eval.u_trap_local_navigability \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --checkpoints "$checkpoint" \
+    --output-dir "$local_eval_dir" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --seed "${LOCAL_NAV_SEED:-20260802}" \
+    --astar-position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --astar-heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --astar-primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --astar-max-expansions "${ASTAR_MAX_EXPANSIONS:-200000}" \
+    --astar-timeout-sec "${ASTAR_TIMEOUT_SEC:-120}" \
+    ${reuse_oracle_args[@]+"${reuse_oracle_args[@]}"}
+
+  "$PYTHON_BIN" minimal_qrl/eval/comm_inspection_baseline_eval.py \
+    --stage pilot \
+    --methods full_graph_goal_set_qrl_mppi \
+    --output-dir "$mppi_dir" \
+    --qrl-checkpoints "$checkpoint" \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --task-bank "$TASK_BANK" \
+    --task-split test \
+    --task-strata u_trap \
+    --seed "${SEED:-0}" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --mppi-horizon "${MPPI_HORIZON:-10}" \
+    --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \
+    --mppi-noise-sigma "${MPPI_NOISE_SIGMA:-0.8}" \
+    --mppi-temperature "${MPPI_TEMPERATURE:-1.0}" \
+    --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}"
+}
+
 case "$PHASE" in
   prepare)
     ;;
@@ -625,6 +714,9 @@ case "$PHASE" in
   exact_value_lp)
     exact_value_lp
     ;;
+  full_graph_goal_set_qrl)
+    full_graph_goal_set_qrl
+    ;;
   benchmark)
     benchmark
     ;;
@@ -635,7 +727,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, dense_transition_qrl, exact_value_lp, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, dense_transition_qrl, exact_value_lp, full_graph_goal_set_qrl, benchmark, or all)" >&2
     exit 2
     ;;
 esac

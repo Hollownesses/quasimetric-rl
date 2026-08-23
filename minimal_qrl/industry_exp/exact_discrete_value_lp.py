@@ -32,6 +32,7 @@ from minimal_qrl.dataset import (
     DenseUTrapTransitionConfig,
     build_dense_u_trap_state_bank,
     create_dense_u_trap_transition_dataset,
+    _full_graph_digest,
 )
 from minimal_qrl.envs import CommInspectionDubinsUAV2D
 from minimal_qrl.industry_exp.scalability_scenarios import (
@@ -586,6 +587,14 @@ def main() -> None:
     dijkstra_values = reverse_dijkstra(graph)
     dijkstra_time = perf_counter() - dijkstra_started
     reachable = graph.valid & np.isfinite(dijkstra_values)
+    direct = graph.destinations == DIRECT_GOAL
+    lp_edge_keep = reachable[graph.sources] & (
+        direct
+        | (
+            (graph.destinations >= 0)
+            & reachable[np.maximum(graph.destinations, 0)]
+        )
+    )
     lp_values, lp_diagnostics = solve_exact_value_lp(
         terminal=graph.terminal,
         sources=graph.sources,
@@ -652,6 +661,14 @@ def main() -> None:
                 else "bounded"
             ),
             "lp_domain": "goal-reachable valid states",
+            "lp_constraint_graph_digest": _full_graph_digest(
+                sources=graph.sources[lp_edge_keep].astype(np.int64, copy=False),
+                destinations=graph.destinations[lp_edge_keep].astype(
+                    np.int64, copy=False
+                ),
+                costs=graph.costs[lp_edge_keep].astype(np.float32, copy=False),
+                terminal=graph.terminal,
+            ),
         },
         "lp_solver": lp_diagnostics,
         "comparison": {

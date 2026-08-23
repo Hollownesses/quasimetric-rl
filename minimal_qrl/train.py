@@ -67,9 +67,11 @@ from minimal_qrl.envs import (
 )
 from minimal_qrl.dataset import (
     DenseUTrapTransitionConfig,
+    FullGraphGoalSetQRLConfig,
     QRLExploreConfig,
     build_qrl_exploration_start_bank,
     create_dataset,
+    create_full_graph_goal_set_qrl_dataset,
 )
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
 from minimal_qrl.eval.comm_inspection_oracle_bank import (
@@ -528,6 +530,17 @@ def train(args):
         args.qrl_goal_return_constraint_weight = 0.0
         args.qrl_nstep_goal_constraint_weight = 0.0
         args.qrl_success_transition_weight = 1.0
+    if getattr(args, 'comm_dataset_mode', 'standard') == 'full_graph_goal_set':
+        # Exact baseline-QRL diagnostic: one graph, one explicit G, no enhanced
+        # temporal targets or replay-distribution effects.
+        args.task_aware_teacher_ratio = 0.0
+        args.target_env_transitions = None
+        args.qrl_temporal_constraint_weight = 0.0
+        args.qrl_goal_return_constraint_weight = 0.0
+        args.qrl_nstep_goal_constraint_weight = 0.0
+        args.qrl_success_transition_weight = 1.0
+        args.global_push_abstract_goal_ratio = 1.0
+        args.global_push_state_goal_ratio = 0.0
     # 设置随机种子
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -591,6 +604,7 @@ def train(args):
     create_env_fn = create_env_factory(args.env_type, **env_kwargs)
     qrl_explore_config: Optional[QRLExploreConfig] = None
     dense_u_trap_config: Optional[DenseUTrapTransitionConfig] = None
+    full_graph_config: Optional[FullGraphGoalSetQRLConfig] = None
     exploration_start_bank_path: Optional[str] = None
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         if args.env_type != 'comm_inspection_dubins_uav':
@@ -686,11 +700,31 @@ def train(args):
             dense_u_trap_config.primitive_scales,
             dense_u_trap_config.primitive_steps,
         )
+    if getattr(args, 'comm_dataset_mode', 'standard') == 'full_graph_goal_set':
+        if args.env_type != 'comm_inspection_dubins_uav':
+            raise ValueError('full-graph goal-set QRL only supports comm_inspection_dubins_uav')
+        full_graph_config = FullGraphGoalSetQRLConfig(
+            device_id=str(args.full_graph_device_id),
+            position_resolution=float(args.full_graph_position_resolution),
+            heading_bins=int(args.full_graph_heading_bins),
+            primitive_steps=int(args.full_graph_primitive_steps),
+            primitive_scales=tuple(float(value) for value in args.full_graph_primitive_scales),
+            uniform_push_seed=int(args.full_graph_uniform_push_seed),
+        )
+        logger.info(
+            'Full-Graph Baseline Goal-set QRL enabled: lattice=%.3f x %d headings, '
+            'macro primitives=%s x %d, explicit unified G, uniform state->G push, '
+            'continuous env.step=none, Oracle value labels=none',
+            full_graph_config.position_resolution,
+            full_graph_config.heading_bins,
+            full_graph_config.primitive_scales,
+            full_graph_config.primitive_steps,
+        )
     
     # 注册环境（如果还没注册）
     from quasimetric_rl.data.base import CREATE_ENV_REGISTRY
     env_key = (args.env_type, args.env_type)  # 使用 env_type 作为 name
-    if env_key not in CREATE_ENV_REGISTRY:
+    if full_graph_config is None and env_key not in CREATE_ENV_REGISTRY:
         def load_episodes():
             env = create_env_fn()
             return create_dataset(
@@ -720,12 +754,19 @@ def train(args):
     # 创建数据集
     logger.info("创建数据集...")
     data_start = perf_counter()
-    dataset_conf = Dataset.Conf(
-        kind=args.env_type,
-        name=args.env_type,  # 使用 env_type 作为 name
-        future_observation_discount=0.99,
-    )
-    dataset = dataset_conf.make(dummy=False)
+    if full_graph_config is not None:
+        dataset = create_full_graph_goal_set_qrl_dataset(
+            create_env_fn(),
+            full_graph_config,
+            collection_stats=collection_stats,
+        )
+    else:
+        dataset_conf = Dataset.Conf(
+            kind=args.env_type,
+            name=args.env_type,  # 使用 env_type 作为 name
+            future_observation_discount=0.99,
+        )
+        dataset = dataset_conf.make(dummy=False)
     data_time_sec = float(prior_timing.get('data_time_sec', 0.0)) + (perf_counter() - data_start)
     logger.info(f"数据集大小: {len(dataset)} 个转移")
     success_transition_mask = dataset.raw_data.transition_infos.get(
@@ -762,6 +803,13 @@ def train(args):
         with open(dense_stats_path, 'w', encoding='utf-8') as handle:
             json.dump(collection_stats, handle, ensure_ascii=False, indent=2)
         logger.info('Saved dense-transition provenance: %s', dense_stats_path)
+    if full_graph_config is not None:
+        full_graph_stats_path = os.path.join(
+            output_dir, 'full_graph_dataset_stats.json'
+        )
+        with open(full_graph_stats_path, 'w', encoding='utf-8') as handle:
+            json.dump(collection_stats, handle, ensure_ascii=False, indent=2)
+        logger.info('Saved full-graph provenance: %s', full_graph_stats_path)
     if qrl_explore_config is not None:
         exploration_stats = dict(collection_stats)
         exploration_stats.update(
@@ -1572,7 +1620,15 @@ def train(args):
         'dataset_total_transitions': int(len(dataset)),
         'collection_stats': collection_stats or None,
         'qrl_objective': {
+            'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
             'global_push': True,
+            'global_push_abstract_goal_ratio': float(args.global_push_abstract_goal_ratio),
+            'global_push_state_goal_ratio': float(args.global_push_state_goal_ratio),
+            'global_push_source_distribution': (
+                'uniform_goal_reachable_nonterminal_lattice_states'
+                if full_graph_config is not None
+                else 'dataset_transition_sources'
+            ),
             'local_transition_constraint': True,
             'lagrange_optimization': True,
             'latent_transition_model': True,
@@ -1581,6 +1637,7 @@ def train(args):
             'success_return_weight': float(args.qrl_goal_return_constraint_weight),
             'nstep_bootstrap_weight': float(args.qrl_nstep_goal_constraint_weight),
             'success_transition_sampling_weight': float(args.qrl_success_transition_weight),
+            'oracle_value_labels': False,
         },
         'hardware': {
             'requested_device': str(args.device),
@@ -1788,11 +1845,17 @@ def main():
                              '1.0 表示每个 random rollout 额外收集 1 条 teacher 轨迹')
     parser.add_argument(
         '--comm-dataset-mode',
-        choices=['standard', 'qrl_explore', 'dense_transition_original'],
+        choices=[
+            'standard',
+            'qrl_explore',
+            'dense_transition_original',
+            'full_graph_goal_set',
+        ],
         default='standard',
         help='通信巡检数据模式：standard=现有 random+teacher；'
              'qrl_explore=覆盖驱动、局部安全的无目标探索；'
-             'dense_transition_original=global replay + exhaustive real U-trap lattice edges',
+             'dense_transition_original=global replay + exhaustive real U-trap lattice edges；'
+             'full_graph_goal_set=validated full lattice macro-edges + explicit unified G',
     )
     parser.add_argument('--dense-transition-device-id', default='u_trap_target')
     parser.add_argument('--dense-transition-position-resolution', type=float, default=0.25)
@@ -1808,6 +1871,17 @@ def main():
     parser.add_argument('--dense-transition-failure-results', default=None)
     parser.add_argument('--dense-transition-failure-position-radius', type=float, default=0.75)
     parser.add_argument('--dense-transition-failure-heading-radius', type=float, default=0.65)
+    parser.add_argument('--full-graph-device-id', default='u_trap_target')
+    parser.add_argument('--full-graph-position-resolution', type=float, default=0.25)
+    parser.add_argument('--full-graph-heading-bins', type=int, default=24)
+    parser.add_argument('--full-graph-primitive-steps', type=int, default=5)
+    parser.add_argument(
+        '--full-graph-primitive-scales',
+        type=float,
+        nargs='+',
+        default=[-1.0, -0.5, 0.0, 0.5, 1.0],
+    )
+    parser.add_argument('--full-graph-uniform-push-seed', type=int, default=20260824)
     parser.add_argument(
         '--explore-attempted-env-steps',
         type=int,

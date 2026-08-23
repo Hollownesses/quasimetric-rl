@@ -401,6 +401,88 @@ class Dataset:
         )
 
 
+class IndependentTransitionDataset(Dataset):
+    """Dataset for graph edges that are independent one-step transitions.
+
+    Unlike ``EpisodeData``, this representation does not require one edge's
+    destination to equal the next edge's source.  It is therefore the exact
+    storage model for a finite directed graph enumerated as ``(s, a, s', c)``.
+    """
+
+    def __init__(
+        self,
+        *,
+        env: gym.Env,
+        observations: Union[np.ndarray, torch.Tensor],
+        actions: Union[np.ndarray, torch.Tensor],
+        next_observations: Union[np.ndarray, torch.Tensor],
+        rewards: Union[np.ndarray, torch.Tensor],
+        terminals: Union[np.ndarray, torch.Tensor],
+        timeouts: Union[np.ndarray, torch.Tensor],
+        transition_infos: Optional[
+            Mapping[str, Union[np.ndarray, torch.Tensor]]
+        ] = None,
+        name: str = "independent_transitions",
+    ) -> None:
+        self.kind = "independent_transitions"
+        self.name = str(name)
+        self.future_observation_discount = 0.0
+        self.env_spec = EnvSpec.from_env(env)
+        observations = torch.as_tensor(observations)
+        actions = torch.as_tensor(actions)
+        next_observations = torch.as_tensor(next_observations)
+        rewards = torch.as_tensor(rewards)
+        terminals = torch.as_tensor(terminals)
+        timeouts = torch.as_tensor(timeouts)
+        count = int(rewards.shape[0])
+        if count <= 0:
+            raise ValueError("independent transition dataset must be non-empty")
+        for label, value in (
+            ("observations", observations),
+            ("actions", actions),
+            ("next_observations", next_observations),
+            ("terminals", terminals),
+            ("timeouts", timeouts),
+        ):
+            if int(value.shape[0]) != count:
+                raise ValueError(f"{label} must contain {count} transitions")
+        infos = {
+            key: torch.as_tensor(value)
+            for key, value in (transition_infos or {}).items()
+        }
+        for key, value in infos.items():
+            if int(value.shape[0]) != count:
+                raise ValueError(
+                    f"transition info {key!r} must contain {count} transitions"
+                )
+        self.raw_data = BatchData(
+            observations=observations,
+            actions=actions,
+            next_observations=next_observations,
+            rewards=rewards,
+            terminals=terminals,
+            timeouts=timeouts,
+            future_observations=next_observations,
+            transition_infos=infos,
+        )
+
+    def __getitem__(self, indices: torch.Tensor) -> BatchData:
+        indices = torch.as_tensor(indices)
+        return BatchData(
+            observations=self.raw_data.observations[indices],
+            actions=self.raw_data.actions[indices],
+            next_observations=self.raw_data.next_observations[indices],
+            rewards=self.raw_data.rewards[indices],
+            terminals=self.raw_data.terminals[indices],
+            timeouts=self.raw_data.timeouts[indices],
+            future_observations=self.raw_data.next_observations[indices],
+            transition_infos={
+                key: value[indices]
+                for key, value in self.raw_data.transition_infos.items()
+            },
+        )
+
+
 class DenseTransitionBatchSampler(torch.utils.data.Sampler):
     """Exact global/local batches with equal coverage of non-empty local strata."""
 
