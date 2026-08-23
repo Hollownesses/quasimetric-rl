@@ -475,6 +475,30 @@ class HybridAStarValueOracle:
         self._episode_unreachable += int(np.sum(unreachable))
         return values
 
+    def lattice_dataset(
+        self,
+        env: CommInspectionDubinsUAV2D,
+        *,
+        reachable_only: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return canonical lattice states and their active-task oracle values."""
+
+        if self._active_digest is None or self._active_values.size == 0:
+            raise RuntimeError("begin_episode must be called before lattice_dataset")
+        states, shape = self._grid(env)
+        if shape != self._grid_shape or len(states) != len(self._active_values):
+            raise RuntimeError("active oracle table is incompatible with the environment")
+        values = self._active_values.copy()
+        if reachable_only:
+            keep = np.isfinite(values)
+            return states[keep], values[keep]
+        return states, values
+
+    def active_diagnostics(self) -> Dict[str, Any]:
+        """Return provenance for the table currently serving value queries."""
+
+        return dict(self._episode_diagnostics)
+
     def end_episode(self) -> Dict[str, Any]:
         return {
             "oracle_value_queries": int(self._episode_queries),

@@ -65,6 +65,17 @@ The first run constructs and caches the reverse Hybrid A* value table. Use
 `RESUME=1` after interruption. Results are written to
 `results/diagnostic_u_shadow_corridors/oracle_mppi_test_u_trap/` by default.
 
+Run the supervised-IQE representability experiment and then evaluate its
+terminal value with the same MPPI controller on the 12 test U-traps:
+
+```bash
+PHASE=supervised_iqe DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+This keeps the default QRL encoder and IQE quasimetric head unchanged and
+optimizes only direct Huber/MSE regression to reverse-Dijkstra cost-to-go
+labels. It does not instantiate or optimize the QRL constraint losses.
+
 Use `TASK_SPLIT=validation` while tuning. Reserve the default `test` split for
 the final paired report.
 
