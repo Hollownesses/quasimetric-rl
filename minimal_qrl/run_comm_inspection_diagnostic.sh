@@ -22,6 +22,7 @@
 #   PHASE=supervised_iqe bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_iqe bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=dense_transition_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=exact_value_lp bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -565,6 +566,35 @@ dense_transition_qrl() {
     --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}"
 }
 
+exact_value_lp() {
+  local output_dir="${EXACT_VALUE_LP_DIR:-$OUTPUT_ROOT/exact_discrete_value_lp}"
+  local failure_results="${EXACT_VALUE_LP_FAILURE_RESULTS:-$OUTPUT_ROOT/supervised_iqe_oracle/mppi_test_u_trap/baseline_results.json}"
+  local real_dynamics_args=()
+  if [[ ! -f "$failure_results" ]]; then
+    echo "Missing prior Supervised-IQE failure results: $failure_results" >&2
+    exit 1
+  fi
+  if [[ "${EXACT_VALUE_LP_VALIDATE_REAL_DYNAMICS:-1}" != "1" ]]; then
+    real_dynamics_args+=(--skip-real-dynamics-validation)
+  fi
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.exact_discrete_value_lp \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --failure-results "$failure_results" \
+    --output-dir "$output_dir" \
+    --device-id u_trap_target \
+    --seed "${EXACT_VALUE_LP_SEED:-42}" \
+    --position-resolution "${DENSE_TRANSITION_POSITION_RESOLUTION:-0.25}" \
+    --heading-bins "${DENSE_TRANSITION_HEADING_BINS:-24}" \
+    --primitive-steps "${DENSE_TRANSITION_PRIMITIVE_STEPS:-5}" \
+    --primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --failure-position-radius "${DENSE_TRANSITION_FAILURE_POSITION_RADIUS:-0.75}" \
+    --failure-heading-radius "${DENSE_TRANSITION_FAILURE_HEADING_RADIUS:-0.65}" \
+    --lp-time-limit-sec "${EXACT_VALUE_LP_TIME_LIMIT_SEC:-300}" \
+    --oracle-value-cache-dir "${ORACLE_VALUE_CACHE_DIR:-$OUTPUT_ROOT/oracle_value_cache}" \
+    ${real_dynamics_args[@]+"${real_dynamics_args[@]}"}
+}
+
 case "$PHASE" in
   prepare)
     ;;
@@ -592,6 +622,9 @@ case "$PHASE" in
   dense_transition_qrl)
     dense_transition_qrl
     ;;
+  exact_value_lp)
+    exact_value_lp
+    ;;
   benchmark)
     benchmark
     ;;
@@ -602,7 +635,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, dense_transition_qrl, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, dense_transition_qrl, exact_value_lp, benchmark, or all)" >&2
     exit 2
     ;;
 esac
