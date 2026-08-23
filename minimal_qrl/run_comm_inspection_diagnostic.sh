@@ -21,6 +21,7 @@
 #   PHASE=oracle_mppi bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=supervised_iqe bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_iqe bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=dense_transition_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -466,6 +467,104 @@ targeted_supervised_iqe() {
     --viz-max-failures "${VIZ_MAX_FAILURES:-12}"
 }
 
+dense_transition_qrl() {
+  local experiment_dir="${DENSE_TRANSITION_QRL_DIR:-$OUTPUT_ROOT/dense_transition_original_qrl}"
+  local checkpoint="$experiment_dir/checkpoint_final.pth"
+  local local_eval_dir="${DENSE_TRANSITION_LOCAL_EVAL_DIR:-$experiment_dir/u_trap_local_eval}"
+  local mppi_dir="${DENSE_TRANSITION_MPPI_DIR:-$experiment_dir/mppi_test_u_trap}"
+  local failure_results="${DENSE_TRANSITION_FAILURE_RESULTS:-$OUTPUT_ROOT/supervised_iqe_oracle/mppi_test_u_trap/baseline_results.json}"
+  local reuse_oracle_args=()
+  if [[ ! -f "$failure_results" ]]; then
+    echo "Missing prior Supervised-IQE failure results: $failure_results" >&2
+    exit 1
+  fi
+  if [[ -n "${DENSE_TRANSITION_REUSE_ORACLE_JSON:-}" ]]; then
+    reuse_oracle_args+=(--reuse-oracle-json "$DENSE_TRANSITION_REUSE_ORACLE_JSON")
+  fi
+
+  "$PYTHON_BIN" minimal_qrl/train.py \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --output-dir "$experiment_dir" \
+    --seed "${DENSE_TRANSITION_SEED:-42}" \
+    --device "${DEVICE:-cpu}" \
+    --num-episodes "${NUM_EPISODES:-500}" \
+    --target-env-transitions "${TARGET_ENV_TRANSITIONS:-120000}" \
+    --comm-dataset-mode dense_transition_original \
+    --dense-transition-device-id u_trap_target \
+    --dense-transition-position-resolution "${DENSE_TRANSITION_POSITION_RESOLUTION:-0.25}" \
+    --dense-transition-heading-bins "${DENSE_TRANSITION_HEADING_BINS:-24}" \
+    --dense-transition-primitive-steps "${DENSE_TRANSITION_PRIMITIVE_STEPS:-5}" \
+    --dense-transition-primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --dense-transition-local-fraction "${DENSE_TRANSITION_LOCAL_FRACTION:-0.5}" \
+    --dense-transition-failure-results "$failure_results" \
+    --dense-transition-failure-position-radius "${DENSE_TRANSITION_FAILURE_POSITION_RADIUS:-0.75}" \
+    --dense-transition-failure-heading-radius "${DENSE_TRANSITION_FAILURE_HEADING_RADIUS:-0.65}" \
+    --task-aware-teacher-ratio "${DENSE_GLOBAL_TEACHER_RATIO:-1.0}" \
+    --batch-size "${BATCH_SIZE:-256}" \
+    --total-steps "${TOTAL_STEPS:-120000}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --qrl-cost-source negative_reward \
+    --global-push-softplus-offset "${GLOBAL_PUSH_SOFTPLUS_OFFSET:-15.0}" \
+    --global-push-softplus-beta "${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}" \
+    --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.6}" \
+    --global-push-state-goal-ratio "${GLOBAL_PUSH_STATE_GOAL_RATIO:-0.4}" \
+    --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
+    --qrl-temporal-constraint-weight 0.0 \
+    --qrl-goal-return-constraint-weight 0.0 \
+    --qrl-nstep-goal-constraint-weight 0.0 \
+    --qrl-success-transition-weight 1.0 \
+    --log-interval "${LOG_INTERVAL:-100}" \
+    --save-interval "${SAVE_INTERVAL:-2000}" \
+    --eval-interval 0 \
+    --visualization-interval 0 \
+    --planning-eval-interval 0
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.qrl_oracle_diagnostics \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --checkpoint "$checkpoint" \
+    --output-dir "$experiment_dir/oracle_diagnostics" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --seed "${DENSE_ORACLE_EVAL_SEED:-20260823}" \
+    --global-eval-samples "${DENSE_ORACLE_EVAL_SAMPLES:-20000}" \
+    --astar-position-resolution "${ASTAR_POSITION_RESOLUTION:-0.25}" \
+    --astar-heading-bins "${ASTAR_HEADING_BINS:-24}" \
+    --astar-primitive-steps "${ASTAR_PRIMITIVE_STEPS:-5}" \
+    --oracle-value-cache-dir "${ORACLE_VALUE_CACHE_DIR:-$OUTPUT_ROOT/oracle_value_cache}"
+
+  "$PYTHON_BIN" -m minimal_qrl.eval.u_trap_local_navigability \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --checkpoints "$checkpoint" \
+    --output-dir "$local_eval_dir" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --seed "${LOCAL_NAV_SEED:-20260802}" \
+    --astar-position-resolution "${ASTAR_POSITION_RESOLUTION:-0.25}" \
+    --astar-heading-bins "${ASTAR_HEADING_BINS:-24}" \
+    --astar-primitive-steps "${ASTAR_PRIMITIVE_STEPS:-5}" \
+    --astar-max-expansions "${ASTAR_MAX_EXPANSIONS:-200000}" \
+    --astar-timeout-sec "${ASTAR_TIMEOUT_SEC:-120}" \
+    ${reuse_oracle_args[@]+"${reuse_oracle_args[@]}"}
+
+  "$PYTHON_BIN" minimal_qrl/eval/comm_inspection_baseline_eval.py \
+    --stage pilot \
+    --methods dense_transition_qrl_mppi \
+    --output-dir "$mppi_dir" \
+    --qrl-checkpoints "$checkpoint" \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --task-bank "$TASK_BANK" \
+    --task-split test \
+    --task-strata u_trap \
+    --seed "${SEED:-0}" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --mppi-horizon "${MPPI_HORIZON:-10}" \
+    --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \
+    --mppi-noise-sigma "${MPPI_NOISE_SIGMA:-0.8}" \
+    --mppi-temperature "${MPPI_TEMPERATURE:-1.0}" \
+    --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}"
+}
+
 case "$PHASE" in
   prepare)
     ;;
@@ -490,6 +589,9 @@ case "$PHASE" in
   targeted_supervised_iqe)
     targeted_supervised_iqe
     ;;
+  dense_transition_qrl)
+    dense_transition_qrl
+    ;;
   benchmark)
     benchmark
     ;;
@@ -500,7 +602,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, dense_transition_qrl, benchmark, or all)" >&2
     exit 2
     ;;
 esac

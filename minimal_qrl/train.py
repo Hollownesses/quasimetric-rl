@@ -66,6 +66,7 @@ from minimal_qrl.envs import (
     CommInspectionDubinsUAV2D,
 )
 from minimal_qrl.dataset import (
+    DenseUTrapTransitionConfig,
     QRLExploreConfig,
     build_qrl_exploration_start_bank,
     create_dataset,
@@ -403,6 +404,22 @@ def _load_excluded_exploration_starts(
     return tuple(starts)
 
 
+def _load_failed_u_trap_starts(path: str) -> tuple[tuple[float, float, float], ...]:
+    with open(path, 'r', encoding='utf-8') as handle:
+        payload = json.load(handle)
+    records = payload.get('episode_results', payload) if isinstance(payload, dict) else payload
+    failed = [
+        tuple(float(value) for value in record['start'])
+        for record in records
+        if str(record.get('stratum', '')) == 'u_trap'
+        and not bool(record.get('success', False))
+        and record.get('start') is not None
+    ]
+    if not failed:
+        raise ValueError(f'no failed U-trap starts found in {path}')
+    return tuple(failed)
+
+
 def _exploration_regions_from_scenario(
     scenario: Optional[Mapping[str, Any]],
 ) -> Optional[Mapping[str, Sequence[float]]]:
@@ -505,6 +522,12 @@ def train(args):
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         args.task_aware_teacher_ratio = 0.0
         args.target_env_transitions = None
+    if getattr(args, 'comm_dataset_mode', 'standard') == 'dense_transition_original':
+        # This mode is intentionally a clean ablation of the original QRL core.
+        args.qrl_temporal_constraint_weight = 0.0
+        args.qrl_goal_return_constraint_weight = 0.0
+        args.qrl_nstep_goal_constraint_weight = 0.0
+        args.qrl_success_transition_weight = 1.0
     # 设置随机种子
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -567,6 +590,7 @@ def train(args):
     # 创建环境工厂函数
     create_env_fn = create_env_factory(args.env_type, **env_kwargs)
     qrl_explore_config: Optional[QRLExploreConfig] = None
+    dense_u_trap_config: Optional[DenseUTrapTransitionConfig] = None
     exploration_start_bank_path: Optional[str] = None
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         if args.env_type != 'comm_inspection_dubins_uav':
@@ -631,6 +655,37 @@ def train(args):
             int(qrl_explore_config.action_hold_max_steps),
             exploration_start_bank_path,
         )
+    if getattr(args, 'comm_dataset_mode', 'standard') == 'dense_transition_original':
+        if args.env_type != 'comm_inspection_dubins_uav':
+            raise ValueError('dense-transition QRL only supports comm_inspection_dubins_uav')
+        if not args.dense_transition_failure_results:
+            raise ValueError(
+                'dense-transition QRL requires --dense-transition-failure-results'
+            )
+        dense_u_trap_config = DenseUTrapTransitionConfig(
+            device_id=str(args.dense_transition_device_id),
+            position_resolution=float(args.dense_transition_position_resolution),
+            heading_bins=int(args.dense_transition_heading_bins),
+            primitive_steps=int(args.dense_transition_primitive_steps),
+            primitive_scales=tuple(float(value) for value in args.dense_transition_primitive_scales),
+            local_fraction=float(args.dense_transition_local_fraction),
+            diagnostic_regions=_exploration_regions_from_scenario(args._scenario_data),
+            failed_start_states=_load_failed_u_trap_starts(
+                args.dense_transition_failure_results
+            ),
+            failure_position_radius=float(args.dense_transition_failure_position_radius),
+            failure_heading_radius=float(args.dense_transition_failure_heading_radius),
+        )
+        logger.info(
+            'Dense-transition Original QRL enabled: global/local batch=%.3f/%.3f, '
+            'lattice=%.3f x %d headings, primitives=%s x %d steps, Oracle training labels=none',
+            1.0 - dense_u_trap_config.local_fraction,
+            dense_u_trap_config.local_fraction,
+            dense_u_trap_config.position_resolution,
+            dense_u_trap_config.heading_bins,
+            dense_u_trap_config.primitive_scales,
+            dense_u_trap_config.primitive_steps,
+        )
     
     # 注册环境（如果还没注册）
     from quasimetric_rl.data.base import CREATE_ENV_REGISTRY
@@ -652,6 +707,7 @@ def train(args):
                 target_env_transitions=getattr(args, 'target_env_transitions', None),
                 collection_stats=collection_stats,
                 qrl_explore_config=qrl_explore_config,
+                dense_u_trap_config=dense_u_trap_config,
             )
         
         register_offline_env(
@@ -699,6 +755,13 @@ def train(args):
         )
     if collection_stats:
         logger.info(f"数据收集统计: {collection_stats}")
+    if dense_u_trap_config is not None:
+        dense_stats_path = os.path.join(
+            output_dir, 'dense_transition_collection_stats.json'
+        )
+        with open(dense_stats_path, 'w', encoding='utf-8') as handle:
+            json.dump(collection_stats, handle, ensure_ascii=False, indent=2)
+        logger.info('Saved dense-transition provenance: %s', dense_stats_path)
     if qrl_explore_config is not None:
         exploration_stats = dict(collection_stats)
         exploration_stats.update(
@@ -856,6 +919,11 @@ def train(args):
             if args.env_type == 'comm_inspection_dubins_uav'
             else 1.0
         ),
+        dense_transition_fraction=(
+            float(dense_u_trap_config.local_fraction)
+            if dense_u_trap_config is not None
+            else None
+        ),
     )
     
     # 创建 TensorBoard writer（使用带时间戳的子目录，便于区分不同训练）
@@ -974,6 +1042,7 @@ def train(args):
             'optim_steps': optim_steps,
             'agent': agent.state_dict(),
             'losses': losses.state_dict(),
+            'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
         }, checkpoint_path)
         checkpoint_io_time += perf_counter() - checkpoint_start
         logger.info(f"保存初始检查点: {checkpoint_path}")
@@ -1249,6 +1318,7 @@ def train(args):
                     'optim_steps': optim_steps,
                     'agent': agent.state_dict(),
                     'losses': losses.state_dict(),
+                    'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
                 }, checkpoint_path)
                 checkpoint_io_time += perf_counter() - checkpoint_start
                 with open(timing_progress_path, 'w', encoding='utf-8') as f:
@@ -1285,6 +1355,7 @@ def train(args):
         'optim_steps': optim_steps,
         'agent': agent.state_dict(),
         'losses': losses.state_dict(),
+        'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
     }, final_path)
     checkpoint_io_time += perf_counter() - checkpoint_start
     logger.info(f"保存最终模型: {final_path}")
@@ -1500,6 +1571,17 @@ def train(args):
         ),
         'dataset_total_transitions': int(len(dataset)),
         'collection_stats': collection_stats or None,
+        'qrl_objective': {
+            'global_push': True,
+            'local_transition_constraint': True,
+            'lagrange_optimization': True,
+            'latent_transition_model': True,
+            'abstract_goal_zero_edge': float(args.abstract_goal_edge_loss_weight),
+            'temporal_multistep_weight': float(args.qrl_temporal_constraint_weight),
+            'success_return_weight': float(args.qrl_goal_return_constraint_weight),
+            'nstep_bootstrap_weight': float(args.qrl_nstep_goal_constraint_weight),
+            'success_transition_sampling_weight': float(args.qrl_success_transition_weight),
+        },
         'hardware': {
             'requested_device': str(args.device),
             'resolved_device': str(device),
@@ -1706,11 +1788,26 @@ def main():
                              '1.0 表示每个 random rollout 额外收集 1 条 teacher 轨迹')
     parser.add_argument(
         '--comm-dataset-mode',
-        choices=['standard', 'qrl_explore'],
+        choices=['standard', 'qrl_explore', 'dense_transition_original'],
         default='standard',
         help='通信巡检数据模式：standard=现有 random+teacher；'
-             'qrl_explore=覆盖驱动、局部安全的无目标探索',
+             'qrl_explore=覆盖驱动、局部安全的无目标探索；'
+             'dense_transition_original=global replay + exhaustive real U-trap lattice edges',
     )
+    parser.add_argument('--dense-transition-device-id', default='u_trap_target')
+    parser.add_argument('--dense-transition-position-resolution', type=float, default=0.25)
+    parser.add_argument('--dense-transition-heading-bins', type=int, default=24)
+    parser.add_argument('--dense-transition-primitive-steps', type=int, default=5)
+    parser.add_argument(
+        '--dense-transition-primitive-scales',
+        type=float,
+        nargs='+',
+        default=[-1.0, -0.5, 0.0, 0.5, 1.0],
+    )
+    parser.add_argument('--dense-transition-local-fraction', type=float, default=0.5)
+    parser.add_argument('--dense-transition-failure-results', default=None)
+    parser.add_argument('--dense-transition-failure-position-radius', type=float, default=0.75)
+    parser.add_argument('--dense-transition-failure-heading-radius', type=float, default=0.65)
     parser.add_argument(
         '--explore-attempted-env-steps',
         type=int,

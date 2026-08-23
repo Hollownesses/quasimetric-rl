@@ -337,11 +337,42 @@ class Dataset:
                        pin_memory: bool = False,
                        num_workers: int = 0, persistent_workers: bool = False,
                        successful_transition_weight: float = 1.0,
+                       dense_transition_fraction: Optional[float] = None,
                        **kwargs) -> torch.utils.data.DataLoader:
         successful_transition_weight = float(successful_transition_weight)
         if successful_transition_weight <= 0.0:
             raise ValueError("successful_transition_weight must be positive")
         success_mask = self.raw_data.transition_infos.get("task_success_episode")
+        if dense_transition_fraction is not None:
+            if successful_transition_weight != 1.0:
+                raise ValueError(
+                    "dense-transition batches cannot also use success reweighting"
+                )
+            dense_mask = self.raw_data.transition_infos.get(
+                "dense_u_trap_transition"
+            )
+            dense_strata = self.raw_data.transition_infos.get(
+                "dense_u_trap_stratum"
+            )
+            if dense_mask is None or dense_strata is None:
+                raise ValueError("dense-transition metadata is missing from dataset")
+            sampler = DenseTransitionBatchSampler(
+                dense_mask=dense_mask,
+                dense_strata=dense_strata,
+                batch_size=batch_size,
+                local_fraction=float(dense_transition_fraction),
+                num_batches=(len(self) // batch_size if drop_last else int(np.ceil(len(self) / batch_size))),
+            )
+            return torch.utils.data.DataLoader(
+                self,
+                batch_size=None,
+                sampler=sampler,
+                pin_memory=pin_memory,
+                persistent_workers=persistent_workers,
+                num_workers=num_workers,
+                worker_init_fn=seed_worker,
+                **kwargs,
+            )
         if success_mask is not None and successful_transition_weight != 1.0:
             sample_weights = torch.ones(len(self), dtype=torch.float64)
             success_mask = success_mask.to(dtype=torch.bool)
@@ -368,6 +399,64 @@ class Dataset:
             worker_init_fn=seed_worker,
             **kwargs,
         )
+
+
+class DenseTransitionBatchSampler(torch.utils.data.Sampler):
+    """Exact global/local batches with equal coverage of non-empty local strata."""
+
+    def __init__(
+        self,
+        *,
+        dense_mask: torch.Tensor,
+        dense_strata: torch.Tensor,
+        batch_size: int,
+        local_fraction: float,
+        num_batches: int,
+    ) -> None:
+        super().__init__()
+        if not 0.0 < float(local_fraction) < 1.0:
+            raise ValueError("local_fraction must lie strictly between 0 and 1")
+        self.batch_size = int(batch_size)
+        self.num_batches = int(num_batches)
+        mask = torch.as_tensor(dense_mask, dtype=torch.bool).cpu()
+        strata = torch.as_tensor(dense_strata, dtype=torch.int64).cpu()
+        self.global_pool = torch.nonzero(~mask, as_tuple=False).flatten()
+        local_ids = torch.unique(strata[mask], sorted=True)
+        self.local_pools = [
+            torch.nonzero(mask & (strata == stratum), as_tuple=False).flatten()
+            for stratum in local_ids
+        ]
+        self.local_pools = [pool for pool in self.local_pools if pool.numel()]
+        if not self.global_pool.numel() or not self.local_pools:
+            raise ValueError("dense-transition sampler requires global and local data")
+        self.local_count = int(round(self.batch_size * float(local_fraction)))
+        self.global_count = self.batch_size - self.local_count
+
+    @staticmethod
+    def _draw(pool: torch.Tensor, count: int) -> torch.Tensor:
+        return pool[torch.randint(0, pool.numel(), (int(count),))]
+
+    def __iter__(self):
+        stratum_counts = np.asarray(
+            [
+                self.local_count // len(self.local_pools)
+                + int(index < self.local_count % len(self.local_pools))
+                for index in range(len(self.local_pools))
+            ],
+            dtype=np.int64,
+        )
+        for _ in range(self.num_batches):
+            chunks = [self._draw(self.global_pool, self.global_count)]
+            chunks.extend(
+                self._draw(pool, int(count))
+                for pool, count in zip(self.local_pools, stratum_counts)
+                if int(count) > 0
+            )
+            batch = torch.cat(chunks)
+            yield batch[torch.randperm(batch.numel())]
+
+    def __len__(self) -> int:
+        return self.num_batches
 
 
 def seed_worker(_):

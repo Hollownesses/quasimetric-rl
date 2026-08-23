@@ -56,6 +56,31 @@ class QRLExploreConfig:
     local_safety_lookahead_steps: int = 10
 
 
+DENSE_U_TRAP_STRATA = (
+    "deep_interior",
+    "east_closed_wall",
+    "west_exit",
+    "deep_to_exit_transition",
+    "failed_start_neighborhood",
+)
+
+
+@dataclass(frozen=True)
+class DenseUTrapTransitionConfig:
+    """Exhaustive real-dynamics transitions on the diagnostic U-trap lattice."""
+
+    device_id: str = "u_trap_target"
+    position_resolution: float = 0.25
+    heading_bins: int = 24
+    primitive_steps: int = 5
+    primitive_scales: Tuple[float, ...] = (-1.0, -0.5, 0.0, 0.5, 1.0)
+    local_fraction: float = 0.5
+    diagnostic_regions: Optional[Mapping[str, Sequence[float]]] = None
+    failed_start_states: Tuple[Tuple[float, float, float], ...] = ()
+    failure_position_radius: float = 0.75
+    failure_heading_radius: float = 0.65
+
+
 def _actions_to_array(actions: List) -> np.ndarray:
     if len(actions) > 0:
         first_action = actions[0]
@@ -313,6 +338,10 @@ def _goal_set_transition_infos(
     exploration_loop_detected: bool = False,
     task_success_episode: bool = False,
     goal_return_costs: Optional[Sequence[float]] = None,
+    dense_u_trap_transition: bool = False,
+    dense_u_trap_stratum: int = -1,
+    dense_u_trap_primitive_steps: int = 0,
+    dense_u_trap_primitive_scale: float = 0.0,
 ) -> dict:
     infos = {
         "abstract_goal_edge": np.full((n,), bool(abstract_goal_edge), dtype=np.bool_),
@@ -329,6 +358,18 @@ def _goal_set_transition_infos(
         ),
         "task_success_episode": np.full(
             (n,), bool(task_success_episode), dtype=np.bool_
+        ),
+        "dense_u_trap_transition": np.full(
+            (n,), bool(dense_u_trap_transition), dtype=np.bool_
+        ),
+        "dense_u_trap_stratum": np.full(
+            (n,), int(dense_u_trap_stratum), dtype=np.int64
+        ),
+        "dense_u_trap_primitive_steps": np.full(
+            (n,), int(dense_u_trap_primitive_steps), dtype=np.int64
+        ),
+        "dense_u_trap_primitive_scale": np.full(
+            (n,), float(dense_u_trap_primitive_scale), dtype=np.float32
         ),
     }
     if goal_return_costs is None:
@@ -362,6 +403,202 @@ def _goal_set_transition_infos(
     infos["global_push_goal_observations"] = goal_pairs
     infos["global_push_pair_mask"] = pair_mask
     return infos
+
+
+def _angle_distance(values: np.ndarray, target: float) -> np.ndarray:
+    return np.abs((np.asarray(values) - float(target) + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+def build_dense_u_trap_state_bank(
+    env: gym.Env,
+    config: DenseUTrapTransitionConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build the same regular x-y-heading lattice without computing Oracle values."""
+
+    if float(config.position_resolution) <= 0.0 or int(config.heading_bins) <= 0:
+        raise ValueError("dense U-trap lattice resolution and heading bins must be positive")
+    regions = config.diagnostic_regions or {}
+    if "u_trap_interior" not in regions or "u_trap_west_exit" not in regions:
+        raise ValueError("dense U-trap mode requires interior and west-exit regions")
+    if not config.failed_start_states:
+        raise ValueError("dense U-trap mode requires failed start states")
+
+    resolution = float(config.position_resolution)
+    nx = int(np.floor((float(env.x_max) - float(env.x_min)) / resolution + 0.5)) + 1
+    ny = int(np.floor((float(env.y_max) - float(env.y_min)) / resolution + 0.5)) + 1
+    xs = np.minimum(
+        float(env.x_min) + np.arange(nx, dtype=np.float32) * resolution,
+        float(env.x_max),
+    )
+    ys = np.minimum(
+        float(env.y_min) + np.arange(ny, dtype=np.float32) * resolution,
+        float(env.y_max),
+    )
+    heading_width = 2.0 * np.pi / int(config.heading_bins)
+    headings = -np.pi + (
+        np.arange(int(config.heading_bins), dtype=np.float32) + 0.5
+    ) * heading_width
+    x_grid, y_grid, heading_grid = np.meshgrid(xs, ys, headings, indexing="ij")
+    states = np.stack(
+        [x_grid.ravel(), y_grid.ravel(), heading_grid.ravel()], axis=1
+    ).astype(np.float32)
+    valid = np.asarray([bool(env.is_valid_state(state)) for state in states])
+
+    interior = np.asarray(regions["u_trap_interior"], dtype=np.float64)
+    west = np.asarray(regions["u_trap_west_exit"], dtype=np.float64)
+    x, y, heading = states.T
+    x0, y0, x1, y1 = interior
+    width = x1 - x0
+    east_begin = x1 - 0.25 * width
+    deep_begin = x1 - 0.625 * width
+    inside_y = (y >= y0) & (y <= y1)
+    masks = (
+        inside_y & (x >= deep_begin) & (x < east_begin),
+        inside_y & (x >= east_begin) & (x <= x1),
+        inside_y & (x >= max(float(west[0]), x0 - 0.375 * width)) & (x < x0),
+        inside_y & (x >= x0) & (x < deep_begin),
+    )
+    stratum = np.full(len(states), -1, dtype=np.int8)
+    for index, mask in enumerate(masks):
+        stratum[valid & mask] = index
+
+    failure_mask = np.zeros(len(states), dtype=bool)
+    for failed in np.asarray(config.failed_start_states, dtype=np.float64).reshape((-1, 3)):
+        position_distance = np.linalg.norm(states[:, :2] - failed[None, :2], axis=1)
+        failure_mask |= (
+            (position_distance <= float(config.failure_position_radius))
+            & (_angle_distance(heading, float(failed[2])) <= float(config.failure_heading_radius))
+        )
+    stratum[valid & failure_mask] = len(DENSE_U_TRAP_STRATA) - 1
+    keep = stratum >= 0
+    retained_states = states[keep]
+    retained_strata = stratum[keep]
+    missing = [
+        name
+        for index, name in enumerate(DENSE_U_TRAP_STRATA)
+        if not bool(np.any(retained_strata == index))
+    ]
+    if missing:
+        raise RuntimeError(f"empty dense U-trap strata: {missing}")
+    return retained_states, retained_strata
+
+
+def create_dense_u_trap_transition_dataset(
+    env: gym.Env,
+    config: DenseUTrapTransitionConfig,
+    *,
+    seed: Optional[int],
+    collection_stats: Optional[dict[str, Any]] = None,
+) -> Iterator[EpisodeData]:
+    """Enumerate every local lattice state/action using only real environment dynamics."""
+
+    if int(config.primitive_steps) <= 0 or not config.primitive_scales:
+        raise ValueError("dense U-trap motion primitives must be non-empty and positive-length")
+    states, strata = build_dense_u_trap_state_bank(env, config)
+    env.reset(
+        seed=seed,
+        options={"device_id": config.device_id, "start": states[0]},
+    )
+    task_goal_obs = env.abstract_goal_observation().astype(np.float32)
+    base_snapshot = env.get_state()
+    transition_counts = np.zeros(len(DENSE_U_TRAP_STRATA), dtype=np.int64)
+    state_counts = np.asarray(
+        [np.sum(strata == index) for index in range(len(DENSE_U_TRAP_STRATA))],
+        dtype=np.int64,
+    )
+    collisions = 0
+    out_of_bounds = 0
+    successes = 0
+    accumulated_cost = 0.0
+
+    for state_index, (state, stratum_index) in enumerate(zip(states, strata)):
+        for primitive_index, scale in enumerate(config.primitive_scales):
+            snapshot = dict(base_snapshot)
+            snapshot["state"] = state.tolist()
+            snapshot["start"] = state.tolist()
+            snapshot["t"] = 0
+            snapshot["ever_task_feasible"] = False
+            snapshot["first_task_feasible_step"] = None
+            env.set_state(snapshot)
+            omega = float(scale) * float(env.omega_max)
+            observations = []
+            actions = []
+            next_observations = []
+            rewards = []
+            terminals = []
+            terminated = False
+            final_info: Mapping[str, Any] = {}
+            for _ in range(int(config.primitive_steps)):
+                observations.append(env.state_to_observation(env.state).astype(np.float32))
+                next_obs, reward, terminated, truncated, info = env.step(
+                    np.asarray([omega], dtype=np.float32)
+                )
+                actions.append(np.asarray([omega], dtype=np.float32))
+                next_observations.append(np.asarray(next_obs, dtype=np.float32))
+                rewards.append(float(reward))
+                terminals.append(bool(terminated))
+                final_info = info
+                if terminated or truncated:
+                    break
+            collision = bool(final_info.get("collision", False))
+            oob = bool(final_info.get("out_of_bounds", False))
+            success = bool(final_info.get("success", False))
+            collisions += int(collision)
+            out_of_bounds += int(oob)
+            successes += int(success)
+            accumulated_cost += -float(np.sum(rewards))
+            transition_counts[int(stratum_index)] += len(rewards)
+            transition_seed = (
+                None
+                if seed is None
+                else int(seed) + state_index * len(config.primitive_scales) + primitive_index
+            )
+            yield EpisodeData.from_simple_trajectory(
+                observations=np.asarray(observations, dtype=np.float32),
+                actions=np.asarray(actions, dtype=np.float32),
+                next_observations=np.asarray(next_observations, dtype=np.float32),
+                rewards=np.asarray(rewards, dtype=np.float32),
+                terminals=np.asarray(terminals, dtype=np.bool_),
+                timeouts=np.zeros(len(rewards), dtype=np.bool_),
+                transition_infos=_goal_set_transition_infos(
+                    n=len(rewards),
+                    task_goal_obs=task_goal_obs,
+                    context_id=1_000_000,
+                    env=env,
+                    global_push_seed=transition_seed,
+                    include_global_push_pairs=False,
+                    dense_u_trap_transition=True,
+                    dense_u_trap_stratum=int(stratum_index),
+                    dense_u_trap_primitive_steps=int(config.primitive_steps),
+                    dense_u_trap_primitive_scale=float(scale),
+                ),
+            )
+
+    if collection_stats is not None:
+        collection_stats["dense_u_trap"] = {
+            "generation_source": "regular_lattice_plus_real_environment_dynamics",
+            "oracle_used_for_training": False,
+            "device_id": str(config.device_id),
+            "position_resolution": float(config.position_resolution),
+            "heading_bins": int(config.heading_bins),
+            "primitive_steps": int(config.primitive_steps),
+            "primitive_scales": [float(value) for value in config.primitive_scales],
+            "states": int(len(states)),
+            "transitions": int(np.sum(transition_counts)),
+            "per_stratum_states": {
+                name: int(state_counts[index])
+                for index, name in enumerate(DENSE_U_TRAP_STRATA)
+            },
+            "per_stratum_transitions": {
+                name: int(transition_counts[index])
+                for index, name in enumerate(DENSE_U_TRAP_STRATA)
+            },
+            "collision_primitive_rollouts": int(collisions),
+            "out_of_bounds_primitive_rollouts": int(out_of_bounds),
+            "successful_primitive_rollouts": int(successes),
+            "mean_one_step_cost": float(accumulated_cost / max(np.sum(transition_counts), 1)),
+            "local_batch_fraction": float(config.local_fraction),
+        }
 
 
 def _remaining_nonnegative_costs(rewards: Sequence[float]) -> np.ndarray:
@@ -1413,6 +1650,7 @@ def create_dataset(
     target_env_transitions: Optional[int] = None,
     collection_stats: Optional[dict[str, Any]] = None,
     qrl_explore_config: Optional[QRLExploreConfig] = None,
+    dense_u_trap_config: Optional[DenseUTrapTransitionConfig] = None,
 ) -> Iterator[EpisodeData]:
     """
     创建数据集，支持多种环境
@@ -1440,6 +1678,30 @@ def create_dataset(
             config=qrl_explore_config,
             max_steps_per_episode=max_steps_per_episode,
             seed=seed,
+            collection_stats=collection_stats,
+        )
+        return
+
+    if dense_u_trap_config is not None:
+        if not (
+            hasattr(env, "abstract_goal_observation")
+            and hasattr(env, "device_ids")
+        ):
+            raise ValueError("dense U-trap transitions require a communication goal-set env")
+        if target_env_transitions is None:
+            raise ValueError("dense U-trap mode requires a global transition budget")
+        yield from create_budgeted_comm_dataset(
+            env,
+            target_env_transitions=int(target_env_transitions),
+            max_steps_per_episode=max_steps_per_episode,
+            seed=seed,
+            task_aware_teacher_ratio=task_aware_teacher_ratio,
+            collection_stats=collection_stats,
+        )
+        yield from create_dense_u_trap_transition_dataset(
+            env,
+            dense_u_trap_config,
+            seed=None if seed is None else int(seed) + 80_000_033,
             collection_stats=collection_stats,
         )
         return
