@@ -20,6 +20,7 @@
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=oracle_mppi bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=supervised_iqe bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=targeted_supervised_iqe bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -405,6 +406,66 @@ supervised_iqe() {
     --viz-max-failures "${VIZ_MAX_FAILURES:-12}"
 }
 
+targeted_supervised_iqe() {
+  local experiment_dir="${TARGETED_SUPERVISED_IQE_DIR:-$OUTPUT_ROOT/targeted_supervised_iqe_oracle}"
+  local checkpoint="$experiment_dir/checkpoint_final.pth"
+  local mppi_dir="${TARGETED_SUPERVISED_IQE_MPPI_DIR:-$experiment_dir/mppi_test_u_trap}"
+  local failure_results="${TARGETED_FAILURE_RESULTS:-$OUTPUT_ROOT/supervised_iqe_oracle/mppi_test_u_trap/baseline_results.json}"
+  local save_visualizations_flag=()
+  if [[ ! -f "$failure_results" ]]; then
+    echo "Missing prior Supervised-IQE results used to locate failed starts: $failure_results" >&2
+    exit 1
+  fi
+  if [[ "${SAVE_VISUALIZATIONS:-0}" == "1" ]]; then
+    save_visualizations_flag+=(--save-visualizations)
+  fi
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.supervised_iqe_oracle \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --output-dir "$experiment_dir" \
+    --device "${DEVICE:-auto}" \
+    --seed "${SUPERVISED_IQE_SEED:-20260823}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --train-samples "${SUPERVISED_IQE_TRAIN_SAMPLES:-200000}" \
+    --eval-samples "${SUPERVISED_IQE_EVAL_SAMPLES:-20000}" \
+    --low-cost-fraction "${SUPERVISED_IQE_LOW_COST_FRACTION:-0.25}" \
+    --sampling-mode targeted_u_trap \
+    --targeted-local-fraction "${TARGETED_LOCAL_FRACTION:-0.5}" \
+    --targeted-failure-results "$failure_results" \
+    --targeted-failure-position-radius "${TARGETED_FAILURE_POSITION_RADIUS:-0.75}" \
+    --targeted-failure-heading-radius "${TARGETED_FAILURE_HEADING_RADIUS:-0.65}" \
+    --train-steps "${SUPERVISED_IQE_TRAIN_STEPS:-10000}" \
+    --batch-size "${SUPERVISED_IQE_BATCH_SIZE:-512}" \
+    --learning-rate "${SUPERVISED_IQE_LR:-0.0001}" \
+    --loss "${SUPERVISED_IQE_LOSS:-huber}" \
+    --huber-delta "${SUPERVISED_IQE_HUBER_DELTA:-10}" \
+    --oracle-value-cache-dir "${ORACLE_VALUE_CACHE_DIR:-$OUTPUT_ROOT/oracle_value_cache}" \
+    --astar-position-resolution "${ASTAR_POSITION_RESOLUTION:-0.25}" \
+    --astar-heading-bins "${ASTAR_HEADING_BINS:-24}" \
+    --astar-primitive-steps "${ASTAR_PRIMITIVE_STEPS:-5}"
+
+  "$PYTHON_BIN" minimal_qrl/eval/comm_inspection_baseline_eval.py \
+    --stage pilot \
+    --methods targeted_supervised_iqe_mppi \
+    --output-dir "$mppi_dir" \
+    --qrl-checkpoints "$checkpoint" \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --task-bank "$TASK_BANK" \
+    --task-split test \
+    --task-strata u_trap \
+    --seed "${SEED:-0}" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --mppi-horizon "${MPPI_HORIZON:-10}" \
+    --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \
+    --mppi-noise-sigma "${MPPI_NOISE_SIGMA:-0.8}" \
+    --mppi-temperature "${MPPI_TEMPERATURE:-1.0}" \
+    --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}" \
+    ${save_visualizations_flag[@]+"${save_visualizations_flag[@]}"} \
+    --viz-max-successes "${VIZ_MAX_SUCCESSES:-12}" \
+    --viz-max-failures "${VIZ_MAX_FAILURES:-12}"
+}
+
 case "$PHASE" in
   prepare)
     ;;
@@ -426,6 +487,9 @@ case "$PHASE" in
   supervised_iqe)
     supervised_iqe
     ;;
+  targeted_supervised_iqe)
+    targeted_supervised_iqe
+    ;;
   benchmark)
     benchmark
     ;;
@@ -436,7 +500,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, benchmark, or all)" >&2
     exit 2
     ;;
 esac

@@ -37,6 +37,15 @@ from minimal_qrl.industry_exp.scalability_scenarios import (
 )
 
 
+TARGETED_U_TRAP_STRATA = (
+    "deep_interior",
+    "east_closed_wall",
+    "west_exit",
+    "deep_to_exit_transition",
+    "failed_start_neighborhood",
+)
+
+
 def _counts(total: int, size: int) -> list[int]:
     base, remainder = divmod(int(total), int(size))
     return [base + int(index < remainder) for index in range(size)]
@@ -166,17 +175,109 @@ def _sample_training_indices(
     return result
 
 
+def _load_failed_start_states(path: str | Path) -> np.ndarray:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    records = payload.get("episode_results", payload) if isinstance(payload, dict) else payload
+    failed = [
+        np.asarray(record["start"], dtype=np.float32)
+        for record in records
+        if str(record.get("stratum", "")) == "u_trap"
+        and not bool(record.get("success", False))
+        and record.get("start") is not None
+    ]
+    if not failed:
+        raise ValueError(f"no failed U-trap starts found in {path}")
+    return np.stack(failed, axis=0)
+
+
+def _angular_distance(left: np.ndarray, right: float) -> np.ndarray:
+    return np.abs((np.asarray(left) - float(right) + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+def _targeted_u_trap_pools(
+    states: np.ndarray,
+    scenario: Mapping[str, Any],
+    failed_starts: np.ndarray,
+    *,
+    failure_position_radius: float,
+    failure_heading_radius: float,
+) -> dict[str, np.ndarray]:
+    """Partition/overlay the reachable U-trap lattice into auditable local pools."""
+
+    regions = scenario["metadata"]["exploration_diagnostic_regions"]
+    interior = np.asarray(regions["u_trap_interior"], dtype=np.float64)
+    west = np.asarray(regions["u_trap_west_exit"], dtype=np.float64)
+    x, y, heading = np.asarray(states, dtype=np.float64).T
+    x0, y0, x1, y1 = interior
+    interior_width = x1 - x0
+    east_begin = x1 - 0.25 * interior_width
+    deep_begin = x1 - 0.625 * interior_width
+    inside_y = (y >= y0) & (y <= y1)
+
+    masks = {
+        "east_closed_wall": inside_y & (x >= east_begin) & (x <= x1),
+        "deep_interior": inside_y & (x >= deep_begin) & (x < east_begin),
+        "deep_to_exit_transition": inside_y & (x >= x0) & (x < deep_begin),
+        "west_exit": (
+            inside_y
+            & (x >= max(float(west[0]), x0 - 0.375 * interior_width))
+            & (x < x0)
+        ),
+    }
+    failed_mask = np.zeros(len(states), dtype=bool)
+    for failed in np.asarray(failed_starts, dtype=np.float64).reshape((-1, 3)):
+        position_distance = np.linalg.norm(states[:, :2] - failed[None, :2], axis=1)
+        failed_mask |= (
+            (position_distance <= float(failure_position_radius))
+            & (_angular_distance(heading, float(failed[2])) <= float(failure_heading_radius))
+        )
+    masks["failed_start_neighborhood"] = failed_mask
+    pools = {name: np.flatnonzero(masks[name]) for name in TARGETED_U_TRAP_STRATA}
+    empty = [name for name, indices in pools.items() if not len(indices)]
+    if empty:
+        raise RuntimeError(f"empty targeted U-trap lattice strata: {empty}")
+    return pools
+
+
+def _coverage_sample(
+    pool: np.ndarray,
+    count: int,
+    *,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Sample uniformly while covering every pool member before repeating it."""
+
+    pool = np.asarray(pool, dtype=np.int64)
+    count = int(count)
+    chunks = []
+    while count >= len(pool):
+        chunks.append(rng.permutation(pool))
+        count -= len(pool)
+    if count:
+        chunks.append(rng.permutation(pool)[:count])
+    return np.concatenate(chunks) if chunks else np.zeros((0,), dtype=np.int64)
+
+
 def build_supervised_dataset(
     env: CommInspectionDubinsUAV2D,
     oracle: HybridAStarValueOracle,
+    scenario: Mapping[str, Any],
     *,
     train_samples: int,
     eval_samples: int,
     low_cost_fraction: float,
     seed: int,
+    sampling_mode: str = "global",
+    targeted_local_fraction: float = 0.5,
+    failed_starts: np.ndarray | None = None,
+    failure_position_radius: float = 0.75,
+    failure_heading_radius: float = 0.65,
 ) -> dict[str, np.ndarray]:
     device_ids = list(env.device_ids)
-    train_counts = _counts(train_samples, len(device_ids))
+    targeted = sampling_mode == "targeted_u_trap"
+    local_samples = int(round(train_samples * targeted_local_fraction)) if targeted else 0
+    global_samples = int(train_samples) - local_samples
+    train_counts = _counts(global_samples, len(device_ids))
     eval_counts = _counts(eval_samples, len(device_ids))
     rng = np.random.default_rng(int(seed))
     parts: dict[str, list[np.ndarray]] = {
@@ -185,6 +286,8 @@ def build_supervised_dataset(
         "train_goal": [],
         "train_value": [],
         "train_device_index": [],
+        "train_sampling_group": [],
+        "train_local_stratum": [],
         "eval_state": [],
         "eval_observation": [],
         "eval_goal": [],
@@ -220,6 +323,8 @@ def build_supervised_dataset(
         parts["train_device_index"].append(
             np.full((len(train_states),), device_index, dtype=np.int16)
         )
+        parts["train_sampling_group"].append(np.zeros(len(train_states), dtype=np.int8))
+        parts["train_local_stratum"].append(np.full(len(train_states), -1, dtype=np.int8))
         parts["eval_state"].append(eval_states)
         parts["eval_observation"].append(
             _encode_states(env, eval_states, description=f"encode eval/{device_id}")
@@ -230,7 +335,94 @@ def build_supervised_dataset(
             np.full((len(eval_states),), device_index, dtype=np.int16)
         )
 
+        if targeted and device_id == "u_trap_target":
+            if failed_starts is None:
+                raise ValueError("targeted_u_trap sampling requires failed_starts")
+            pools = _targeted_u_trap_pools(
+                states,
+                scenario=scenario,
+                failed_starts=failed_starts,
+                failure_position_radius=failure_position_radius,
+                failure_heading_radius=failure_heading_radius,
+            )
+            # Keep the fixed global hold-out disjoint from targeted training as well.
+            eval_mask = np.zeros(len(states), dtype=bool)
+            eval_mask[eval_indices] = True
+            pools = {
+                name: indices[~eval_mask[indices]]
+                for name, indices in pools.items()
+            }
+            empty = [name for name, indices in pools.items() if not len(indices)]
+            if empty:
+                raise RuntimeError(f"targeted strata emptied by eval hold-out: {empty}")
+            local_counts = _counts(local_samples, len(TARGETED_U_TRAP_STRATA))
+            sampled_by_stratum = []
+            for stratum_index, (name, count) in enumerate(
+                zip(TARGETED_U_TRAP_STRATA, local_counts)
+            ):
+                indices = _coverage_sample(pools[name], count, rng=rng)
+                sampled_by_stratum.append(indices)
+                selected_states = states[indices]
+                parts["train_state"].append(selected_states)
+                parts["train_observation"].append(
+                    _encode_states(env, selected_states, description=f"encode local/{name}")
+                )
+                parts["train_goal"].append(
+                    np.repeat(goal[None, :], len(selected_states), axis=0)
+                )
+                parts["train_value"].append(values[indices].astype(np.float32))
+                parts["train_device_index"].append(
+                    np.full(len(selected_states), device_index, dtype=np.int16)
+                )
+                parts["train_sampling_group"].append(
+                    np.ones(len(selected_states), dtype=np.int8)
+                )
+                parts["train_local_stratum"].append(
+                    np.full(len(selected_states), stratum_index, dtype=np.int8)
+                )
+            parts["targeted_local_pool_size"] = [
+                np.asarray([len(pools[name]) for name in TARGETED_U_TRAP_STRATA], dtype=np.int32)
+            ]
+            parts["targeted_local_unique_sampled"] = [
+                np.asarray(
+                    [len(np.unique(indices)) for indices in sampled_by_stratum],
+                    dtype=np.int32,
+                )
+            ]
+            parts["targeted_local_sample_count"] = [
+                np.asarray(local_counts, dtype=np.int32)
+            ]
+            parts["targeted_failed_start_states"] = [
+                np.asarray(failed_starts, dtype=np.float32)
+            ]
+
     return {key: np.concatenate(value, axis=0) for key, value in parts.items()}
+
+
+def _sample_supervised_batch_indices(
+    dataset: Mapping[str, np.ndarray],
+    batch_size: int,
+    *,
+    rng: np.random.Generator,
+    local_fraction: float,
+) -> np.ndarray:
+    if float(local_fraction) <= 0.0:
+        return rng.integers(0, len(dataset["train_value"]), size=int(batch_size))
+    groups = np.asarray(dataset["train_sampling_group"])
+    global_pool = np.flatnonzero(groups == 0)
+    local_pool = np.flatnonzero(groups == 1)
+    local_count = int(round(int(batch_size) * float(local_fraction)))
+    global_count = int(batch_size) - local_count
+    if not len(global_pool) or not len(local_pool):
+        raise RuntimeError("balanced sampling requires non-empty global and local pools")
+    indices = np.concatenate(
+        [
+            rng.choice(global_pool, size=global_count, replace=global_count > len(global_pool)),
+            rng.choice(local_pool, size=local_count, replace=local_count > len(local_pool)),
+        ]
+    )
+    rng.shuffle(indices)
+    return indices
 
 
 @torch.no_grad()
@@ -264,6 +456,7 @@ def train_supervised(
     huber_delta: float,
     seed: int,
     log_interval: int,
+    local_batch_fraction: float = 0.0,
 ) -> list[dict[str, float]]:
     agent.to(device)
     agent.train()
@@ -284,7 +477,12 @@ def train_supervised(
     running = []
     progress = tqdm(range(1, int(steps) + 1), desc="supervised IQE")
     for step in progress:
-        indices = rng.integers(0, len(targets), size=int(batch_size))
+        indices = _sample_supervised_batch_indices(
+            dataset,
+            batch_size,
+            rng=rng,
+            local_fraction=local_batch_fraction,
+        )
         obs = torch.as_tensor(observations[indices], device=device, dtype=torch.float32)
         goal = torch.as_tensor(goals[indices], device=device, dtype=torch.float32)
         target = torch.as_tensor(targets[indices], device=device, dtype=torch.float32)
@@ -440,6 +638,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-samples", type=int, default=200_000)
     parser.add_argument("--eval-samples", type=int, default=20_000)
     parser.add_argument("--low-cost-fraction", type=float, default=0.25)
+    parser.add_argument(
+        "--sampling-mode",
+        choices=["global", "targeted_u_trap"],
+        default="global",
+    )
+    parser.add_argument("--targeted-local-fraction", type=float, default=0.5)
+    parser.add_argument(
+        "--targeted-failure-results",
+        default=None,
+        help="Prior MPPI baseline_results.json used to identify failed U-trap starts.",
+    )
+    parser.add_argument("--targeted-failure-position-radius", type=float, default=0.75)
+    parser.add_argument("--targeted-failure-heading-radius", type=float, default=0.65)
     parser.add_argument("--train-steps", type=int, default=10_000)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -464,6 +675,10 @@ def main() -> None:
     args = build_parser().parse_args()
     if not 0.0 <= float(args.low_cost_fraction) <= 1.0:
         raise ValueError("--low-cost-fraction must lie in [0, 1]")
+    if not 0.0 < float(args.targeted_local_fraction) < 1.0:
+        raise ValueError("--targeted-local-fraction must lie strictly between 0 and 1")
+    if args.sampling_mode == "targeted_u_trap" and not args.targeted_failure_results:
+        raise ValueError("targeted_u_trap sampling requires --targeted-failure-results")
     random.seed(int(args.seed))
     np.random.seed(int(args.seed))
     torch.manual_seed(int(args.seed))
@@ -487,15 +702,26 @@ def main() -> None:
         else output_dir / "oracle_value_cache"
     )
     oracle = HybridAStarValueOracle(config, cache_dir=cache_dir)
+    failed_starts = (
+        _load_failed_start_states(args.targeted_failure_results)
+        if args.sampling_mode == "targeted_u_trap"
+        else None
+    )
 
     dataset_start = perf_counter()
     dataset = build_supervised_dataset(
         env,
         oracle,
+        scenario,
         train_samples=int(args.train_samples),
         eval_samples=int(args.eval_samples),
         low_cost_fraction=float(args.low_cost_fraction),
         seed=int(args.seed),
+        sampling_mode=str(args.sampling_mode),
+        targeted_local_fraction=float(args.targeted_local_fraction),
+        failed_starts=failed_starts,
+        failure_position_radius=float(args.targeted_failure_position_radius),
+        failure_heading_radius=float(args.targeted_failure_heading_radius),
     )
     dataset_path = output_dir / "oracle_supervised_dataset.npz"
     with dataset_path.open("wb") as handle:
@@ -535,6 +761,11 @@ def main() -> None:
         huber_delta=float(args.huber_delta),
         seed=int(args.seed),
         log_interval=int(args.log_interval),
+        local_batch_fraction=(
+            float(args.targeted_local_fraction)
+            if args.sampling_mode == "targeted_u_trap"
+            else 0.0
+        ),
     )
     training_time = perf_counter() - train_start
     checkpoint_path = output_dir / "checkpoint_final.pth"
@@ -542,7 +773,7 @@ def main() -> None:
         {
             "optim_steps": int(args.train_steps),
             "agent": agent.state_dict(),
-            "training_mode": "supervised_reverse_dijkstra_oracle",
+            "training_mode": f"supervised_reverse_dijkstra_oracle/{args.sampling_mode}",
             "objective": f"{args.loss}(d_theta(s,g), V_oracle(s,g))",
             "model_signature": model_signature,
             "config": vars(args),
@@ -610,8 +841,38 @@ def main() -> None:
 
     adapter = QRLGoalValueAdapter(agent, env, device, distance_scale=1.0)
     del adapter  # Construction verifies checkpoint-compatible value inference.
+    dataset_summary = {
+        "sampling_mode": str(args.sampling_mode),
+        "train_samples": int(len(dataset["train_value"])),
+        "eval_samples": int(len(dataset["eval_value"])),
+        "train_target_min": float(np.min(dataset["train_value"])),
+        "train_target_max": float(np.max(dataset["train_value"])),
+        "train_target_mean": float(np.mean(dataset["train_value"])),
+        "global_train_samples": int(np.sum(dataset["train_sampling_group"] == 0)),
+        "local_train_samples": int(np.sum(dataset["train_sampling_group"] == 1)),
+    }
+    if args.sampling_mode == "targeted_u_trap":
+        pool_sizes = dataset["targeted_local_pool_size"]
+        unique_counts = dataset["targeted_local_unique_sampled"]
+        sample_counts = dataset["targeted_local_sample_count"]
+        dataset_summary["targeted_u_trap_strata"] = {
+            name: {
+                "pool_size": int(pool_sizes[index]),
+                "unique_sampled": int(unique_counts[index]),
+                "unique_coverage": float(unique_counts[index] / max(pool_sizes[index], 1)),
+                "train_samples": int(sample_counts[index]),
+            }
+            for index, name in enumerate(TARGETED_U_TRAP_STRATA)
+        }
+        dataset_summary["failed_start_count"] = int(
+            len(dataset["targeted_failed_start_states"])
+        )
+        dataset_summary["fixed_batch_local_fraction"] = float(
+            args.targeted_local_fraction
+        )
+
     payload = {
-        "experiment": "supervised_iqe_oracle_representability",
+        "experiment": f"supervised_iqe_oracle_representability/{args.sampling_mode}",
         "objective": "pure supervised regression only; no global push, local constraint, Lagrange multiplier, trajectory loss, or bootstrap",
         "scenario_config": str(Path(args.scenario_config).resolve()),
         "checkpoint": str(checkpoint_path.resolve()),
@@ -623,13 +884,7 @@ def main() -> None:
             "dataset_generation_sec": float(dataset_time),
             "supervised_training_sec": float(training_time),
         },
-        "dataset_summary": {
-            "train_samples": int(len(dataset["train_value"])),
-            "eval_samples": int(len(dataset["eval_value"])),
-            "train_target_min": float(np.min(dataset["train_value"])),
-            "train_target_max": float(np.max(dataset["train_value"])),
-            "train_target_mean": float(np.mean(dataset["train_value"])),
-        },
+        "dataset_summary": dataset_summary,
         "metrics": {
             "global": global_metrics,
             "u_trap_local": local_metrics,

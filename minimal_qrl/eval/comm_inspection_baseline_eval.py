@@ -57,7 +57,7 @@ CONTEXT_ALGORITHMS = {
 CONTEXT_MPPI_METHODS = {f"{name}_mppi" for name in CONTEXT_ALGORITHMS}
 METHODS = {
     "hybrid_astar", "mppi_no_terminal", "model_mppi", "oracle_mppi", "goal_set_sac",
-    "qrl_greedy", "qrl_mppi", "supervised_iqe_mppi",
+    "qrl_greedy", "qrl_mppi", "supervised_iqe_mppi", "targeted_supervised_iqe_mppi",
     *CONTEXT_ALGORITHMS, *CONTEXT_MPPI_METHODS,
 }
 SCALAR_METRICS = (
@@ -908,7 +908,12 @@ def main() -> None:
             completed_keys=completed_keys,
         ))
 
-    qrl_methods = {"qrl_greedy", "qrl_mppi", "supervised_iqe_mppi"} & set(methods)
+    qrl_methods = {
+        "qrl_greedy",
+        "qrl_mppi",
+        "supervised_iqe_mppi",
+        "targeted_supervised_iqe_mppi",
+    } & set(methods)
     if qrl_methods and not args.qrl_checkpoints:
         raise ValueError("QRL methods require --qrl-checkpoints")
     for qrl_index, checkpoint in enumerate(args.qrl_checkpoints):
@@ -949,6 +954,25 @@ def main() -> None:
                 env,
                 episode_specs,
                 model_run=f"supervised_iqe_{qrl_index}",
+                output_dir=output_dir,
+                viz_cfg=viz_cfg,
+                counters=counters,
+                on_record=incremental_writer.write,
+                completed_keys=completed_keys,
+            ))
+        if "targeted_supervised_iqe_mppi" in methods:
+            targeted_controller = MPPIController(
+                mppi_cfg,
+                terminal_mode="qrl",
+                qrl_agent=qrl_agent,
+            )
+            targeted_controller.name = "targeted_supervised_iqe_mppi"
+            records.extend(_evaluate_controller(
+                "targeted_supervised_iqe_mppi",
+                targeted_controller,
+                env,
+                episode_specs,
+                model_run=f"targeted_supervised_iqe_{qrl_index}",
                 output_dir=output_dir,
                 viz_cfg=viz_cfg,
                 counters=counters,
