@@ -102,7 +102,7 @@ class QuasimetricCriticLosses(CriticLossBase):
             critic.parameters(), total_optim_steps)
         self.lagrange_mult_optim, self.lagrange_mult_sched = lagrange_mult_optim_spec.create_optim_scheduler(
             local_constraint.parameters(), total_optim_steps)
-        assert len(list(local_constraint.parameters())) == 1
+        assert len(list(local_constraint.parameters())) in (1, 3)
 
 
     def forward(self, data: BatchData, critic_batch_info: CriticBatchInfo, *,

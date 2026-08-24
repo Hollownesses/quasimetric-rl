@@ -338,11 +338,40 @@ class Dataset:
                        num_workers: int = 0, persistent_workers: bool = False,
                        successful_transition_weight: float = 1.0,
                        dense_transition_fraction: Optional[float] = None,
+                       full_graph_stratified_constraints: bool = False,
                        **kwargs) -> torch.utils.data.DataLoader:
         successful_transition_weight = float(successful_transition_weight)
         if successful_transition_weight <= 0.0:
             raise ValueError("successful_transition_weight must be positive")
         success_mask = self.raw_data.transition_infos.get("task_success_episode")
+        if full_graph_stratified_constraints:
+            if successful_transition_weight != 1.0:
+                raise ValueError(
+                    "full-graph stratified batches cannot use success reweighting"
+                )
+            if dense_transition_fraction is not None:
+                raise ValueError(
+                    "full-graph and dense-transition batch samplers are mutually exclusive"
+                )
+            sampler = FullGraphConstraintBatchSampler(
+                direct_goal_mask=self.raw_data.transition_infos.get(
+                    "full_graph_direct_goal_edge"
+                ),
+                terminal_goal_mask=self.raw_data.transition_infos.get(
+                    "abstract_goal_edge"
+                ),
+                ordinary_batch_size=int(batch_size),
+            )
+            return torch.utils.data.DataLoader(
+                self,
+                batch_size=None,
+                sampler=sampler,
+                pin_memory=pin_memory,
+                persistent_workers=persistent_workers,
+                num_workers=num_workers,
+                worker_init_fn=seed_worker,
+                **kwargs,
+            )
         if dense_transition_fraction is not None:
             if successful_transition_weight != 1.0:
                 raise ValueError(
@@ -422,6 +451,9 @@ class IndependentTransitionDataset(Dataset):
         transition_infos: Optional[
             Mapping[str, Union[np.ndarray, torch.Tensor]]
         ] = None,
+        uniform_task_source_observation_pool: Optional[
+            Union[np.ndarray, torch.Tensor]
+        ] = None,
         name: str = "independent_transitions",
     ) -> None:
         self.kind = "independent_transitions"
@@ -465,9 +497,48 @@ class IndependentTransitionDataset(Dataset):
             future_observations=next_observations,
             transition_infos=infos,
         )
+        self.uniform_task_source_observation_pool = (
+            torch.as_tensor(uniform_task_source_observation_pool)
+            if uniform_task_source_observation_pool is not None
+            else None
+        )
+        if (
+            self.uniform_task_source_observation_pool is not None
+            and len(self.uniform_task_source_observation_pool) <= 0
+        ):
+            raise ValueError("uniform task-source observation pool must be non-empty")
+        self.full_graph_constraint_population_counts = None
+        if self.uniform_task_source_observation_pool is not None:
+            terminal = infos.get("abstract_goal_edge")
+            direct = infos.get("full_graph_direct_goal_edge")
+            if terminal is None or direct is None:
+                raise ValueError(
+                    "stratified full-graph dataset requires constraint-family masks"
+                )
+            terminal = terminal.to(dtype=torch.bool)
+            direct = direct.to(dtype=torch.bool) & ~terminal
+            ordinary = ~direct & ~terminal
+            self.full_graph_constraint_population_counts = torch.stack(
+                [ordinary.sum(), direct.sum(), terminal.sum()]
+            ).to(dtype=torch.float32)
 
     def __getitem__(self, indices: torch.Tensor) -> BatchData:
         indices = torch.as_tensor(indices)
+        transition_infos = {
+            key: value[indices]
+            for key, value in self.raw_data.transition_infos.items()
+        }
+        if self.uniform_task_source_observation_pool is not None:
+            pool_indices = torch.randint(
+                len(self.uniform_task_source_observation_pool),
+                (int(indices.numel()),),
+            )
+            transition_infos["global_push_task_source_observations"] = (
+                self.uniform_task_source_observation_pool[pool_indices]
+            )
+            transition_infos["full_graph_constraint_population_counts"] = (
+                self.full_graph_constraint_population_counts
+            )
         return BatchData(
             observations=self.raw_data.observations[indices],
             actions=self.raw_data.actions[indices],
@@ -476,11 +547,71 @@ class IndependentTransitionDataset(Dataset):
             terminals=self.raw_data.terminals[indices],
             timeouts=self.raw_data.timeouts[indices],
             future_observations=self.raw_data.next_observations[indices],
-            transition_infos={
-                key: value[indices]
-                for key, value in self.raw_data.transition_infos.items()
-            },
+            transition_infos=transition_infos,
         )
+
+
+class FullGraphConstraintBatchSampler(torch.utils.data.Sampler):
+    """Sample ordinary edges while including every goal-bound edge per batch."""
+
+    def __init__(
+        self,
+        *,
+        direct_goal_mask: Optional[torch.Tensor],
+        terminal_goal_mask: Optional[torch.Tensor],
+        ordinary_batch_size: int,
+    ) -> None:
+        super().__init__()
+        if direct_goal_mask is None or terminal_goal_mask is None:
+            raise ValueError("full-graph constraint-family metadata is missing")
+        if int(ordinary_batch_size) <= 0:
+            raise ValueError("ordinary_batch_size must be positive")
+        terminal = torch.as_tensor(terminal_goal_mask, dtype=torch.bool)
+        direct = torch.as_tensor(direct_goal_mask, dtype=torch.bool) & ~terminal
+        ordinary = ~direct & ~terminal
+        self.ordinary_indices = torch.nonzero(ordinary, as_tuple=False).flatten()
+        self.direct_goal_indices = torch.nonzero(direct, as_tuple=False).flatten()
+        self.terminal_goal_indices = torch.nonzero(
+            terminal,
+            as_tuple=False,
+        ).flatten()
+        self.ordinary_batch_size = int(ordinary_batch_size)
+        if not len(self.ordinary_indices):
+            raise ValueError("full-graph dataset has no ordinary edges")
+        if not len(self.direct_goal_indices):
+            raise ValueError("full-graph dataset has no direct-to-G edges")
+        if not len(self.terminal_goal_indices):
+            raise ValueError("full-graph dataset has no terminal-to-G edges")
+
+    @property
+    def total_batch_size(self) -> int:
+        return (
+            self.ordinary_batch_size
+            + len(self.direct_goal_indices)
+            + len(self.terminal_goal_indices)
+        )
+
+    def __len__(self) -> int:
+        return int(np.ceil(len(self.ordinary_indices) / self.ordinary_batch_size))
+
+    def __iter__(self):
+        permutation = self.ordinary_indices[
+            torch.randperm(len(self.ordinary_indices))
+        ]
+        for begin in range(0, len(permutation), self.ordinary_batch_size):
+            ordinary = permutation[begin : begin + self.ordinary_batch_size]
+            if len(ordinary) < self.ordinary_batch_size:
+                padding = self.ordinary_indices[
+                    torch.randint(
+                        len(self.ordinary_indices),
+                        (self.ordinary_batch_size - len(ordinary),),
+                    )
+                ]
+                ordinary = torch.cat([ordinary, padding])
+            batch = torch.cat(
+                [ordinary, self.direct_goal_indices, self.terminal_goal_indices]
+            )
+            yield batch[torch.randperm(len(batch))]
 
 
 class DenseTransitionBatchSampler(torch.utils.data.Sampler):

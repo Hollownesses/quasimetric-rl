@@ -13,6 +13,9 @@ from quasimetric_rl.data import BatchData
 from quasimetric_rl.modules.quasimetric_critic.losses import CriticBatchInfo
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
+from quasimetric_rl.modules.quasimetric_critic.losses.latent_dynamics import (
+    LatentDynamicsLoss,
+)
 from quasimetric_rl.modules.quasimetric_critic.losses.temporal_path import (
     GoalReturnConstraintLoss,
     NstepGoalConsistencyLoss,
@@ -65,6 +68,114 @@ def test_positive_rewards_are_clipped_to_zero_and_reported():
     assert torch.isclose(result.info["target_cost_min"], torch.tensor(0.0))
     assert torch.isclose(result.info["target_cost_max"], torch.tensor(2.0))
     assert torch.isclose(result.info["target_cost_mean"], torch.tensor(2.0 / 3.0))
+
+
+def test_full_graph_constraint_families_have_independent_duals():
+    class FixedQuasimetric(torch.nn.Module):
+        def forward(self, zx, zy):
+            return torch.tensor([2.0, 3.0, 3.0, 0.5, 2.0])
+
+    class DummyCritic(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.quasimetric_model = FixedQuasimetric()
+
+    data = make_batch([-1.0, -4.0, -1.0, -1.0, 0.0])
+    data.transition_infos = {
+        "full_graph_direct_goal_edge": torch.tensor(
+            [False, False, True, True, True]
+        ),
+        "abstract_goal_edge": torch.tensor(
+            [False, False, False, False, True]
+        ),
+        "full_graph_constraint_population_counts": torch.tensor(
+            [2.0, 2.0, 1.0]
+        ),
+    }
+    loss = LocalConstraintLoss(
+        epsilon=0.25,
+        step_cost=1.0,
+        cost_source="negative_reward",
+        init_lagrange_multiplier=0.01,
+        constraint_mode="full_graph_stratified",
+        direct_goal_epsilon=0.25,
+        terminal_goal_epsilon=0.0,
+    )
+    result = loss(
+        data,
+        CriticBatchInfo(
+            critic=DummyCritic(),
+            zx=torch.zeros(5, 2),
+            zy=torch.zeros(5, 2),
+        ),
+    )
+
+    assert len(list(loss.parameters())) == 3
+    assert torch.isclose(
+        result.info["ordinary"]["sq_deviation"], torch.tensor(0.5)
+    )
+    assert torch.isclose(
+        result.info["direct_goal"]["sq_deviation"], torch.tensor(2.0)
+    )
+    assert torch.isclose(
+        result.info["terminal_goal"]["sq_deviation"], torch.tensor(4.0)
+    )
+    assert torch.isclose(
+        result.info["ordinary"]["lagrange_mult"], torch.tensor(0.01)
+    )
+    assert torch.isclose(
+        result.info["direct_goal"]["lagrange_mult"], torch.tensor(0.01)
+    )
+    assert torch.isclose(
+        result.info["terminal_goal"]["lagrange_mult"], torch.tensor(0.01)
+    )
+    result.loss.backward()
+    dual_gradients = [parameter.grad for parameter in loss.parameters()]
+    assert all(gradient is not None for gradient in dual_gradients)
+    assert all(bool(torch.isfinite(gradient)) for gradient in dual_gradients)
+    assert len({round(float(gradient), 8) for gradient in dual_gradients}) == 3
+
+
+def test_stratified_batch_preserves_uniform_graph_latent_loss_weighting():
+    class IdentityDynamics(torch.nn.Module):
+        def forward(self, states, actions):
+            return states
+
+    class NextValueQuasimetric(torch.nn.Module):
+        def forward(self, predicted, target, bidirectional=False):
+            assert bidirectional
+            value = target[:, 0]
+            return torch.stack([value, value], dim=-1)
+
+    class DummyCritic(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.latent_dynamics = IdentityDynamics()
+            self.quasimetric_model = NextValueQuasimetric()
+
+    data = make_batch([-1.0, -1.0, -1.0, 0.0])
+    data.transition_infos = {
+        "full_graph_direct_goal_edge": torch.tensor(
+            [False, False, True, True]
+        ),
+        "abstract_goal_edge": torch.tensor([False, False, False, True]),
+        "full_graph_constraint_population_counts": torch.tensor(
+            [100.0, 1.0, 1.0]
+        ),
+    }
+    result = LatentDynamicsLoss(weight=1.0)(
+        data,
+        CriticBatchInfo(
+            critic=DummyCritic(),
+            zx=torch.zeros(4, 2),
+            zy=torch.tensor(
+                [[1.0, 0.0], [3.0, 0.0], [10.0, 0.0], [20.0, 0.0]]
+            ),
+        ),
+    )
+
+    expected = torch.tensor((50.0 * 1.0 + 50.0 * 9.0 + 1.0 * 100.0) / 101.0)
+    assert torch.isclose(result.info["sq_dists"], expected)
 
 
 def test_global_push_prefers_explicit_free_state_pairs():

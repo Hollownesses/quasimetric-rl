@@ -517,6 +517,14 @@ def train(args):
     oracle_generation_time = 0.0
     collection_stats: Dict[str, Any] = {}
     args._scenario_data = None
+    training_mode = str(getattr(args, 'comm_dataset_mode', 'standard'))
+    full_graph_modes = {
+        'full_graph_goal_set',
+        'full_graph_goal_set_stratified_constraints',
+    }
+    stratified_full_graph_constraints = (
+        training_mode == 'full_graph_goal_set_stratified_constraints'
+    )
     if getattr(args, 'scenario_config', None):
         args._scenario_data = load_scenario_config(args.scenario_config)
         args.env_type = 'comm_inspection_dubins_uav'
@@ -530,7 +538,7 @@ def train(args):
         args.qrl_goal_return_constraint_weight = 0.0
         args.qrl_nstep_goal_constraint_weight = 0.0
         args.qrl_success_transition_weight = 1.0
-    if getattr(args, 'comm_dataset_mode', 'standard') == 'full_graph_goal_set':
+    if training_mode in full_graph_modes:
         # Exact baseline-QRL diagnostic: one graph, one explicit G, no enhanced
         # temporal targets or replay-distribution effects.
         args.task_aware_teacher_ratio = 0.0
@@ -700,7 +708,7 @@ def train(args):
             dense_u_trap_config.primitive_scales,
             dense_u_trap_config.primitive_steps,
         )
-    if getattr(args, 'comm_dataset_mode', 'standard') == 'full_graph_goal_set':
+    if training_mode in full_graph_modes:
         if args.env_type != 'comm_inspection_dubins_uav':
             raise ValueError('full-graph goal-set QRL only supports comm_inspection_dubins_uav')
         full_graph_config = FullGraphGoalSetQRLConfig(
@@ -710,6 +718,7 @@ def train(args):
             primitive_steps=int(args.full_graph_primitive_steps),
             primitive_scales=tuple(float(value) for value in args.full_graph_primitive_scales),
             uniform_push_seed=int(args.full_graph_uniform_push_seed),
+            stratified_constraints=stratified_full_graph_constraints,
         )
         logger.info(
             'Full-Graph Baseline Goal-set QRL enabled: lattice=%.3f x %d headings, '
@@ -720,6 +729,12 @@ def train(args):
             full_graph_config.primitive_scales,
             full_graph_config.primitive_steps,
         )
+        if stratified_full_graph_constraints:
+            logger.info(
+                'Stratified constraint enforcement: ordinary=%d sampled/batch, '
+                'direct-to-G=all, terminal-to-G=all, independent dual variables',
+                int(args.batch_size),
+            )
     
     # 注册环境（如果还没注册）
     from quasimetric_rl.data.base import CREATE_ENV_REGISTRY
@@ -903,6 +918,17 @@ def train(args):
                     local_constraint=LocalConstraintLoss.Conf(
                         step_cost=step_cost,
                         cost_source=qrl_cost_source,
+                        constraint_mode=(
+                            'full_graph_stratified'
+                            if stratified_full_graph_constraints
+                            else 'unified'
+                        ),
+                        direct_goal_epsilon=float(
+                            args.full_graph_direct_goal_epsilon
+                        ),
+                        terminal_goal_epsilon=float(
+                            args.full_graph_terminal_goal_epsilon
+                        ),
                     ),
                     abstract_goal_edge=AbstractGoalEdgeLoss.Conf(weight=float(args.abstract_goal_edge_loss_weight)),
                     temporal_path=TemporalPathConstraintLoss.Conf(
@@ -972,6 +998,7 @@ def train(args):
             if dense_u_trap_config is not None
             else None
         ),
+        full_graph_stratified_constraints=stratified_full_graph_constraints,
     )
     
     # 创建 TensorBoard writer（使用带时间戳的子目录，便于区分不同训练）
@@ -988,6 +1015,237 @@ def train(args):
     evaluation_distance_scale = (
         1.0 if args.env_type == 'comm_inspection_dubins_uav' else None
     )
+    constraint_checkpoint_rows: List[Dict[str, Any]] = []
+    constraint_checkpoint_path = os.path.join(
+        output_dir,
+        'constraint_checkpoint_metrics.csv',
+    )
+    constraint_checkpoint_data = None
+    if stratified_full_graph_constraints:
+        from minimal_qrl.baselines import HybridAStarConfig, HybridAStarValueOracle
+        from minimal_qrl.industry_exp.supervised_iqe_oracle import (
+            _ranking_accuracy,
+            _regression_metrics,
+            _successor_ranking_dataset,
+            _u_trap_local_dataset,
+        )
+
+        checkpoint_oracle_started = perf_counter()
+        checkpoint_oracle_config = HybridAStarConfig(
+            position_resolution=float(full_graph_config.position_resolution),
+            heading_bins=int(full_graph_config.heading_bins),
+            primitive_steps=int(full_graph_config.primitive_steps),
+            primitive_scales=tuple(full_graph_config.primitive_scales),
+        )
+        checkpoint_oracle = HybridAStarValueOracle(
+            checkpoint_oracle_config,
+            cache_dir=Path(output_dir) / 'checkpoint_oracle_cache',
+        )
+        checkpoint_local = _u_trap_local_dataset(
+            eval_env,
+            checkpoint_oracle,
+            args._scenario_data,
+            seed=20260823,
+        )
+        checkpoint_successor = _successor_ranking_dataset(
+            eval_env,
+            checkpoint_oracle,
+            checkpoint_local,
+            checkpoint_oracle_config,
+            seed=20260823,
+        )
+        checkpoint_immediate_costs = np.asarray(
+            [
+                record['immediate_cost']
+                for record in checkpoint_successor['details']
+            ],
+            dtype=np.float32,
+        )
+        constraint_checkpoint_data = (
+            checkpoint_local,
+            checkpoint_successor,
+            checkpoint_immediate_costs,
+            _regression_metrics,
+            _ranking_accuracy,
+        )
+        oracle_generation_time += perf_counter() - checkpoint_oracle_started
+        if getattr(args, 'init_checkpoint', None) and os.path.exists(
+            constraint_checkpoint_path
+        ):
+            with open(
+                constraint_checkpoint_path,
+                'r',
+                encoding='utf-8',
+                newline='',
+            ) as handle:
+                constraint_checkpoint_rows = list(csv.DictReader(handle))
+        logger.info(
+            'Prepared checkpoint-only U-trap diagnostics: local=%d, successors=%d; '
+            'Oracle labels never enter the training loss',
+            len(checkpoint_local['values']),
+            len(checkpoint_successor['oracle_scores']),
+        )
+
+    def run_constraint_checkpoint_diagnostics(
+        step: int,
+        current_batch_data,
+    ) -> None:
+        nonlocal evaluation_time, constraint_checkpoint_rows
+        if constraint_checkpoint_data is None or current_batch_data is None:
+            return
+        started = perf_counter()
+        local, successor, immediate_costs, regression_metrics, ranking_accuracy = (
+            constraint_checkpoint_data
+        )
+        agent.eval()
+        if device != eval_device:
+            agent.to(eval_device)
+        try:
+            adapter = QRLGoalValueAdapter(
+                agent,
+                eval_env,
+                eval_device,
+                distance_scale=1.0,
+            )
+            local_predictions = adapter.batch_value(
+                local['observations'],
+                local['goals'],
+            )
+            local_metrics = regression_metrics(
+                local_predictions,
+                local['values'],
+            )
+            successor_values = adapter.batch_value(
+                successor['observations'],
+                successor['goals'],
+            )
+            successor_accuracy, successor_pairs = ranking_accuracy(
+                immediate_costs + successor_values,
+                successor['oracle_scores'],
+                successor['groups'],
+            )
+            row: Dict[str, Any] = {
+                'step': int(step),
+                'u_trap_local_mae': float(local_metrics['mae']),
+                'u_trap_local_pearson': local_metrics['pearson'],
+                'u_trap_local_spearman': local_metrics['spearman'],
+                'successor_ranking_accuracy': successor_accuracy,
+                'successor_ranking_pairs': int(successor_pairs),
+            }
+            audit_batch = current_batch_data.to(eval_device)
+            critic = agent.critics[0]
+            with torch.no_grad():
+                zx, zy = critic.encoder(
+                    torch.stack(
+                        [audit_batch.observations, audit_batch.next_observations]
+                    )
+                ).unbind(0)
+                distances = critic.quasimetric_model(zx, zy).reshape(-1)
+            costs = (-audit_batch.rewards).to(
+                device=eval_device,
+                dtype=distances.dtype,
+            ).reshape_as(distances).clamp_min(0)
+            terminal_mask = audit_batch.transition_infos[
+                'abstract_goal_edge'
+            ].to(device=eval_device, dtype=torch.bool)
+            direct_mask = audit_batch.transition_infos[
+                'full_graph_direct_goal_edge'
+            ].to(device=eval_device, dtype=torch.bool) & ~terminal_mask
+            family_masks = {
+                'ordinary': ~direct_mask & ~terminal_mask,
+                'direct_goal': direct_mask,
+                'terminal_goal': terminal_mask,
+            }
+            family_fractions = []
+            for family_name, mask in family_masks.items():
+                family_distances = distances[mask]
+                family_excess = (
+                    family_distances - costs[mask]
+                ).clamp_min(0)
+                fraction = (family_excess > 0).to(
+                    dtype=distances.dtype
+                ).mean()
+                family_fractions.append(fraction)
+                row[f'{family_name}_dist'] = float(
+                    family_distances.mean().item()
+                )
+                row[f'{family_name}_max_dist'] = float(
+                    family_distances.max().item()
+                )
+                row[f'{family_name}_violation_fraction'] = float(
+                    fraction.item()
+                )
+                row[f'{family_name}_mean_excess'] = float(
+                    family_excess.mean().item()
+                )
+                row[f'{family_name}_max_excess'] = float(
+                    family_excess.max().item()
+                )
+                row[f'{family_name}_sq_deviation'] = float(
+                    family_excess.square().mean().item()
+                )
+            all_excess = (distances - costs).clamp_min(0)
+            row['overall_violation_fraction'] = float(
+                (all_excess > 0).to(dtype=distances.dtype).mean().item()
+            )
+            row['overall_mean_excess'] = float(all_excess.mean().item())
+            row['overall_max_excess'] = float(all_excess.max().item())
+            population_counts = audit_batch.transition_infos[
+                'full_graph_constraint_population_counts'
+            ].to(device=eval_device, dtype=distances.dtype)
+            row['overall_graph_weighted_violation_fraction'] = float(
+                (
+                    torch.stack(family_fractions) * population_counts
+                ).sum().div(population_counts.sum()).item()
+            )
+            local_constraint = losses.critic_losses[0].local_constraint
+            for family_name, parameter_name in (
+                ('ordinary', 'raw_lagrange_multiplier'),
+                ('direct_goal', 'raw_direct_goal_lagrange_multiplier'),
+                ('terminal_goal', 'raw_terminal_goal_lagrange_multiplier'),
+            ):
+                parameter = getattr(local_constraint, parameter_name)
+                row[f'{family_name}_lagrange_mult'] = float(
+                    torch.nn.functional.softplus(parameter).detach().cpu().item()
+                )
+            constraint_checkpoint_rows = [
+                existing
+                for existing in constraint_checkpoint_rows
+                if int(existing['step']) != int(step)
+            ]
+            constraint_checkpoint_rows.append(row)
+            _write_metric_rows_csv(
+                constraint_checkpoint_path,
+                constraint_checkpoint_rows,
+            )
+            for name, value in row.items():
+                if name != 'step' and value is not None:
+                    writer.add_scalar(
+                        f'constraint_checkpoint/{name}',
+                        float(value),
+                        int(step),
+                    )
+            logger.info(
+                'Constraint checkpoint %d: terminal mean/max=%.6f/%.6f, '
+                'direct violation=%.4f max_excess=%.4f, ordinary violation=%.4f, '
+                'lambdas=%.3f/%.3f/%.3f, local Pearson=%s, successor ranking=%s',
+                int(step),
+                float(row.get('terminal_goal_dist', float('nan'))),
+                float(row.get('terminal_goal_max_excess', float('nan'))),
+                float(row.get('direct_goal_violation_fraction', float('nan'))),
+                float(row.get('direct_goal_max_excess', float('nan'))),
+                float(row.get('ordinary_violation_fraction', float('nan'))),
+                float(row.get('ordinary_lagrange_mult', float('nan'))),
+                float(row.get('direct_goal_lagrange_mult', float('nan'))),
+                float(row.get('terminal_goal_lagrange_mult', float('nan'))),
+                row.get('u_trap_local_pearson'),
+                row.get('successor_ranking_accuracy'),
+            )
+        finally:
+            if device != eval_device:
+                agent.to(device)
+            agent.train()
+            evaluation_time += perf_counter() - started
     oracle_bank_enabled = bool(getattr(args, 'oracle_bank_eval', False))
     if oracle_bank_enabled and args.env_type != 'comm_inspection_dubins_uav':
         raise ValueError("--oracle-bank-eval 仅支持 comm_inspection_dubins_uav")
@@ -1081,6 +1339,8 @@ def train(args):
             train_metric_rows = list(csv.DictReader(f))
     critic_training_enabled = not bool(getattr(args, 'skip_critic_training', False))
     critic_steps_remaining = max(0, int(args.total_steps) - int(optim_steps))
+    loss_result = None
+    batch_data = None
     pbar = tqdm(total=critic_steps_remaining, desc="训练进度")
 
     if not getattr(args, 'init_checkpoint', None):
@@ -1090,7 +1350,7 @@ def train(args):
             'optim_steps': optim_steps,
             'agent': agent.state_dict(),
             'losses': losses.state_dict(),
-            'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
+            'training_mode': training_mode,
         }, checkpoint_path)
         checkpoint_io_time += perf_counter() - checkpoint_start
         logger.info(f"保存初始检查点: {checkpoint_path}")
@@ -1186,6 +1446,35 @@ def train(args):
                                     loss_str += f" | sq_dev={sq_dev:.4f}" if sq_dev is not None else ""
                                     loss_str += f" | dist={dist:.4f}" if dist is not None else ""
                                     loss_str += f" | target_cost_mean={target_cost:.4f}" if target_cost is not None else ""
+                                    for family_name in (
+                                        'ordinary',
+                                        'direct_goal',
+                                        'terminal_goal',
+                                    ):
+                                        family = lc_info.get(family_name)
+                                        if not isinstance(family, dict):
+                                            continue
+                                        fraction = scalar_for_log(
+                                            family.get('violation_fraction')
+                                        )
+                                        max_excess = scalar_for_log(
+                                            family.get('max_excess')
+                                        )
+                                        lagrange = scalar_for_log(
+                                            family.get('lagrange_mult')
+                                        )
+                                        if fraction is not None:
+                                            loss_str += (
+                                                f" | {family_name}_viol={fraction:.4f}"
+                                            )
+                                        if max_excess is not None:
+                                            loss_str += (
+                                                f" | {family_name}_max={max_excess:.4f}"
+                                            )
+                                        if lagrange is not None:
+                                            loss_str += (
+                                                f" | lambda_{family_name}={lagrange:.4f}"
+                                            )
                 
                 pbar.set_postfix_str(loss_str)
                 logger.info(loss_str)
@@ -1369,6 +1658,10 @@ def train(args):
                     'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
                 }, checkpoint_path)
                 checkpoint_io_time += perf_counter() - checkpoint_start
+                run_constraint_checkpoint_diagnostics(
+                    optim_steps,
+                    batch_data,
+                )
                 with open(timing_progress_path, 'w', encoding='utf-8') as f:
                     json.dump(
                         {
@@ -1407,6 +1700,11 @@ def train(args):
     }, final_path)
     checkpoint_io_time += perf_counter() - checkpoint_start
     logger.info(f"保存最终模型: {final_path}")
+    if (
+        constraint_checkpoint_data is not None
+        and optim_steps % args.save_interval != 0
+    ):
+        run_constraint_checkpoint_diagnostics(optim_steps, batch_data)
     train_metrics_path = os.path.join(output_dir, 'train_metrics.csv')
     _write_metric_rows_csv(train_metrics_path, train_metric_rows)
     logger.info(f"保存训练指标 CSV: {train_metrics_path}")
@@ -1631,6 +1929,23 @@ def train(args):
                 else 'dataset_transition_sources'
             ),
             'local_transition_constraint': True,
+            'constraint_enforcement': (
+                'three_families_separate_duals_all_goal_bound_edges_per_batch'
+                if stratified_full_graph_constraints
+                else 'unified_batch_mean_single_dual'
+            ),
+            'ordinary_edges_per_batch': (
+                int(args.batch_size) if stratified_full_graph_constraints else None
+            ),
+            'direct_goal_edges_per_batch': (
+                243 if stratified_full_graph_constraints else None
+            ),
+            'terminal_goal_edges_per_batch': (
+                24 if stratified_full_graph_constraints else None
+            ),
+            'ordinary_epsilon': 0.25,
+            'direct_goal_epsilon': float(args.full_graph_direct_goal_epsilon),
+            'terminal_goal_epsilon': float(args.full_graph_terminal_goal_epsilon),
             'lagrange_optimization': True,
             'latent_transition_model': True,
             'abstract_goal_zero_edge': float(args.abstract_goal_edge_loss_weight),
@@ -1851,12 +2166,14 @@ def main():
             'qrl_explore',
             'dense_transition_original',
             'full_graph_goal_set',
+            'full_graph_goal_set_stratified_constraints',
         ],
         default='standard',
         help='通信巡检数据模式：standard=现有 random+teacher；'
              'qrl_explore=覆盖驱动、局部安全的无目标探索；'
              'dense_transition_original=global replay + exhaustive real U-trap lattice edges；'
-             'full_graph_goal_set=validated full lattice macro-edges + explicit unified G',
+             'full_graph_goal_set=validated full lattice macro-edges + explicit unified G；'
+             'full_graph_goal_set_stratified_constraints=same graph with three constraint families',
     )
     parser.add_argument('--dense-transition-device-id', default='u_trap_target')
     parser.add_argument('--dense-transition-position-resolution', type=float, default=0.25)
@@ -1883,6 +2200,8 @@ def main():
         default=[-1.0, -0.5, 0.0, 0.5, 1.0],
     )
     parser.add_argument('--full-graph-uniform-push-seed', type=int, default=20260824)
+    parser.add_argument('--full-graph-direct-goal-epsilon', type=float, default=0.25)
+    parser.add_argument('--full-graph-terminal-goal-epsilon', type=float, default=0.0)
     parser.add_argument(
         '--explore-attempted-env-steps',
         type=int,

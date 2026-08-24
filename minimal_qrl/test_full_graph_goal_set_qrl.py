@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import torch
 
@@ -12,7 +14,7 @@ from minimal_qrl.industry_exp.diagnostic_scenario import build_diagnostic_scenar
 from minimal_qrl.industry_exp.scalability_scenarios import scenario_to_env_kwargs
 
 
-def _small_full_graph_dataset():
+def _small_full_graph_dataset(*, stratified_constraints: bool = False):
     scenario = build_diagnostic_scenario()
     env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
     stats = {}
@@ -23,6 +25,7 @@ def _small_full_graph_dataset():
             heading_bins=12,
             primitive_steps=5,
             uniform_push_seed=17,
+            stratified_constraints=stratified_constraints,
         ),
         collection_stats=stats,
     )
@@ -96,3 +99,56 @@ def test_full_graph_batches_keep_independent_edge_endpoints_and_macro_costs():
     assert torch.all(batch.rewards <= 0.0)
     assert torch.equal(batch.future_observations, batch.next_observations)
     assert "global_push_task_source_observations" in batch.transition_infos
+
+
+def test_stratified_batches_include_every_goal_bound_edge_and_sample_ordinary():
+    _env, dataset, stats = _small_full_graph_dataset(
+        stratified_constraints=True
+    )
+    ordinary_batch_size = 32
+    batch = next(
+        iter(
+            dataset.get_dataloader(
+                batch_size=ordinary_batch_size,
+                shuffle=True,
+                drop_last=True,
+                full_graph_stratified_constraints=True,
+            )
+        )
+    )
+    terminal = batch.transition_infos["abstract_goal_edge"].to(dtype=torch.bool)
+    direct = batch.transition_infos["full_graph_direct_goal_edge"].to(
+        dtype=torch.bool
+    ) & ~terminal
+    ordinary = ~direct & ~terminal
+    assert int(ordinary.sum()) == ordinary_batch_size
+    assert int(direct.sum()) == stats["direct_macro_edges_to_goal"]
+    assert int(terminal.sum()) == stats["terminal_zero_edges_to_goal"]
+    assert len(batch.rewards) == (
+        ordinary_batch_size
+        + stats["direct_macro_edges_to_goal"]
+        + stats["terminal_zero_edges_to_goal"]
+    )
+    assert torch.equal(
+        batch.transition_infos["full_graph_constraint_population_counts"],
+        torch.tensor(
+            [
+                stats["ordinary_macro_edges"],
+                stats["direct_macro_edges_to_goal"],
+                stats["terminal_zero_edges_to_goal"],
+            ],
+            dtype=torch.float32,
+        ),
+    )
+
+
+def test_diagnostic_shell_exposes_stratified_constraint_phase():
+    script = Path(__file__).with_name(
+        "run_comm_inspection_diagnostic.sh"
+    ).read_text(encoding="utf-8")
+    assert "full_graph_goal_set_qrl_stratified_constraints)" in script
+    assert "full_graph_goal_set_stratified_constraints" in script
+    assert (
+        "full_graph_baseline_goal_set_qrl_linear_push_stratified_constraints"
+        in script
+    )

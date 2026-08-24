@@ -211,6 +211,10 @@ def main() -> None:
         "full_graph_goal_set": (
             "validated lattice macro-transitions only; no Oracle values"
         ),
+        "full_graph_goal_set_stratified_constraints": (
+            "validated lattice macro-transitions with three constraint families; "
+            "no Oracle values"
+        ),
     }.get(training_mode, "transition-only QRL; no Oracle values")
     payload = {
         "experiment": f"{training_mode}_oracle_evaluation",

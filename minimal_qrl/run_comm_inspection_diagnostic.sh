@@ -24,6 +24,7 @@
 #   PHASE=dense_transition_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=exact_value_lp bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=full_graph_goal_set_qrl_stratified_constraints DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -597,7 +598,10 @@ exact_value_lp() {
 }
 
 full_graph_goal_set_qrl() {
-  local experiment_dir="${FULL_GRAPH_QRL_DIR:-$OUTPUT_ROOT/full_graph_baseline_goal_set_qrl}"
+  local default_experiment_dir="${1:-$OUTPUT_ROOT/full_graph_baseline_goal_set_qrl}"
+  local dataset_mode="${2:-full_graph_goal_set}"
+  local default_batch_size="${3:-256}"
+  local experiment_dir="${FULL_GRAPH_QRL_DIR:-$default_experiment_dir}"
   local checkpoint="$experiment_dir/checkpoint_final.pth"
   local local_eval_dir="${FULL_GRAPH_LOCAL_EVAL_DIR:-$experiment_dir/u_trap_local_eval}"
   local mppi_dir="${FULL_GRAPH_MPPI_DIR:-$experiment_dir/mppi_test_u_trap}"
@@ -611,14 +615,14 @@ full_graph_goal_set_qrl() {
     --output-dir "$experiment_dir" \
     --seed "${FULL_GRAPH_QRL_SEED:-42}" \
     --device "${DEVICE:-cpu}" \
-    --comm-dataset-mode full_graph_goal_set \
+    --comm-dataset-mode "$dataset_mode" \
     --full-graph-device-id u_trap_target \
     --full-graph-position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
     --full-graph-heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
     --full-graph-primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
     --full-graph-primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
     --full-graph-uniform-push-seed "${FULL_GRAPH_UNIFORM_PUSH_SEED:-20260824}" \
-    --batch-size "${BATCH_SIZE:-256}" \
+    --batch-size "${BATCH_SIZE:-$default_batch_size}" \
     --total-steps "${TOTAL_STEPS:-120000}" \
     --num-critics "${NUM_CRITICS:-2}" \
     --qrl-cost-source negative_reward \
@@ -717,6 +721,12 @@ case "$PHASE" in
   full_graph_goal_set_qrl)
     full_graph_goal_set_qrl
     ;;
+  full_graph_goal_set_qrl_stratified_constraints)
+    full_graph_goal_set_qrl \
+      "$OUTPUT_ROOT/full_graph_baseline_goal_set_qrl_linear_push_stratified_constraints" \
+      full_graph_goal_set_stratified_constraints \
+      512
+    ;;
   benchmark)
     benchmark
     ;;
@@ -727,7 +737,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, dense_transition_qrl, exact_value_lp, full_graph_goal_set_qrl, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, dense_transition_qrl, exact_value_lp, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
     exit 2
     ;;
 esac

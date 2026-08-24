@@ -92,6 +92,7 @@ class FullGraphGoalSetQRLConfig:
     primitive_steps: int = 5
     primitive_scales: Tuple[float, ...] = (-1.0, -0.5, 0.0, 0.5, 1.0)
     uniform_push_seed: int = 20260824
+    stratified_constraints: bool = False
 
 
 def _actions_to_array(actions: List) -> np.ndarray:
@@ -793,6 +794,11 @@ def create_full_graph_goal_set_qrl_dataset(
         terminals=terminals,
         timeouts=np.zeros(total_count, dtype=np.bool_),
         transition_infos=transition_infos,
+        uniform_task_source_observation_pool=(
+            state_observations[push_pool]
+            if config.stratified_constraints
+            else None
+        ),
         name="full_graph_baseline_goal_set_qrl",
     )
 
@@ -803,6 +809,16 @@ def create_full_graph_goal_set_qrl_dataset(
             "continuous_env_step_used": False,
             "oracle_value_labels_used": False,
             "hybrid_astar_trajectories_used": False,
+            "constraint_enforcement": (
+                "ordinary_sample_plus_all_goal_bound_edges_separate_duals"
+                if config.stratified_constraints
+                else "uniform_edges_unified_dual"
+            ),
+            "global_push_source_sampling": (
+                "independent_uniform_per_batch"
+                if config.stratified_constraints
+                else "deterministic_uniform_tiling_over_edges"
+            ),
             "device_id": str(config.device_id),
             "position_resolution": float(config.position_resolution),
             "heading_bins": int(config.heading_bins),
