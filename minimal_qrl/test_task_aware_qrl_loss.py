@@ -101,6 +101,7 @@ def test_global_push_prefers_explicit_free_state_pairs():
     )
     result = loss(data, batch_info)
     assert torch.isclose(result.info["global_push_state_state/dist"], torch.tensor(3.0))
+    assert torch.isclose(result.info["global_push_state_state/loss"], torch.tensor(-3.0))
 
 
 def test_global_push_uses_explicit_uniform_task_sources():
@@ -143,6 +144,23 @@ def test_global_push_uses_explicit_uniform_task_sources():
     assert torch.isclose(
         result.info["global_push_task_set/dist"], torch.tensor(4.0)
     )
+    assert torch.isclose(
+        result.info["global_push_task_set/loss"], torch.tensor(-4.0)
+    )
+
+
+def test_global_push_linear_objective_has_constant_unsaturated_gradient():
+    distances = torch.tensor([2.0, 7.0], requires_grad=True)
+    loss = GlobalPushLoss(
+        softplus_beta=0.1,
+        softplus_offset=15.0,
+        abstract_goal_ratio=1.0,
+        state_goal_ratio=0.0,
+    )._push_loss(distances)
+
+    assert torch.isclose(loss, torch.tensor(-4.5))
+    loss.backward()
+    assert torch.allclose(distances.grad, torch.tensor([-0.5, -0.5]))
 
 
 def test_temporal_path_uses_executed_multistep_cost_as_one_sided_bound():

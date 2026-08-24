@@ -3,7 +3,6 @@ from typing import *
 import attrs
 
 import torch
-import torch.nn.functional as F
 
 from ....data import BatchData
 
@@ -19,10 +18,10 @@ class GlobalPushLoss(CriticLossBase):
     class Conf:
         # config / argparse uses this to specify behavior
 
-        # smaller => smoother loss
+        # Retained for CLI/checkpoint compatibility with earlier experiments.
+        # The LP-faithful linear objective does not use either softplus field.
         softplus_beta: float = attrs.field(default=0.1, validator=attrs.validators.gt(0))
 
-        # should be greater than most GT distances between sampled pairs
         softplus_offset: float = attrs.field(default=15, validator=attrs.validators.ge(0))
         abstract_goal_ratio: float = attrs.field(default=0.8, validator=attrs.validators.ge(0))
         state_goal_ratio: float = attrs.field(default=0.2, validator=attrs.validators.ge(0))
@@ -55,7 +54,10 @@ class GlobalPushLoss(CriticLossBase):
         self.state_goal_ratio = state_goal_ratio
 
     def _push_loss(self, dists: torch.Tensor) -> torch.Tensor:
-        return F.softplus(self.softplus_offset - dists, beta=self.softplus_beta).mean()
+        # Minimizing -E[d] is exactly the unconstrained form of the theoretical
+        # Global Push objective max E[d].  In particular, this has constant
+        # gradient and cannot saturate at an arbitrary distance scale.
+        return -dists.mean()
 
     def _same_context_state_goal_pairs(
         self,
@@ -205,6 +207,7 @@ class GlobalPushLoss(CriticLossBase):
 
     def extra_repr(self) -> str:
         return (
-            f"softplus_beta={self.softplus_beta:g}, softplus_offset={self.softplus_offset:g}, "
-            f"abstract_goal_ratio={self.abstract_goal_ratio:g}, state_goal_ratio={self.state_goal_ratio:g}"
+            "objective=linear_negative_mean, "
+            f"abstract_goal_ratio={self.abstract_goal_ratio:g}, "
+            f"state_goal_ratio={self.state_goal_ratio:g}"
         )

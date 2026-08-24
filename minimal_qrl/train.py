@@ -1622,6 +1622,7 @@ def train(args):
         'qrl_objective': {
             'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
             'global_push': True,
+            'global_push_transform': 'linear_negative_mean',
             'global_push_abstract_goal_ratio': float(args.global_push_abstract_goal_ratio),
             'global_push_state_goal_ratio': float(args.global_push_state_goal_ratio),
             'global_push_source_distribution': (
