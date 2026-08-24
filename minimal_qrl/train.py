@@ -525,6 +525,14 @@ def train(args):
     stratified_full_graph_constraints = (
         training_mode == 'full_graph_goal_set_stratified_constraints'
     )
+    init_agent_only = bool(getattr(args, 'init_agent_only', False))
+    if init_agent_only and not getattr(args, 'init_checkpoint', None):
+        raise ValueError('--init-agent-only requires --init-checkpoint')
+    if getattr(args, 'full_graph_checkpoint_audit', False) and not stratified_full_graph_constraints:
+        raise ValueError(
+            '--full-graph-checkpoint-audit requires '
+            '--comm-dataset-mode full_graph_goal_set_stratified_constraints'
+        )
     if getattr(args, 'scenario_config', None):
         args._scenario_data = load_scenario_config(args.scenario_config)
         args.env_type = 'comm_inspection_dubins_uav'
@@ -560,7 +568,11 @@ def train(args):
     os.makedirs(output_dir, exist_ok=True)
     timing_progress_path = os.path.join(output_dir, 'timing_progress.json')
     prior_timing: Dict[str, Any] = {}
-    if getattr(args, 'init_checkpoint', None) and os.path.exists(timing_progress_path):
+    if (
+        getattr(args, 'init_checkpoint', None)
+        and not init_agent_only
+        and os.path.exists(timing_progress_path)
+    ):
         with open(timing_progress_path, 'r', encoding='utf-8') as f:
             prior_timing = json.load(f)
         checkpoint_io_time = float(prior_timing.get('checkpoint_io_time_sec', 0.0))
@@ -969,15 +981,21 @@ def train(args):
         losses_state = None
         if isinstance(ckpt, dict) and 'agent' in ckpt:
             state_dict = ckpt['agent']
-            losses_state = ckpt.get('losses')
-            loaded_optim_steps = int(ckpt.get('optim_steps', 0))
+            if not init_agent_only:
+                losses_state = ckpt.get('losses')
+                loaded_optim_steps = int(ckpt.get('optim_steps', 0))
         agent.load_state_dict(state_dict)
         if losses_state is not None:
             try:
                 losses.load_state_dict(losses_state)
             except Exception as exc:
                 logger.warning(f"加载 losses 状态失败，将仅加载 critic 参数: {exc}")
-        logger.info(f"已加载初始 checkpoint: {args.init_checkpoint} (optim_steps={loaded_optim_steps})")
+        logger.info(
+            '已加载初始 checkpoint: %s (mode=%s, optim_steps=%d)',
+            args.init_checkpoint,
+            'agent_weights_only' if init_agent_only else 'resume',
+            loaded_optim_steps,
+        )
     
     # 创建数据加载器
     # MPS 不支持 pin_memory，只在 CUDA 时启用
@@ -1069,8 +1087,12 @@ def train(args):
             _ranking_accuracy,
         )
         oracle_generation_time += perf_counter() - checkpoint_oracle_started
-        if getattr(args, 'init_checkpoint', None) and os.path.exists(
-            constraint_checkpoint_path
+        if (
+            getattr(args, 'init_checkpoint', None)
+            and not init_agent_only
+            and os.path.exists(
+                constraint_checkpoint_path
+            )
         ):
             with open(
                 constraint_checkpoint_path,
@@ -1091,7 +1113,12 @@ def train(args):
         current_batch_data,
     ) -> None:
         nonlocal evaluation_time, constraint_checkpoint_rows
-        if constraint_checkpoint_data is None or current_batch_data is None:
+        full_graph_audit = bool(
+            getattr(args, 'full_graph_checkpoint_audit', False)
+        )
+        if constraint_checkpoint_data is None or (
+            current_batch_data is None and not full_graph_audit
+        ):
             return
         started = perf_counter()
         local, successor, immediate_costs, regression_metrics, ranking_accuracy = (
@@ -1132,72 +1159,153 @@ def train(args):
                 'successor_ranking_accuracy': successor_accuracy,
                 'successor_ranking_pairs': int(successor_pairs),
             }
-            audit_batch = current_batch_data.to(eval_device)
             critic = agent.critics[0]
-            with torch.no_grad():
-                zx, zy = critic.encoder(
-                    torch.stack(
-                        [audit_batch.observations, audit_batch.next_observations]
+            if current_batch_data is not None:
+                audit_batch = current_batch_data.to(eval_device)
+                with torch.no_grad():
+                    zx, zy = critic.encoder(
+                        torch.stack(
+                            [audit_batch.observations, audit_batch.next_observations]
+                        )
+                    ).unbind(0)
+                    distances = critic.quasimetric_model(zx, zy).reshape(-1)
+                costs = (-audit_batch.rewards).to(
+                    device=eval_device,
+                    dtype=distances.dtype,
+                ).reshape_as(distances).clamp_min(0)
+                terminal_mask = audit_batch.transition_infos[
+                    'abstract_goal_edge'
+                ].to(device=eval_device, dtype=torch.bool)
+                direct_mask = audit_batch.transition_infos[
+                    'full_graph_direct_goal_edge'
+                ].to(device=eval_device, dtype=torch.bool) & ~terminal_mask
+                family_masks = {
+                    'ordinary': ~direct_mask & ~terminal_mask,
+                    'direct_goal': direct_mask,
+                    'terminal_goal': terminal_mask,
+                }
+                family_fractions = []
+                for family_name, mask in family_masks.items():
+                    family_distances = distances[mask]
+                    family_excess = (
+                        family_distances - costs[mask]
+                    ).clamp_min(0)
+                    fraction = (family_excess > 0).to(
+                        dtype=distances.dtype
+                    ).mean()
+                    family_fractions.append(fraction)
+                    row[f'{family_name}_dist'] = float(
+                        family_distances.mean().item()
                     )
-                ).unbind(0)
-                distances = critic.quasimetric_model(zx, zy).reshape(-1)
-            costs = (-audit_batch.rewards).to(
-                device=eval_device,
-                dtype=distances.dtype,
-            ).reshape_as(distances).clamp_min(0)
-            terminal_mask = audit_batch.transition_infos[
-                'abstract_goal_edge'
-            ].to(device=eval_device, dtype=torch.bool)
-            direct_mask = audit_batch.transition_infos[
-                'full_graph_direct_goal_edge'
-            ].to(device=eval_device, dtype=torch.bool) & ~terminal_mask
-            family_masks = {
-                'ordinary': ~direct_mask & ~terminal_mask,
-                'direct_goal': direct_mask,
-                'terminal_goal': terminal_mask,
-            }
-            family_fractions = []
-            for family_name, mask in family_masks.items():
-                family_distances = distances[mask]
-                family_excess = (
-                    family_distances - costs[mask]
-                ).clamp_min(0)
-                fraction = (family_excess > 0).to(
-                    dtype=distances.dtype
-                ).mean()
-                family_fractions.append(fraction)
-                row[f'{family_name}_dist'] = float(
-                    family_distances.mean().item()
+                    row[f'{family_name}_max_dist'] = float(
+                        family_distances.max().item()
+                    )
+                    row[f'{family_name}_violation_fraction'] = float(
+                        fraction.item()
+                    )
+                    row[f'{family_name}_mean_excess'] = float(
+                        family_excess.mean().item()
+                    )
+                    row[f'{family_name}_max_excess'] = float(
+                        family_excess.max().item()
+                    )
+                    row[f'{family_name}_sq_deviation'] = float(
+                        family_excess.square().mean().item()
+                    )
+                all_excess = (distances - costs).clamp_min(0)
+                row['overall_violation_fraction'] = float(
+                    (all_excess > 0).to(dtype=distances.dtype).mean().item()
                 )
-                row[f'{family_name}_max_dist'] = float(
-                    family_distances.max().item()
+                row['overall_mean_excess'] = float(all_excess.mean().item())
+                row['overall_max_excess'] = float(all_excess.max().item())
+                population_counts = audit_batch.transition_infos[
+                    'full_graph_constraint_population_counts'
+                ].to(device=eval_device, dtype=distances.dtype)
+                row['overall_graph_weighted_violation_fraction'] = float(
+                    (
+                        torch.stack(family_fractions) * population_counts
+                    ).sum().div(population_counts.sum()).item()
                 )
-                row[f'{family_name}_violation_fraction'] = float(
-                    fraction.item()
+            if full_graph_audit:
+                from minimal_qrl.industry_exp.full_graph_checkpoint_audit import (
+                    _evaluate_edges,
+                    _evaluate_linear_push,
+                    _family_masks,
+                    summarize_constraint_family,
                 )
-                row[f'{family_name}_mean_excess'] = float(
-                    family_excess.mean().item()
+
+                raw_graph = dataset.raw_data
+                graph_masks = _family_masks(raw_graph.transition_infos)
+                graph_goal = torch.as_tensor(
+                    eval_env.abstract_goal_observation()
                 )
-                row[f'{family_name}_max_excess'] = float(
-                    family_excess.max().item()
+                graph_distances, graph_source_values, graph_successor_values = (
+                    _evaluate_edges(
+                        critic,
+                        raw_graph.observations,
+                        raw_graph.next_observations,
+                        graph_goal,
+                        device=eval_device,
+                        batch_size=int(args.full_graph_checkpoint_audit_batch_size),
+                    )
                 )
-                row[f'{family_name}_sq_deviation'] = float(
-                    family_excess.square().mean().item()
+                graph_costs = (
+                    (-raw_graph.rewards).cpu().numpy().astype(np.float64).clip(min=0.0)
                 )
-            all_excess = (distances - costs).clamp_min(0)
-            row['overall_violation_fraction'] = float(
-                (all_excess > 0).to(dtype=distances.dtype).mean().item()
-            )
-            row['overall_mean_excess'] = float(all_excess.mean().item())
-            row['overall_max_excess'] = float(all_excess.max().item())
-            population_counts = audit_batch.transition_infos[
-                'full_graph_constraint_population_counts'
-            ].to(device=eval_device, dtype=distances.dtype)
-            row['overall_graph_weighted_violation_fraction'] = float(
-                (
-                    torch.stack(family_fractions) * population_counts
-                ).sum().div(population_counts.sum()).item()
-            )
+                graph_epsilons = {
+                    'ordinary': 0.25,
+                    'direct_goal': float(args.full_graph_direct_goal_epsilon),
+                    'terminal_goal': float(args.full_graph_terminal_goal_epsilon),
+                }
+                for family_name, mask in graph_masks.items():
+                    metrics = summarize_constraint_family(
+                        graph_distances[mask],
+                        graph_costs[mask],
+                        epsilon=graph_epsilons[family_name],
+                        numerical_tolerance=1e-6,
+                    )
+                    for metric_name in (
+                        'violation_count',
+                        'violation_fraction',
+                        'positive_excess_mean',
+                        'positive_excess_max',
+                        'squared_excess_mean',
+                        'epsilon_violation_fraction',
+                        'dual_residual_squared',
+                    ):
+                        row[
+                            f'full_graph_{family_name}_{metric_name}'
+                        ] = metrics[metric_name]
+                    bellman_metrics = summarize_constraint_family(
+                        (graph_source_values - graph_successor_values)[mask],
+                        graph_costs[mask],
+                        epsilon=graph_epsilons[family_name],
+                        numerical_tolerance=1e-6,
+                    )
+                    row[
+                        f'full_graph_bellman_{family_name}_violation_fraction'
+                    ] = bellman_metrics['violation_fraction']
+                    row[
+                        f'full_graph_bellman_{family_name}_positive_excess_max'
+                    ] = bellman_metrics['positive_excess_max']
+                if dataset.uniform_task_source_observation_pool is None:
+                    raise RuntimeError('full graph uniform push pool is unavailable')
+                graph_values = _evaluate_linear_push(
+                    critic,
+                    dataset.uniform_task_source_observation_pool,
+                    graph_goal,
+                    device=eval_device,
+                    batch_size=int(args.full_graph_checkpoint_audit_batch_size),
+                )
+                row['full_graph_linear_push_distance_mean'] = float(
+                    np.mean(graph_values)
+                )
+                row['full_graph_linear_push_distance_sum'] = float(
+                    np.sum(graph_values)
+                )
+                row['full_graph_linear_push_loss_negative_mean'] = float(
+                    -np.mean(graph_values)
+                )
             local_constraint = losses.critic_losses[0].local_constraint
             for family_name, parameter_name in (
                 ('ordinary', 'raw_lagrange_multiplier'),
@@ -1261,6 +1369,7 @@ def train(args):
     )
     if (
         getattr(args, 'init_checkpoint', None)
+        and not init_agent_only
         and os.path.exists(oracle_validation_metrics_path)
     ):
         with open(
@@ -1334,7 +1443,11 @@ def train(args):
     optim_steps = loaded_optim_steps
     train_metric_rows = []
     prior_metrics_path = os.path.join(output_dir, 'train_metrics.csv')
-    if getattr(args, 'init_checkpoint', None) and os.path.exists(prior_metrics_path):
+    if (
+        getattr(args, 'init_checkpoint', None)
+        and not init_agent_only
+        and os.path.exists(prior_metrics_path)
+    ):
         with open(prior_metrics_path, 'r', encoding='utf-8', newline='') as f:
             train_metric_rows = list(csv.DictReader(f))
     critic_training_enabled = not bool(getattr(args, 'skip_critic_training', False))
@@ -1343,7 +1456,7 @@ def train(args):
     batch_data = None
     pbar = tqdm(total=critic_steps_remaining, desc="训练进度")
 
-    if not getattr(args, 'init_checkpoint', None):
+    if not getattr(args, 'init_checkpoint', None) or init_agent_only:
         checkpoint_path = os.path.join(output_dir, 'checkpoint_00000.pth')
         checkpoint_start = perf_counter()
         torch.save({
@@ -1354,6 +1467,7 @@ def train(args):
         }, checkpoint_path)
         checkpoint_io_time += perf_counter() - checkpoint_start
         logger.info(f"保存初始检查点: {checkpoint_path}")
+        run_constraint_checkpoint_diagnostics(optim_steps, None)
     elif critic_training_enabled and critic_steps_remaining > 0:
         logger.info(f"将从已加载 checkpoint 继续训练 QRL critic，剩余步数: {critic_steps_remaining}")
     elif not critic_training_enabled:
@@ -1913,7 +2027,14 @@ def train(args):
         'end_to_end_time_sec': float(end_to_end_time_sec),
         'global_gradient_updates': int(optim_steps),
         'resumed_from_checkpoint': (
-            os.path.abspath(args.init_checkpoint) if getattr(args, 'init_checkpoint', None) else None
+            os.path.abspath(args.init_checkpoint)
+            if getattr(args, 'init_checkpoint', None) and not init_agent_only
+            else None
+        ),
+        'warm_started_from_checkpoint': (
+            os.path.abspath(args.init_checkpoint)
+            if getattr(args, 'init_checkpoint', None) and init_agent_only
+            else None
         ),
         'dataset_total_transitions': int(len(dataset)),
         'collection_stats': collection_stats or None,
@@ -1987,6 +2108,14 @@ def main():
     parser.add_argument('--output-dir', type=str, default='./results/minimal_qrl', help='输出目录')
     parser.add_argument('--init-checkpoint', type=str, default=None,
                         help='可选：加载已有 QRL checkpoint 作为初始化，再继续训练或仅训练 SubgoalActor')
+    parser.add_argument(
+        '--init-agent-only',
+        action='store_true',
+        help=(
+            '仅把 --init-checkpoint 的 agent 参数用作 step-0 warm start；'
+            '不加载 losses/optimizer/dual 状态，且将训练 step 重置为 0'
+        ),
+    )
     parser.add_argument('--skip-critic-training', action='store_true',
                         help='跳过前半段 QRL critic 训练；通常与 --init-checkpoint 配合，只训练 SubgoalActor')
     parser.add_argument('--scenario-config', type=str, default=None,
@@ -2276,6 +2405,17 @@ def main():
     # 日志和保存
     parser.add_argument('--log-interval', type=int, default=100, help='日志记录间隔')
     parser.add_argument('--save-interval', type=int, default=1000, help='模型保存间隔')
+    parser.add_argument(
+        '--full-graph-checkpoint-audit',
+        action='store_true',
+        help='每个 checkpoint 对完整 full graph 记录 linear push 和逐边约束诊断',
+    )
+    parser.add_argument(
+        '--full-graph-checkpoint-audit-batch-size',
+        type=int,
+        default=4096,
+        help='full-graph checkpoint audit 的推理 batch size',
+    )
     
     # 评估参数
     parser.add_argument('--eval-interval', type=int, default=1000, help='评估间隔（步数）')

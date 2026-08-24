@@ -42,3 +42,13 @@ def test_diagnostic_shell_exposes_targeted_supervised_full_graph_audit():
     assert "targeted_supervised_full_graph_audit)" in script
     assert "full_graph_checkpoint_audit" in script
     assert "--expected-transitions 352243" in script
+
+
+def test_diagnostic_shell_exposes_supervised_to_qrl_warm_start():
+    script = open("minimal_qrl/run_comm_inspection_diagnostic.sh", encoding="utf-8").read()
+    assert "targeted_supervised_qrl_warm_start)" in script
+    assert "--init-agent-only" in script
+    assert "--full-graph-checkpoint-audit" in script
+    assert "WARM_START_TOTAL_STEPS:-20000" in script
+    assert "WARM_START_SAVE_INTERVAL:-2000" in script
+    assert '--qrl-checkpoints "${checkpoints[@]}"' in script

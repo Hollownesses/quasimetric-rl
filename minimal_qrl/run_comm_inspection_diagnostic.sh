@@ -26,6 +26,7 @@
 #   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl_stratified_constraints DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_full_graph_audit DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=targeted_supervised_qrl_warm_start DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -502,6 +503,72 @@ targeted_supervised_full_graph_audit() {
     --expected-terminal-goal 24
 }
 
+targeted_supervised_qrl_warm_start() {
+  local supervised_dir="${TARGETED_SUPERVISED_IQE_DIR:-$OUTPUT_ROOT/targeted_supervised_iqe_oracle}"
+  local init_checkpoint="${WARM_START_INIT_CHECKPOINT:-$supervised_dir/checkpoint_final.pth}"
+  local experiment_dir="${WARM_START_QRL_DIR:-$OUTPUT_ROOT/full_graph_targeted_supervised_qrl_warm_start}"
+  local mppi_dir="${WARM_START_MPPI_DIR:-$experiment_dir/mppi_checkpoints_u_trap}"
+  if [[ ! -f "$init_checkpoint" ]]; then
+    echo "Missing Targeted Supervised-IQE warm-start checkpoint: $init_checkpoint" >&2
+    exit 1
+  fi
+
+  "$PYTHON_BIN" minimal_qrl/train.py \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --output-dir "$experiment_dir" \
+    --init-checkpoint "$init_checkpoint" \
+    --init-agent-only \
+    --seed "${WARM_START_QRL_SEED:-42}" \
+    --device "${DEVICE:-cpu}" \
+    --comm-dataset-mode full_graph_goal_set_stratified_constraints \
+    --full-graph-device-id u_trap_target \
+    --full-graph-position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --full-graph-heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --full-graph-primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --full-graph-primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --full-graph-uniform-push-seed "${FULL_GRAPH_UNIFORM_PUSH_SEED:-20260824}" \
+    --batch-size "${WARM_START_BATCH_SIZE:-512}" \
+    --total-steps "${WARM_START_TOTAL_STEPS:-20000}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --qrl-cost-source negative_reward \
+    --global-push-abstract-goal-ratio 1.0 \
+    --global-push-state-goal-ratio 0.0 \
+    --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
+    --full-graph-direct-goal-epsilon "${FULL_GRAPH_DIRECT_GOAL_EPSILON:-0.25}" \
+    --full-graph-terminal-goal-epsilon "${FULL_GRAPH_TERMINAL_GOAL_EPSILON:-0.0}" \
+    --qrl-temporal-constraint-weight 0.0 \
+    --qrl-goal-return-constraint-weight 0.0 \
+    --qrl-nstep-goal-constraint-weight 0.0 \
+    --qrl-success-transition-weight 1.0 \
+    --task-aware-teacher-ratio 0.0 \
+    --full-graph-checkpoint-audit \
+    --full-graph-checkpoint-audit-batch-size "${WARM_START_AUDIT_BATCH_SIZE:-4096}" \
+    --log-interval "${LOG_INTERVAL:-100}" \
+    --save-interval "${WARM_START_SAVE_INTERVAL:-2000}" \
+    --eval-interval 0 \
+    --visualization-interval 0 \
+    --planning-eval-interval 0
+
+  local checkpoints=("$experiment_dir"/checkpoint_[0-9]*.pth)
+  "$PYTHON_BIN" minimal_qrl/eval/comm_inspection_baseline_eval.py \
+    --stage pilot \
+    --methods full_graph_goal_set_qrl_mppi \
+    --output-dir "$mppi_dir" \
+    --qrl-checkpoints "${checkpoints[@]}" \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --task-bank "$TASK_BANK" \
+    --task-split test \
+    --task-strata u_trap \
+    --seed "${SEED:-0}" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --mppi-horizon "${MPPI_HORIZON:-10}" \
+    --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \
+    --mppi-noise-sigma "${MPPI_NOISE_SIGMA:-0.8}" \
+    --mppi-temperature "${MPPI_TEMPERATURE:-1.0}" \
+    --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}"
+}
+
 dense_transition_qrl() {
   local experiment_dir="${DENSE_TRANSITION_QRL_DIR:-$OUTPUT_ROOT/dense_transition_original_qrl}"
   local checkpoint="$experiment_dir/checkpoint_final.pth"
@@ -747,6 +814,9 @@ case "$PHASE" in
   targeted_supervised_full_graph_audit)
     targeted_supervised_full_graph_audit
     ;;
+  targeted_supervised_qrl_warm_start)
+    targeted_supervised_qrl_warm_start
+    ;;
   dense_transition_qrl)
     dense_transition_qrl
     ;;
@@ -772,7 +842,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, dense_transition_qrl, exact_value_lp, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
     exit 2
     ;;
 esac
