@@ -25,6 +25,7 @@
 #   PHASE=exact_value_lp bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl_stratified_constraints DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=targeted_supervised_full_graph_audit DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -470,6 +471,37 @@ targeted_supervised_iqe() {
     --viz-max-failures "${VIZ_MAX_FAILURES:-12}"
 }
 
+targeted_supervised_full_graph_audit() {
+  local experiment_dir="${TARGETED_SUPERVISED_IQE_DIR:-$OUTPUT_ROOT/targeted_supervised_iqe_oracle}"
+  local checkpoint="${TARGETED_SUPERVISED_AUDIT_CHECKPOINT:-$experiment_dir/checkpoint_final.pth}"
+  local audit_dir="${TARGETED_SUPERVISED_AUDIT_DIR:-$experiment_dir/full_graph_constraint_audit}"
+  if [[ ! -f "$checkpoint" ]]; then
+    echo "Missing Targeted Supervised-IQE checkpoint: $checkpoint" >&2
+    exit 1
+  fi
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.full_graph_checkpoint_audit \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --checkpoint "$checkpoint" \
+    --output-dir "$audit_dir" \
+    --device "${DEVICE:-auto}" \
+    --device-id u_trap_target \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --critic-index "${TARGETED_SUPERVISED_AUDIT_CRITIC_INDEX:-0}" \
+    --batch-size "${TARGETED_SUPERVISED_AUDIT_BATCH_SIZE:-4096}" \
+    --position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --ordinary-epsilon "${FULL_GRAPH_ORDINARY_EPSILON:-0.25}" \
+    --direct-goal-epsilon "${FULL_GRAPH_DIRECT_GOAL_EPSILON:-0.25}" \
+    --terminal-goal-epsilon "${FULL_GRAPH_TERMINAL_GOAL_EPSILON:-0.0}" \
+    --expected-transitions 352243 \
+    --expected-ordinary 351976 \
+    --expected-direct-goal 243 \
+    --expected-terminal-goal 24
+}
+
 dense_transition_qrl() {
   local experiment_dir="${DENSE_TRANSITION_QRL_DIR:-$OUTPUT_ROOT/dense_transition_original_qrl}"
   local checkpoint="$experiment_dir/checkpoint_final.pth"
@@ -712,6 +744,9 @@ case "$PHASE" in
   targeted_supervised_iqe)
     targeted_supervised_iqe
     ;;
+  targeted_supervised_full_graph_audit)
+    targeted_supervised_full_graph_audit
+    ;;
   dense_transition_qrl)
     dense_transition_qrl
     ;;
@@ -737,7 +772,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, dense_transition_qrl, exact_value_lp, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, dense_transition_qrl, exact_value_lp, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
     exit 2
     ;;
 esac
