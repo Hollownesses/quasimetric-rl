@@ -23,6 +23,7 @@
 #   PHASE=targeted_supervised_iqe bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=dense_transition_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=exact_value_lp bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=tabular_potential_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl_stratified_constraints DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_full_graph_audit DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -696,6 +697,35 @@ exact_value_lp() {
     ${real_dynamics_args[@]+"${real_dynamics_args[@]}"}
 }
 
+tabular_potential_qrl() {
+  local output_dir="${TABULAR_POTENTIAL_QRL_DIR:-$OUTPUT_ROOT/tabular_potential_qrl_2x2}"
+  local seeds=(${TABULAR_POTENTIAL_SEEDS:-0 1 2 3 4})
+  local cells=(${TABULAR_POTENTIAL_CELLS:-full_zero minibatch_zero full_practical minibatch_practical})
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.tabular_potential_qrl \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --output-dir "$output_dir" \
+    --device "${DEVICE:-cpu}" \
+    --device-id u_trap_target \
+    --seeds "${seeds[@]}" \
+    --cells "${cells[@]}" \
+    --position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --full-steps "${TABULAR_FULL_STEPS:-20000}" \
+    --minibatch-steps "${TABULAR_MINIBATCH_STEPS:-120000}" \
+    --ordinary-batch-size "${TABULAR_ORDINARY_BATCH_SIZE:-512}" \
+    --primal-lr "${TABULAR_PRIMAL_LR:-0.1}" \
+    --dual-lr "${TABULAR_DUAL_LR:-0.005}" \
+    --init-lagrange-multiplier "${TABULAR_INIT_LAMBDA:-0.01}" \
+    --ordinary-epsilon "${TABULAR_ORDINARY_EPSILON:-0.25}" \
+    --direct-goal-epsilon "${TABULAR_DIRECT_GOAL_EPSILON:-0.25}" \
+    --terminal-goal-epsilon "${TABULAR_TERMINAL_GOAL_EPSILON:-0.0}" \
+    --init-scale "${TABULAR_INIT_SCALE:-0.0}" \
+    --eval-interval "${TABULAR_EVAL_INTERVAL:-500}"
+}
+
 full_graph_goal_set_qrl() {
   local default_experiment_dir="${1:-$OUTPUT_ROOT/full_graph_baseline_goal_set_qrl}"
   local dataset_mode="${2:-full_graph_goal_set}"
@@ -823,6 +853,9 @@ case "$PHASE" in
   exact_value_lp)
     exact_value_lp
     ;;
+  tabular_potential_qrl)
+    tabular_potential_qrl
+    ;;
   full_graph_goal_set_qrl)
     full_graph_goal_set_qrl
     ;;
@@ -842,7 +875,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
     exit 2
     ;;
 esac

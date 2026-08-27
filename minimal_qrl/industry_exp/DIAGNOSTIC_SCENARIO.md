@@ -76,6 +76,31 @@ This keeps the default QRL encoder and IQE quasimetric head unchanged and
 optimizes only direct Huber/MSE regression to reverse-Dijkstra cost-to-go
 labels. It does not instantiate or optimize the QRL constraint losses.
 
+Run the optimizer-only 2x2 Tabular Potential-QRL diagnostic:
+
+```bash
+PHASE=tabular_potential_qrl DEVICE=mps \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+The four cells cross `full` versus current-style `minibatch` constraint
+sampling with `zero` versus practical `(0.25, 0.25, 0)` family epsilons. Each
+goal-reachable state has one projected non-negative scalar parameter, terminal
+states are fixed to zero, and the induced quasimetric is
+`relu(u_s - u_s_prime)`. Oracle and Dijkstra values are unavailable to the
+trainer and are created only for checkpoint evaluation. Defaults run five
+seeds and write the aggregate JSON, step history CSV, and per-run value arrays
+under `results/diagnostic_u_shadow_corridors/tabular_potential_qrl_2x2/`.
+
+For a short smoke run, select one cell and seed explicitly:
+
+```bash
+PHASE=tabular_potential_qrl \
+TABULAR_POTENTIAL_CELLS=full_zero TABULAR_POTENTIAL_SEEDS=0 \
+TABULAR_FULL_STEPS=10 TABULAR_EVAL_INTERVAL=5 \
+bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
 Use `TASK_SPLIT=validation` while tuning. Reserve the default `test` split for
 the final paired report.
 
