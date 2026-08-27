@@ -24,6 +24,7 @@
 #   PHASE=dense_transition_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=exact_value_lp bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=tabular_potential_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=joint_feasible_iqe DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl_stratified_constraints DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_full_graph_audit DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -726,6 +727,97 @@ tabular_potential_qrl() {
     --eval-interval "${TABULAR_EVAL_INTERVAL:-500}"
 }
 
+joint_feasible_iqe() {
+  local experiment_dir="${JOINT_FEASIBLE_IQE_DIR:-$OUTPUT_ROOT/joint_feasible_iqe}"
+  local checkpoint="$experiment_dir/checkpoint_best.pth"
+  local local_eval_dir="${JOINT_FEASIBLE_LOCAL_EVAL_DIR:-$experiment_dir/u_trap_local_eval}"
+  local mppi_dir="${JOINT_FEASIBLE_MPPI_DIR:-$experiment_dir/mppi_test_u_trap}"
+  local init_mode="${JOINT_FEASIBLE_INIT_CHECKPOINT:-auto}"
+  local default_init="$OUTPUT_ROOT/targeted_supervised_iqe_oracle/checkpoint_final.pth"
+  local init_args=()
+  local default_pretrain=10000
+  local reuse_oracle_args=()
+  if [[ "$init_mode" == "auto" && -f "$default_init" ]]; then
+    init_args+=(--init-checkpoint "$default_init")
+    default_pretrain=0
+  elif [[ "$init_mode" != "auto" && "$init_mode" != "none" ]]; then
+    if [[ ! -f "$init_mode" ]]; then
+      echo "Missing Joint-feasible IQE initialization checkpoint: $init_mode" >&2
+      exit 1
+    fi
+    init_args+=(--init-checkpoint "$init_mode")
+    default_pretrain=0
+  fi
+  if [[ -n "${JOINT_FEASIBLE_REUSE_ORACLE_JSON:-}" ]]; then
+    reuse_oracle_args+=(--reuse-oracle-json "$JOINT_FEASIBLE_REUSE_ORACLE_JSON")
+  fi
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.joint_feasible_iqe \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --output-dir "$experiment_dir" \
+    --device "${DEVICE:-auto}" \
+    --device-id u_trap_target \
+    --seed "${JOINT_FEASIBLE_SEED:-20260828}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --goal-pretrain-steps "${JOINT_FEASIBLE_PRETRAIN_STEPS:-$default_pretrain}" \
+    --joint-steps "${JOINT_FEASIBLE_STEPS:-30000}" \
+    --goal-batch-size "${JOINT_FEASIBLE_GOAL_BATCH_SIZE:-2048}" \
+    --ordinary-batch-size "${JOINT_FEASIBLE_ORDINARY_BATCH_SIZE:-4096}" \
+    --active-set-size "${JOINT_FEASIBLE_ACTIVE_SET_SIZE:-4096}" \
+    --active-batch-size "${JOINT_FEASIBLE_ACTIVE_BATCH_SIZE:-4096}" \
+    --active-refresh-interval "${JOINT_FEASIBLE_ACTIVE_REFRESH:-500}" \
+    --pretrain-lr "${JOINT_FEASIBLE_PRETRAIN_LR:-0.0001}" \
+    --joint-lr "${JOINT_FEASIBLE_LR:-0.00005}" \
+    --goal-weight "${JOINT_FEASIBLE_GOAL_WEIGHT:-1.0}" \
+    --ordinary-weight "${JOINT_FEASIBLE_ORDINARY_WEIGHT:-1.0}" \
+    --active-weight "${JOINT_FEASIBLE_ACTIVE_WEIGHT:-10.0}" \
+    --direct-goal-weight "${JOINT_FEASIBLE_DIRECT_WEIGHT:-10.0}" \
+    --terminal-goal-weight "${JOINT_FEASIBLE_TERMINAL_WEIGHT:-10.0}" \
+    --log-interval "${JOINT_FEASIBLE_LOG_INTERVAL:-100}" \
+    --eval-batch-size "${JOINT_FEASIBLE_EVAL_BATCH_SIZE:-4096}" \
+    ${init_args[@]+"${init_args[@]}"}
+
+  if [[ "${JOINT_FEASIBLE_RUN_LOCAL_EVAL:-1}" == "1" ]]; then
+    "$PYTHON_BIN" -m minimal_qrl.eval.u_trap_local_navigability \
+      --scenario-config "$SCENARIO_CONFIG" \
+      --checkpoints "$checkpoint" \
+      --output-dir "$local_eval_dir" \
+      --device "${DEVICE:-auto}" \
+      --num-critics "${NUM_CRITICS:-2}" \
+      --seed "${LOCAL_NAV_SEED:-20260802}" \
+      --astar-position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+      --astar-heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+      --astar-primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+      --astar-max-expansions "${ASTAR_MAX_EXPANSIONS:-200000}" \
+      --astar-timeout-sec "${ASTAR_TIMEOUT_SEC:-120}" \
+      ${reuse_oracle_args[@]+"${reuse_oracle_args[@]}"}
+  fi
+
+  if [[ "${JOINT_FEASIBLE_RUN_MPPI:-1}" == "1" ]]; then
+    "$PYTHON_BIN" minimal_qrl/eval/comm_inspection_baseline_eval.py \
+      --stage pilot \
+      --methods joint_feasible_iqe_mppi \
+      --output-dir "$mppi_dir" \
+      --qrl-checkpoints "$checkpoint" \
+      --scenario-config "$SCENARIO_CONFIG" \
+      --task-bank "$TASK_BANK" \
+      --task-split test \
+      --task-strata u_trap \
+      --seed "${SEED:-0}" \
+      --device "${DEVICE:-auto}" \
+      --num-critics "${NUM_CRITICS:-2}" \
+      --mppi-horizon "${MPPI_HORIZON:-10}" \
+      --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \
+      --mppi-noise-sigma "${MPPI_NOISE_SIGMA:-0.8}" \
+      --mppi-temperature "${MPPI_TEMPERATURE:-1.0}" \
+      --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}"
+  fi
+}
+
 full_graph_goal_set_qrl() {
   local default_experiment_dir="${1:-$OUTPUT_ROOT/full_graph_baseline_goal_set_qrl}"
   local dataset_mode="${2:-full_graph_goal_set}"
@@ -856,6 +948,9 @@ case "$PHASE" in
   tabular_potential_qrl)
     tabular_potential_qrl
     ;;
+  joint_feasible_iqe)
+    joint_feasible_iqe
+    ;;
   full_graph_goal_set_qrl)
     full_graph_goal_set_qrl
     ;;
@@ -875,7 +970,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
     exit 2
     ;;
 esac

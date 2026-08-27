@@ -101,6 +101,40 @@ TABULAR_FULL_STEPS=10 TABULAR_EVAL_INTERVAL=5 \
 bash minimal_qrl/run_comm_inspection_diagnostic.sh
 ```
 
+Run the Joint-feasible IQE constructive search:
+
+```bash
+PHASE=joint_feasible_iqe DEVICE=mps \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+This is a finite-graph capacity certificate rather than label-free QRL. It
+keeps the default encoder, projector, and `iqe(dim=2048,components=64)` head,
+while explicitly allowing all reverse-Dijkstra state labels and all 352,243
+graph constraints. Ordinary edges are covered by shuffled sweeps plus a
+periodically refreshed worst-edge active set; every direct-to-goal and
+terminal-to-goal edge is included in every update. Global push, dual variables,
+latent dynamics, bootstrapping, and trajectory losses are disabled.
+
+When the targeted supervised checkpoint exists it is used automatically as a
+constructive warm start. Set `JOINT_FEASIBLE_INIT_CHECKPOINT=none` to start from
+random initialization. The phase writes both the final checkpoint and a best
+checkpoint chosen by the pre-registered worst normalized certificate gap, then
+runs the standard 16-probe U-trap diagnostic and 12 fixed U-trap MPPI tasks.
+For a bounded pipeline smoke run without those downstream evaluations:
+
+```bash
+PHASE=joint_feasible_iqe DEVICE=cpu \
+FULL_GRAPH_POSITION_RESOLUTION=0.5 FULL_GRAPH_HEADING_BINS=12 \
+NUM_CRITICS=1 JOINT_FEASIBLE_INIT_CHECKPOINT=none \
+JOINT_FEASIBLE_PRETRAIN_STEPS=1 JOINT_FEASIBLE_STEPS=1 \
+JOINT_FEASIBLE_GOAL_BATCH_SIZE=32 JOINT_FEASIBLE_ORDINARY_BATCH_SIZE=32 \
+JOINT_FEASIBLE_ACTIVE_SET_SIZE=16 JOINT_FEASIBLE_ACTIVE_BATCH_SIZE=16 \
+JOINT_FEASIBLE_ACTIVE_REFRESH=1 JOINT_FEASIBLE_EVAL_BATCH_SIZE=512 \
+JOINT_FEASIBLE_RUN_LOCAL_EVAL=0 JOINT_FEASIBLE_RUN_MPPI=0 \
+bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
 Use `TASK_SPLIT=validation` while tuning. Reserve the default `test` split for
 the final paired report.
 

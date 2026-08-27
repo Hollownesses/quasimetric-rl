@@ -81,6 +81,7 @@ def summarize_constraint_family(
         "positive_excess_mean": float(np.mean(positive_excess)),
         "positive_excess_max": float(np.max(positive_excess)),
         "positive_excess_p99": float(np.quantile(positive_excess, 0.99)),
+        "positive_excess_p999": float(np.quantile(positive_excess, 0.999)),
         "squared_excess_mean": squared_excess_mean,
         "epsilon": float(epsilon),
         "epsilon_violation_count": int(
