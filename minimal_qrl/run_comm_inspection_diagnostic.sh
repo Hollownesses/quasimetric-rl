@@ -25,6 +25,7 @@
 #   PHASE=exact_value_lp bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=tabular_potential_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=joint_feasible_iqe DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=joint_feasible_iqe_strong DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl_stratified_constraints DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_full_graph_audit DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -770,6 +771,15 @@ joint_feasible_iqe() {
     --active-set-size "${JOINT_FEASIBLE_ACTIVE_SET_SIZE:-4096}" \
     --active-batch-size "${JOINT_FEASIBLE_ACTIVE_BATCH_SIZE:-4096}" \
     --active-refresh-interval "${JOINT_FEASIBLE_ACTIVE_REFRESH:-500}" \
+    --active-replay-mode "${JOINT_FEASIBLE_ACTIVE_REPLAY_MODE:-replace}" \
+    --tail-fraction "${JOINT_FEASIBLE_TAIL_FRACTION:-0.0}" \
+    --tail-weight "${JOINT_FEASIBLE_TAIL_WEIGHT:-0.0}" \
+    --tail-maxlike-weight "${JOINT_FEASIBLE_TAIL_MAXLIKE_WEIGHT:-0.0}" \
+    --tail-pnorm "${JOINT_FEASIBLE_TAIL_PNORM:-8.0}" \
+    --constraint-warmup-steps "${JOINT_FEASIBLE_CONSTRAINT_WARMUP_STEPS:-0}" \
+    --constraint-warmup-power "${JOINT_FEASIBLE_CONSTRAINT_WARMUP_POWER:-1.0}" \
+    --u-trap-goal-anchor-size "${JOINT_FEASIBLE_U_GOAL_ANCHORS:-0}" \
+    --u-trap-goal-weight "${JOINT_FEASIBLE_U_GOAL_WEIGHT:-1.0}" \
     --pretrain-lr "${JOINT_FEASIBLE_PRETRAIN_LR:-0.0001}" \
     --joint-lr "${JOINT_FEASIBLE_LR:-0.00005}" \
     --goal-weight "${JOINT_FEASIBLE_GOAL_WEIGHT:-1.0}" \
@@ -816,6 +826,20 @@ joint_feasible_iqe() {
       --mppi-temperature "${MPPI_TEMPERATURE:-1.0}" \
       --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}"
   fi
+}
+
+joint_feasible_iqe_strong() {
+  local JOINT_FEASIBLE_IQE_DIR="${JOINT_FEASIBLE_STRONG_DIR:-$OUTPUT_ROOT/joint_feasible_iqe_strong_optimizer}"
+  local JOINT_FEASIBLE_ACTIVE_REPLAY_MODE="${JOINT_FEASIBLE_STRONG_REPLAY_MODE:-cumulative}"
+  local JOINT_FEASIBLE_TAIL_FRACTION="${JOINT_FEASIBLE_STRONG_TAIL_FRACTION:-0.001}"
+  local JOINT_FEASIBLE_TAIL_WEIGHT="${JOINT_FEASIBLE_STRONG_TAIL_WEIGHT:-10.0}"
+  local JOINT_FEASIBLE_TAIL_MAXLIKE_WEIGHT="${JOINT_FEASIBLE_STRONG_TAIL_MAXLIKE_WEIGHT:-1.0}"
+  local JOINT_FEASIBLE_TAIL_PNORM="${JOINT_FEASIBLE_STRONG_TAIL_PNORM:-8.0}"
+  local JOINT_FEASIBLE_CONSTRAINT_WARMUP_STEPS="${JOINT_FEASIBLE_STRONG_WARMUP_STEPS:-5000}"
+  local JOINT_FEASIBLE_CONSTRAINT_WARMUP_POWER="${JOINT_FEASIBLE_STRONG_WARMUP_POWER:-2.0}"
+  local JOINT_FEASIBLE_U_GOAL_ANCHORS="${JOINT_FEASIBLE_STRONG_U_GOAL_ANCHORS:--1}"
+  local JOINT_FEASIBLE_U_GOAL_WEIGHT="${JOINT_FEASIBLE_STRONG_U_GOAL_WEIGHT:-1.0}"
+  joint_feasible_iqe
 }
 
 full_graph_goal_set_qrl() {
@@ -951,6 +975,9 @@ case "$PHASE" in
   joint_feasible_iqe)
     joint_feasible_iqe
     ;;
+  joint_feasible_iqe_strong)
+    joint_feasible_iqe_strong
+    ;;
   full_graph_goal_set_qrl)
     full_graph_goal_set_qrl
     ;;
@@ -970,7 +997,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
     exit 2
     ;;
 esac

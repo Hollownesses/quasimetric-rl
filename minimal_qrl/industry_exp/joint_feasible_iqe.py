@@ -203,6 +203,69 @@ def select_topk_active_edges(
     return candidates[selected].astype(np.int64)
 
 
+def update_active_replay(
+    replay: np.ndarray,
+    current: np.ndarray,
+    *,
+    mode: str,
+) -> tuple[np.ndarray, int]:
+    """Update the worst-edge replay while reporting genuinely new edges."""
+
+    replay = np.asarray(replay, dtype=np.int64)
+    current = np.asarray(current, dtype=np.int64)
+    if mode == "replace":
+        return current.copy(), int(len(np.setdiff1d(current, replay)))
+    if mode != "cumulative":
+        raise ValueError(f"unsupported active replay mode: {mode}")
+    updated = np.union1d(replay, current).astype(np.int64)
+    return updated, int(len(updated) - len(np.unique(replay)))
+
+
+def select_fixed_u_trap_anchors(mask: np.ndarray, size: int) -> np.ndarray:
+    """Choose a deterministic, fixed subset of U-trap state indices.
+
+    A negative size means every U-trap state; zero disables the extra local
+    supervision.  Even spacing avoids making the subset depend on an RNG draw.
+    """
+
+    candidates = np.flatnonzero(np.asarray(mask, dtype=bool)).astype(np.int64)
+    requested = int(size)
+    if requested == 0:
+        return np.empty(0, dtype=np.int64)
+    if requested < 0 or requested >= len(candidates):
+        return candidates
+    positions = np.linspace(0, len(candidates) - 1, num=requested, dtype=np.int64)
+    return candidates[positions]
+
+
+def constraint_warmup_multiplier(
+    step: int,
+    warmup_steps: int,
+    power: float = 1.0,
+) -> float:
+    """Polynomial constraint ramp, equal to one after the warm-up horizon."""
+
+    if int(warmup_steps) <= 0:
+        return 1.0
+    if float(power) <= 0.0:
+        raise ValueError("constraint warm-up power must be positive")
+    progress = float(np.clip(int(step) / int(warmup_steps), 0.0, 1.0))
+    return progress ** float(power)
+
+
+def maxlike_squared_excess(excess: torch.Tensor, p: float) -> torch.Tensor:
+    """Stable squared p-mean; approaches squared max as ``p`` increases."""
+
+    if excess.numel() == 0:
+        return torch.zeros((), device=excess.device, dtype=excess.dtype)
+    exponent = float(p)
+    if exponent <= 0.0:
+        raise ValueError("tail p-norm exponent must be positive")
+    value = torch.linalg.vector_norm(excess, ord=exponent)
+    value = value / (float(excess.numel()) ** (1.0 / exponent))
+    return value.square()
+
+
 def _flatten(payload: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in payload.items():
@@ -524,7 +587,7 @@ def _checkpoint_payload(
         "training_mode": "joint_feasible_iqe_constructive_search",
         "objective": (
             "supervised full-state Dijkstra goal slice + random full-graph edge "
-            "sweeps + refreshed top-k pointwise violations"
+            f"sweeps + {args.active_replay_mode} top-k violation replay"
         ),
         "model_signature": dict(signature),
         "graph": dict(problem.graph_stats),
@@ -558,6 +621,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--active-set-size", type=int, default=4096)
     parser.add_argument("--active-batch-size", type=int, default=4096)
     parser.add_argument("--active-refresh-interval", type=int, default=500)
+    parser.add_argument(
+        "--active-replay-mode",
+        choices=("replace", "cumulative"),
+        default="replace",
+        help="replace the worst-edge set or permanently retain its historical union",
+    )
+    parser.add_argument(
+        "--tail-fraction",
+        type=float,
+        default=0.0,
+        help="fraction of currently worst ordinary edges used by tail losses",
+    )
+    parser.add_argument("--tail-weight", type=float, default=0.0)
+    parser.add_argument("--tail-maxlike-weight", type=float, default=0.0)
+    parser.add_argument("--tail-pnorm", type=float, default=8.0)
+    parser.add_argument(
+        "--constraint-warmup-steps",
+        type=int,
+        default=0,
+        help="polynomially ramp all edge-loss weights over this many joint steps",
+    )
+    parser.add_argument("--constraint-warmup-power", type=float, default=1.0)
+    parser.add_argument(
+        "--u-trap-goal-anchor-size",
+        type=int,
+        default=0,
+        help="fixed U-trap label set per update; negative means all U-trap states",
+    )
+    parser.add_argument("--u-trap-goal-weight", type=float, default=1.0)
     parser.add_argument("--pretrain-lr", type=float, default=1e-4)
     parser.add_argument("--joint-lr", type=float, default=5e-5)
     parser.add_argument("--goal-weight", type=float, default=1.0)
@@ -586,6 +678,28 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise ValueError("active refresh interval must be positive")
     if int(args.active_set_size) <= 0 or int(args.active_batch_size) <= 0:
         raise ValueError("active-set sizes must be positive")
+    if not 0.0 <= float(args.tail_fraction) <= 1.0:
+        raise ValueError("tail fraction must lie in [0, 1]")
+    if float(args.tail_pnorm) <= 0.0:
+        raise ValueError("tail p-norm exponent must be positive")
+    if int(args.constraint_warmup_steps) < 0:
+        raise ValueError("constraint warm-up steps must be non-negative")
+    if float(args.constraint_warmup_power) <= 0.0:
+        raise ValueError("constraint warm-up power must be positive")
+    if float(args.u_trap_goal_weight) < 0.0:
+        raise ValueError("U-trap goal weight must be non-negative")
+    weighted_terms = {
+        "goal": args.goal_weight,
+        "ordinary": args.ordinary_weight,
+        "active": args.active_weight,
+        "tail": args.tail_weight,
+        "tail max-like": args.tail_maxlike_weight,
+        "direct-goal": args.direct_goal_weight,
+        "terminal-goal": args.terminal_goal_weight,
+    }
+    for name, value in weighted_terms.items():
+        if float(value) < 0.0:
+            raise ValueError(f"{name} weight must be non-negative")
     random.seed(int(args.seed))
     np.random.seed(int(args.seed))
     torch.manual_seed(int(args.seed))
@@ -645,6 +759,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         int(args.ordinary_batch_size),
         int(args.seed) + 211,
     )
+    u_trap_anchor_array = select_fixed_u_trap_anchors(
+        problem.u_trap_mask,
+        int(args.u_trap_goal_anchor_size),
+    )
+    u_trap_anchor_indices = torch.as_tensor(
+        u_trap_anchor_array, device=device, dtype=torch.long
+    )
     thresholds = CertificateThresholds(
         u_local_pearson=float(args.success_u_local_pearson),
         successor_pairwise=float(args.success_successor_pairwise),
@@ -664,6 +785,31 @@ def main(argv: Sequence[str] | None = None) -> None:
     history: list[dict[str, Any]] = []
     started = perf_counter()
 
+    def supervised_goal_losses(
+        critic,
+        indices: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        prediction = critic(
+            observations[indices], goal.expand(len(indices), -1)
+        ).reshape(-1)
+        global_loss = F.mse_loss(
+            prediction / goal_scale,
+            reference[indices] / goal_scale,
+        )
+        if len(u_trap_anchor_indices):
+            u_prediction = critic(
+                observations[u_trap_anchor_indices],
+                goal.expand(len(u_trap_anchor_indices), -1),
+            ).reshape(-1)
+            u_loss = F.mse_loss(
+                u_prediction / goal_scale,
+                reference[u_trap_anchor_indices] / goal_scale,
+            )
+        else:
+            u_loss = torch.zeros((), device=device, dtype=global_loss.dtype)
+        combined = global_loss + float(args.u_trap_goal_weight) * u_loss
+        return combined, global_loss, u_loss
+
     if int(args.goal_pretrain_steps) > 0:
         optimizer = torch.optim.AdamW(
             parameters, lr=float(args.pretrain_lr), weight_decay=0.0
@@ -679,12 +825,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             losses = []
             for critic in agent.critics:
-                prediction = critic(
-                    observations[indices], goal.expand(len(indices), -1)
-                ).reshape(-1)
-                losses.append(
-                    F.mse_loss(prediction / goal_scale, reference[indices] / goal_scale)
-                )
+                combined, _, _ = supervised_goal_losses(critic, indices)
+                losses.append(combined)
             loss = torch.stack(losses).mean()
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -719,12 +861,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     active_rng = np.random.default_rng(int(args.seed) + 307)
     active_edges = np.empty(0, dtype=np.int64)
+    current_worst_edges = np.empty(0, dtype=np.int64)
+    current_tail_edges = np.empty(0, dtype=np.int64)
+    ordinary_edge_count = int(len(family_indices["ordinary"]))
+    tail_edge_count = (
+        max(1, int(math.ceil(ordinary_edge_count * float(args.tail_fraction))))
+        if float(args.tail_fraction) > 0.0
+        else 0
+    )
     best_score = float("inf")
     best_step = 0
     best_metrics: list[dict[str, Any]] | None = None
 
     def evaluate_and_refresh(joint_step: int) -> list[dict[str, Any]]:
-        nonlocal active_edges, best_score, best_step, best_metrics
+        nonlocal active_edges, current_worst_edges, current_tail_edges
+        nonlocal best_score, best_step, best_metrics
         critic_metrics: list[dict[str, Any]] = []
         excesses: list[np.ndarray] = []
         for critic in agent.critics:
@@ -738,10 +889,21 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             critic_metrics.append(metrics)
             excesses.append(excess)
-        active_edges = select_topk_active_edges(
+        current_worst_edges = select_topk_active_edges(
             np.stack(excesses),
             problem.families,
             topk=int(args.active_set_size),
+            family=0,
+        )
+        active_edges, newly_added = update_active_replay(
+            active_edges,
+            current_worst_edges,
+            mode=str(args.active_replay_mode),
+        )
+        current_tail_edges = select_topk_active_edges(
+            np.stack(excesses),
+            problem.families,
+            topk=tail_edge_count,
             family=0,
         )
         score = _certificate_score(critic_metrics, thresholds)
@@ -755,6 +917,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 all(metrics["certificate_pass"] for metrics in critic_metrics)
             ),
             "active_set_size": int(len(active_edges)),
+            "current_worst_set_size": int(len(current_worst_edges)),
+            "new_active_edges": int(newly_added),
+            "current_tail_set_size": int(len(current_tail_edges)),
+            "constraint_weight_multiplier": constraint_warmup_multiplier(
+                int(joint_step),
+                int(args.constraint_warmup_steps),
+                float(args.constraint_warmup_power),
+            ),
         }
         for critic_index, metrics in enumerate(critic_metrics):
             row.update(_flatten(metrics, prefix=f"critic_{critic_index}."))
@@ -803,19 +973,26 @@ def main(argv: Sequence[str] | None = None) -> None:
         active_indices = torch.as_tensor(
             selected_active, device=device, dtype=torch.long
         )
+        tail_indices = torch.as_tensor(
+            current_tail_edges, device=device, dtype=torch.long
+        )
+        constraint_multiplier = constraint_warmup_multiplier(
+            step,
+            int(args.constraint_warmup_steps),
+            float(args.constraint_warmup_power),
+        )
         critic_losses = []
         detached_terms: list[dict[str, float]] = []
         for critic in agent.critics:
-            goal_prediction = critic(
-                observations[state_indices],
-                goal.expand(len(state_indices), -1),
-            ).reshape(-1)
-            goal_loss = F.mse_loss(
-                goal_prediction / goal_scale,
-                reference[state_indices] / goal_scale,
+            goal_loss, global_goal_loss, u_goal_loss = supervised_goal_losses(
+                critic, state_indices
             )
 
-            def constraint_loss(indices: torch.Tensor, scale: float) -> torch.Tensor:
+            def constraint_excess(
+                indices: torch.Tensor, scale: float
+            ) -> torch.Tensor:
+                if indices.numel() == 0:
+                    return torch.empty(0, device=device, dtype=costs.dtype)
                 distance = _edge_distances(
                     critic,
                     observations,
@@ -824,27 +1001,53 @@ def main(argv: Sequence[str] | None = None) -> None:
                     destinations,
                     indices,
                 )
-                return ((distance - costs[indices]).relu() / scale).square().mean()
+                return (distance - costs[indices]).relu() / scale
+
+            def constraint_loss(indices: torch.Tensor, scale: float) -> torch.Tensor:
+                excess = constraint_excess(indices, scale)
+                if excess.numel() == 0:
+                    return torch.zeros((), device=device, dtype=costs.dtype)
+                return excess.square().mean()
 
             ordinary_loss = constraint_loss(ordinary_indices, ordinary_scale)
             active_loss = constraint_loss(active_indices, ordinary_scale)
+            tail_excess = constraint_excess(tail_indices, ordinary_scale)
+            tail_loss = (
+                tail_excess.square().mean()
+                if tail_excess.numel()
+                else torch.zeros((), device=device, dtype=costs.dtype)
+            )
+            tail_maxlike_loss = maxlike_squared_excess(
+                tail_excess, float(args.tail_pnorm)
+            )
             direct_loss = constraint_loss(direct_indices, direct_scale)
             terminal_loss = constraint_loss(terminal_indices, terminal_scale)
-            total = (
-                float(args.goal_weight) * goal_loss
-                + float(args.ordinary_weight) * ordinary_loss
+            constraint_total = (
+                float(args.ordinary_weight) * ordinary_loss
                 + float(args.active_weight) * active_loss
+                + float(args.tail_weight) * tail_loss
+                + float(args.tail_maxlike_weight) * tail_maxlike_loss
                 + float(args.direct_goal_weight) * direct_loss
                 + float(args.terminal_goal_weight) * terminal_loss
+            )
+            total = (
+                float(args.goal_weight) * goal_loss
+                + constraint_multiplier * constraint_total
             )
             critic_losses.append(total)
             detached_terms.append(
                 {
                     "goal": float(goal_loss.detach().cpu()),
+                    "goal_global": float(global_goal_loss.detach().cpu()),
+                    "goal_u_trap": float(u_goal_loss.detach().cpu()),
                     "ordinary": float(ordinary_loss.detach().cpu()),
                     "active": float(active_loss.detach().cpu()),
+                    "tail": float(tail_loss.detach().cpu()),
+                    "tail_maxlike": float(tail_maxlike_loss.detach().cpu()),
                     "direct_goal": float(direct_loss.detach().cpu()),
                     "terminal_goal": float(terminal_loss.detach().cpu()),
+                    "constraint_multiplier": float(constraint_multiplier),
+                    "constraint_total": float(constraint_total.detach().cpu()),
                     "total": float(total.detach().cpu()),
                 }
             )
@@ -896,6 +1099,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         "states": problem.states,
         "dijkstra_values": problem.reference_values,
         "u_trap_mask": problem.u_trap_mask,
+        "u_trap_goal_anchor_indices": u_trap_anchor_array,
+        "final_active_replay_edges": active_edges,
+        "final_current_tail_edges": current_tail_edges,
     }
     for critic_index, critic in enumerate(agent.critics):
         values_payload[f"critic_{critic_index}_values"] = _predict_values(
@@ -908,6 +1114,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     _write_rows(output_dir / "joint_feasible_history.csv", history)
     payload = {
         "experiment": "joint_feasible_iqe_constructive_search",
+        "optimizer_variant": (
+            "persistent_tail_constructive"
+            if str(args.active_replay_mode) == "cumulative"
+            or float(args.tail_fraction) > 0.0
+            or int(args.constraint_warmup_steps) > 0
+            or len(u_trap_anchor_array) > 0
+            else "original_replace_mean"
+        ),
         "interpretation": (
             "constructive finite-graph representability search; not QRL and not "
             "a label-free learning result"
@@ -921,7 +1135,23 @@ def main(argv: Sequence[str] | None = None) -> None:
         "objective": {
             "goal": "MSE(d_theta(s,G), Dijkstra(s,G)) over shuffled full-state sweeps",
             "ordinary": "mean relu(d_theta(s,s_prime)-c)^2 over shuffled edge sweeps",
-            "active": "mean squared excess on periodically refreshed worst ordinary edges",
+            "u_trap_goal": (
+                "separate MSE on a fixed set of U-trap states in every update"
+            ),
+            "u_trap_goal_anchor_count": int(len(u_trap_anchor_array)),
+            "active": (
+                "mean squared excess on sampled edges from the replace/cumulative "
+                "worst-edge replay selected by active_replay_mode"
+            ),
+            "active_replay_mode": str(args.active_replay_mode),
+            "tail": (
+                "mean squared excess plus squared p-mean on the currently worst "
+                f"{float(args.tail_fraction):.6g} fraction of ordinary edges"
+            ),
+            "tail_edge_count": int(tail_edge_count),
+            "constraint_warmup": (
+                "all edge terms multiplied by min(step/warmup_steps,1)^power"
+            ),
             "direct_goal": "all direct-to-G edges every update",
             "terminal_goal": "all terminal-to-G zero-cost edges every update",
             "global_push_used": False,

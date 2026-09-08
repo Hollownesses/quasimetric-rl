@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from minimal_qrl.baselines import HybridAStarConfig
 from minimal_qrl.envs import CommInspectionDubinsUAV2D
@@ -8,8 +9,12 @@ from minimal_qrl.eval.comm_inspection_baseline_eval import METHODS
 from minimal_qrl.industry_exp.joint_feasible_iqe import (
     JointFeasibleProblem,
     build_joint_feasible_problem,
+    constraint_warmup_multiplier,
     lattice_successor_ranking,
+    maxlike_squared_excess,
+    select_fixed_u_trap_anchors,
     select_topk_active_edges,
+    update_active_replay,
 )
 from minimal_qrl.industry_exp.scalability_scenarios import (
     load_scenario_config,
@@ -31,6 +36,38 @@ def test_topk_active_edges_uses_worst_violation_across_critics():
     families = np.asarray([0, 0, 0, 1, 0])
     selected = select_topk_active_edges(excess, families, topk=2, family=0)
     assert selected.tolist() == [1, 4]
+
+
+def test_cumulative_active_replay_never_forgets_historical_edges():
+    replay, new_count = update_active_replay(
+        np.asarray([7, 2]), np.asarray([2, 9]), mode="cumulative"
+    )
+    assert replay.tolist() == [2, 7, 9]
+    assert new_count == 1
+    replaced, new_count = update_active_replay(
+        replay, np.asarray([9, 11]), mode="replace"
+    )
+    assert replaced.tolist() == [9, 11]
+    assert new_count == 1
+
+
+def test_fixed_u_trap_anchors_support_all_or_even_subsets():
+    mask = np.asarray([False, True, True, False, True, True])
+    assert select_fixed_u_trap_anchors(mask, -1).tolist() == [1, 2, 4, 5]
+    assert select_fixed_u_trap_anchors(mask, 2).tolist() == [1, 5]
+    assert select_fixed_u_trap_anchors(mask, 0).size == 0
+
+
+def test_quadratic_constraint_warmup_and_maxlike_loss():
+    assert constraint_warmup_multiplier(0, 100, 2.0) == 0.0
+    assert constraint_warmup_multiplier(50, 100, 2.0) == 0.25
+    assert constraint_warmup_multiplier(100, 100, 2.0) == 1.0
+    assert constraint_warmup_multiplier(200, 100, 2.0) == 1.0
+    excess = torch.tensor([1.0, 3.0])
+    assert torch.isclose(
+        maxlike_squared_excess(excess, 2.0), excess.square().mean()
+    )
+    assert maxlike_squared_excess(excess, 8.0) > excess.square().mean()
 
 
 def test_lattice_successor_ranking_is_exact_for_reference_values():
@@ -83,5 +120,9 @@ def test_shell_and_mppi_evaluator_expose_joint_certificate_phase():
     script = (ROOT / "minimal_qrl/run_comm_inspection_diagnostic.sh").read_text()
     assert "joint_feasible_iqe()" in script
     assert "joint_feasible_iqe)" in script
+    assert "joint_feasible_iqe_strong()" in script
+    assert "joint_feasible_iqe_strong)" in script
+    assert "JOINT_FEASIBLE_STRONG_REPLAY_MODE:-cumulative" in script
+    assert "JOINT_FEASIBLE_STRONG_U_GOAL_ANCHORS:--1" in script
     assert "JOINT_FEASIBLE_RUN_MPPI" in script
     assert "joint_feasible_iqe_mppi" in METHODS

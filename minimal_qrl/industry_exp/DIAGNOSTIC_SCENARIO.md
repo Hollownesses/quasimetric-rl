@@ -121,6 +121,32 @@ constructive warm start. Set `JOINT_FEASIBLE_INIT_CHECKPOINT=none` to start from
 random initialization. The phase writes both the final checkpoint and a best
 checkpoint chosen by the pre-registered worst normalized certificate gap, then
 runs the standard 16-probe U-trap diagnostic and 12 fixed U-trap MPPI tasks.
+
+After the original run, use the pre-registered stronger optimizer as a separate
+control (it writes to `joint_feasible_iqe_strong_optimizer`, so it does not
+overwrite the original result):
+
+```bash
+PHASE=joint_feasible_iqe_strong DEVICE=mps \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+This variant keeps the union of every historical worst-4,096 edge set, samples
+its cumulative replay on every update, and separately optimizes the current
+worst 0.1% ordinary edges with both mean-square and p=8 max-like losses. All
+edge terms use a quadratic 5,000-step ramp, while all 2,869 U-trap graph states
+are a fixed additional supervised goal slice on every update. The graph,
+warm-start checkpoint, architecture, learning rate, 30,000-step budget,
+certificate thresholds, checkpoint rule, and downstream evaluations remain
+unchanged. The exact graph determines the 2,869 anchor count; `-1` means all
+states in the configured U-trap region rather than a hard-coded count.
+
+The four interventions can be overridden with
+`JOINT_FEASIBLE_STRONG_REPLAY_MODE`, `JOINT_FEASIBLE_STRONG_TAIL_FRACTION`,
+`JOINT_FEASIBLE_STRONG_WARMUP_STEPS`/`JOINT_FEASIBLE_STRONG_WARMUP_POWER`, and
+`JOINT_FEASIBLE_STRONG_U_GOAL_ANCHORS`. Do not tune them against the held-out
+12-task MPPI result; inspect the full-graph certificate trajectory first.
+
 For a bounded pipeline smoke run without those downstream evaluations:
 
 ```bash
