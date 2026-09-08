@@ -15,7 +15,13 @@ from minimal_qrl.industry_exp.supervised_iqe_oracle import (
     _regression_metrics,
     _sample_supervised_batch_indices,
     _targeted_u_trap_pools,
+    load_supervised_dataset,
     train_supervised,
+)
+from minimal_qrl.iqe_capacity import (
+    DEFAULT_IQE_CAPACITY,
+    IQECapacity,
+    iqe_capacity_from_checkpoint,
 )
 
 
@@ -74,6 +80,50 @@ def test_supervised_objective_updates_encoder_and_iqe_but_not_latent_dynamics():
         torch.equal(before, after)
         for before, after in zip(dynamics_before, agent.critics[0].latent_dynamics.parameters())
     )
+
+
+def test_custom_iqe_capacity_changes_only_the_quasimetric_projection():
+    scenario = build_diagnostic_scenario()
+    env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
+    agent = _make_agent(
+        env,
+        scenario,
+        num_critics=1,
+        total_steps=1,
+        iqe_dim=4096,
+        iqe_components=128,
+    )
+    critic = agent.critics[0]
+    assert critic.encoder.latent_size == 128
+    assert critic.quasimetric_model.quasimetric_head.input_size == 4096
+    assert critic.quasimetric_model.quasimetric_head.num_components == 128
+
+
+def test_capacity_metadata_defaults_old_checkpoints_and_recovers_new_ones():
+    assert iqe_capacity_from_checkpoint({}) == DEFAULT_IQE_CAPACITY
+    expected = IQECapacity(dim=4096, components=128)
+    assert iqe_capacity_from_checkpoint(
+        {"model_capacity": expected.to_dict()}
+    ) == expected
+    assert iqe_capacity_from_checkpoint(
+        {"config": {"iqe_dim": 4096, "iqe_components": 128}}
+    ) == expected
+
+
+def test_reused_supervised_dataset_is_validated(tmp_path):
+    path = tmp_path / "oracle_supervised_dataset.npz"
+    np.savez_compressed(
+        path,
+        train_observation=np.zeros((2, 3), dtype=np.float32),
+        train_goal=np.zeros((2, 3), dtype=np.float32),
+        train_value=np.zeros(2, dtype=np.float32),
+        train_sampling_group=np.zeros(2, dtype=np.int8),
+        eval_observation=np.zeros((1, 3), dtype=np.float32),
+        eval_goal=np.zeros((1, 3), dtype=np.float32),
+        eval_value=np.zeros(1, dtype=np.float32),
+    )
+    dataset = load_supervised_dataset(path)
+    assert dataset["train_value"].shape == (2,)
 
 
 def test_targeted_batch_sampler_enforces_exact_local_global_mix():

@@ -53,6 +53,7 @@ from minimal_qrl.industry_exp.tabular_potential_qrl import (
     build_tabular_problem,
     reference_values_for_problem,
 )
+from minimal_qrl.iqe_capacity import IQECapacity, iqe_capacity_from_checkpoint
 
 
 @dataclass(frozen=True)
@@ -590,6 +591,9 @@ def _checkpoint_payload(
             f"sweeps + {args.active_replay_mode} top-k violation replay"
         ),
         "model_signature": dict(signature),
+        "model_capacity": IQECapacity(
+            dim=int(args.iqe_dim), components=int(args.iqe_components)
+        ).to_dict(),
         "graph": dict(problem.graph_stats),
         "certificate_score": float(score),
         "config": vars(args),
@@ -604,6 +608,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device-id", default="u_trap_target")
     parser.add_argument("--seed", type=int, default=20260828)
     parser.add_argument("--num-critics", type=int, default=2)
+    parser.add_argument("--iqe-dim", type=int, default=2048)
+    parser.add_argument("--iqe-components", type=int, default=64)
     parser.add_argument("--init-checkpoint", default=None)
     parser.add_argument("--position-resolution", type=float, default=0.25)
     parser.add_argument("--heading-bins", type=int, default=24)
@@ -672,6 +678,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    capacity = IQECapacity(
+        dim=int(args.iqe_dim), components=int(args.iqe_components)
+    )
     if int(args.goal_pretrain_steps) < 0 or int(args.joint_steps) < 0:
         raise ValueError("training step counts must be non-negative")
     if int(args.active_refresh_interval) <= 0:
@@ -721,10 +730,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         scenario,
         num_critics=int(args.num_critics),
         total_steps=int(args.goal_pretrain_steps) + int(args.joint_steps),
+        iqe_dim=capacity.dim,
+        iqe_components=capacity.components,
     )
     initialization = "random"
     if args.init_checkpoint:
         checkpoint = torch.load(args.init_checkpoint, map_location="cpu")
+        checkpoint_capacity = iqe_capacity_from_checkpoint(checkpoint)
+        if checkpoint_capacity != capacity:
+            raise ValueError(
+                "initialization checkpoint IQE capacity does not match requested "
+                f"capacity: checkpoint={checkpoint_capacity.to_dict()}, "
+                f"requested={capacity.to_dict()}"
+            )
         state_dict = checkpoint["agent"] if isinstance(checkpoint, dict) else checkpoint
         agent.load_state_dict(state_dict, strict=True)
         initialization = str(Path(args.init_checkpoint).resolve())
@@ -1132,6 +1150,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "graph_config": asdict(graph_config),
         "graph": dict(problem.graph_stats),
         "model_signature": signature,
+        "model_capacity": capacity.to_dict(),
         "objective": {
             "goal": "MSE(d_theta(s,G), Dijkstra(s,G)) over shuffled full-state sweeps",
             "ordinary": "mean relu(d_theta(s,s_prime)-c)^2 over shuffled edge sweeps",

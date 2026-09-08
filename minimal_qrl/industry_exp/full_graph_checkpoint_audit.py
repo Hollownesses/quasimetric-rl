@@ -41,6 +41,7 @@ from minimal_qrl.industry_exp.scalability_scenarios import (
     scenario_to_env_kwargs,
 )
 from minimal_qrl.industry_exp.supervised_iqe_oracle import _make_agent
+from minimal_qrl.iqe_capacity import iqe_capacity_from_checkpoint
 
 
 FAMILY_ORDER = ("ordinary", "direct_goal", "terminal_goal")
@@ -278,13 +279,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     _assert_expected_count("terminal-goal edges", counts["terminal_goal"], args.expected_terminal_goal)
 
     device = auto_device(str(args.device))
+    checkpoint = torch.load(args.checkpoint, map_location="cpu")
+    capacity = iqe_capacity_from_checkpoint(checkpoint)
     agent = _make_agent(
         env,
         scenario,
         num_critics=int(args.num_critics),
         total_steps=1,
+        iqe_dim=capacity.dim,
+        iqe_components=capacity.components,
     )
-    checkpoint = torch.load(args.checkpoint, map_location="cpu")
     state_dict = checkpoint["agent"] if isinstance(checkpoint, dict) else checkpoint
     agent.load_state_dict(state_dict)
     if not 0 <= int(args.critic_index) < len(agent.critics):

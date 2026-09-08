@@ -32,6 +32,7 @@ from minimal_qrl.industry_exp.supervised_iqe_oracle import (
     _successor_ranking_dataset,
     _u_trap_local_dataset,
 )
+from minimal_qrl.iqe_capacity import iqe_capacity_from_checkpoint
 
 
 def _global_oracle_eval_dataset(
@@ -127,13 +128,16 @@ def main() -> None:
             else output_dir / "oracle_value_cache"
         ),
     )
+    checkpoint = torch.load(args.checkpoint, map_location=device)
+    capacity = iqe_capacity_from_checkpoint(checkpoint)
     agent = _make_agent(
         env,
         scenario,
         num_critics=int(args.num_critics),
         total_steps=1,
+        iqe_dim=capacity.dim,
+        iqe_components=capacity.components,
     )
-    checkpoint = torch.load(args.checkpoint, map_location=device)
     training_mode = (
         str(checkpoint.get("training_mode", "unknown"))
         if isinstance(checkpoint, dict)

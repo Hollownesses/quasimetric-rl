@@ -122,7 +122,12 @@ def test_shell_and_mppi_evaluator_expose_joint_certificate_phase():
     assert "joint_feasible_iqe)" in script
     assert "joint_feasible_iqe_strong()" in script
     assert "joint_feasible_iqe_strong)" in script
+    assert "joint_feasible_iqe_capacity_2x()" in script
+    assert "joint_feasible_iqe_capacity_2x)" in script
     assert "JOINT_FEASIBLE_STRONG_REPLAY_MODE:-cumulative" in script
     assert "JOINT_FEASIBLE_STRONG_U_GOAL_ANCHORS:--1" in script
+    assert "JOINT_FEASIBLE_CAPACITY_IQE_DIM:-4096" in script
+    assert "JOINT_FEASIBLE_CAPACITY_IQE_COMPONENTS:-128" in script
+    assert '--reuse-dataset "$source_dataset"' in script
     assert "JOINT_FEASIBLE_RUN_MPPI" in script
     assert "joint_feasible_iqe_mppi" in METHODS

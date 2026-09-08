@@ -26,6 +26,7 @@
 #   PHASE=tabular_potential_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=joint_feasible_iqe DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=joint_feasible_iqe_strong DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=joint_feasible_iqe_capacity_2x DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl_stratified_constraints DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_full_graph_audit DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -760,6 +761,8 @@ joint_feasible_iqe() {
     --device-id u_trap_target \
     --seed "${JOINT_FEASIBLE_SEED:-20260828}" \
     --num-critics "${NUM_CRITICS:-2}" \
+    --iqe-dim "${JOINT_FEASIBLE_IQE_DIM:-2048}" \
+    --iqe-components "${JOINT_FEASIBLE_IQE_COMPONENTS:-64}" \
     --position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
     --heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
     --primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
@@ -840,6 +843,49 @@ joint_feasible_iqe_strong() {
   local JOINT_FEASIBLE_U_GOAL_ANCHORS="${JOINT_FEASIBLE_STRONG_U_GOAL_ANCHORS:--1}"
   local JOINT_FEASIBLE_U_GOAL_WEIGHT="${JOINT_FEASIBLE_STRONG_U_GOAL_WEIGHT:-1.0}"
   joint_feasible_iqe
+}
+
+joint_feasible_iqe_capacity_2x() {
+  local warm_dir="${JOINT_FEASIBLE_CAPACITY_WARM_DIR:-$OUTPUT_ROOT/targeted_supervised_iqe_oracle_capacity_2x}"
+  local warm_checkpoint="$warm_dir/checkpoint_final.pth"
+  local source_dataset="${JOINT_FEASIBLE_CAPACITY_SOURCE_DATASET:-$OUTPUT_ROOT/targeted_supervised_iqe_oracle/oracle_supervised_dataset.npz}"
+  local iqe_dim="${JOINT_FEASIBLE_CAPACITY_IQE_DIM:-4096}"
+  local iqe_components="${JOINT_FEASIBLE_CAPACITY_IQE_COMPONENTS:-128}"
+
+  if [[ ! -f "$source_dataset" ]]; then
+    echo "Missing 1x targeted-supervised dataset for capacity-matched warm start: $source_dataset" >&2
+    exit 1
+  fi
+  if [[ ! -f "$warm_checkpoint" || "${JOINT_FEASIBLE_CAPACITY_RETRAIN_WARM:-0}" == "1" ]]; then
+    "$PYTHON_BIN" -m minimal_qrl.industry_exp.supervised_iqe_oracle \
+      --scenario-config "$SCENARIO_CONFIG" \
+      --output-dir "$warm_dir" \
+      --device "${DEVICE:-auto}" \
+      --seed "${SUPERVISED_IQE_SEED:-20260823}" \
+      --num-critics "${NUM_CRITICS:-2}" \
+      --iqe-dim "$iqe_dim" \
+      --iqe-components "$iqe_components" \
+      --reuse-dataset "$source_dataset" \
+      --sampling-mode targeted_u_trap \
+      --targeted-local-fraction "${TARGETED_LOCAL_FRACTION:-0.5}" \
+      --train-steps "${SUPERVISED_IQE_TRAIN_STEPS:-10000}" \
+      --batch-size "${SUPERVISED_IQE_BATCH_SIZE:-512}" \
+      --learning-rate "${SUPERVISED_IQE_LR:-0.0001}" \
+      --loss "${SUPERVISED_IQE_LOSS:-huber}" \
+      --huber-delta "${SUPERVISED_IQE_HUBER_DELTA:-10}" \
+      --oracle-value-cache-dir "${ORACLE_VALUE_CACHE_DIR:-$OUTPUT_ROOT/oracle_value_cache}" \
+      --astar-position-resolution "${ASTAR_POSITION_RESOLUTION:-0.25}" \
+      --astar-heading-bins "${ASTAR_HEADING_BINS:-24}" \
+      --astar-primitive-steps "${ASTAR_PRIMITIVE_STEPS:-5}"
+  else
+    echo "Reusing capacity-matched warm-start checkpoint: $warm_checkpoint"
+  fi
+
+  local JOINT_FEASIBLE_STRONG_DIR="${JOINT_FEASIBLE_CAPACITY_DIR:-$OUTPUT_ROOT/joint_feasible_iqe_strong_optimizer_capacity_2x}"
+  local JOINT_FEASIBLE_INIT_CHECKPOINT="$warm_checkpoint"
+  local JOINT_FEASIBLE_IQE_DIM="$iqe_dim"
+  local JOINT_FEASIBLE_IQE_COMPONENTS="$iqe_components"
+  joint_feasible_iqe_strong
 }
 
 full_graph_goal_set_qrl() {
@@ -978,6 +1024,9 @@ case "$PHASE" in
   joint_feasible_iqe_strong)
     joint_feasible_iqe_strong
     ;;
+  joint_feasible_iqe_capacity_2x)
+    joint_feasible_iqe_capacity_2x
+    ;;
   full_graph_goal_set_qrl)
     full_graph_goal_set_qrl
     ;;
@@ -997,7 +1046,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, joint_feasible_iqe_capacity_2x, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
     exit 2
     ;;
 esac

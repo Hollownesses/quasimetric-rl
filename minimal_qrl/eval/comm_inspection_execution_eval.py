@@ -37,7 +37,6 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from quasimetric_rl.data import Dataset
-from quasimetric_rl.modules import QRLConf
 
 from minimal_qrl.dataset import create_dataset
 from minimal_qrl.comm_inspection_planner import (
@@ -50,6 +49,10 @@ from minimal_qrl.eval.dubins_execution_mode_eval import (
 )
 from minimal_qrl.eval.utils import auto_device, ensure_registered_env
 from minimal_qrl.gc_agents import GoalConditionedAgentBase, QRLGoalValueAdapter
+from minimal_qrl.iqe_capacity import (
+    iqe_capacity_from_checkpoint,
+    qrl_conf_for_iqe_capacity,
+)
 from minimal_qrl.subgoal_actor import (
     SubgoalActor,
     load_subgoal_actor_checkpoint,
@@ -178,10 +181,14 @@ def build_qrl_adapter(
     dataset = dataset_conf.make(dummy=True)
     env_spec = dataset.env_spec
 
-    qrl_conf = QRLConf(actor=None, num_critics=int(args.num_critics))
+    ckpt = torch.load(args.checkpoint, map_location=device)
+    capacity = iqe_capacity_from_checkpoint(ckpt)
+    qrl_conf = qrl_conf_for_iqe_capacity(
+        num_critics=int(args.num_critics),
+        capacity=capacity,
+    )
     qrl_agent, _ = qrl_conf.make(env_spec=env_spec, total_optim_steps=1)
 
-    ckpt = torch.load(args.checkpoint, map_location=device)
     ckpt_step: Optional[int] = None
     state_dict = ckpt
     if isinstance(ckpt, dict) and "agent" in ckpt:

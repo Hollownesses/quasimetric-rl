@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -23,7 +24,6 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from quasimetric_rl.data import Dataset
-from quasimetric_rl.modules import QRLConf
 
 from minimal_qrl.baselines import HybridAStarConfig, HybridAStarValueOracle
 from minimal_qrl.dataset import create_dataset
@@ -31,6 +31,7 @@ from minimal_qrl.envs import CommInspectionDubinsUAV2D
 from minimal_qrl.eval.u_trap_local_navigability import build_probe_records
 from minimal_qrl.eval.utils import auto_device, ensure_registered_env
 from minimal_qrl.gc_agents import QRLGoalValueAdapter
+from minimal_qrl.iqe_capacity import IQECapacity, qrl_conf_for_iqe_capacity
 from minimal_qrl.industry_exp.scalability_scenarios import (
     load_scenario_config,
     scenario_to_env_kwargs,
@@ -101,6 +102,8 @@ def _make_agent(
     *,
     num_critics: int,
     total_steps: int,
+    iqe_dim: int = 2048,
+    iqe_components: int = 64,
 ):
     env_name = f"supervised_iqe_oracle_{os.getpid()}"
 
@@ -127,9 +130,10 @@ def _make_agent(
         name=env_name,
         future_observation_discount=0.99,
     ).make(dummy=True)
-    agent, _unused_qrl_losses = QRLConf(
-        actor=None,
+    capacity = IQECapacity(dim=int(iqe_dim), components=int(iqe_components))
+    agent, _unused_qrl_losses = qrl_conf_for_iqe_capacity(
         num_critics=int(num_critics),
+        capacity=capacity,
     ).make(
         env_spec=dataset.env_spec,
         total_optim_steps=max(1, int(total_steps)),
@@ -628,6 +632,45 @@ def _write_history(path: Path, rows: Sequence[Mapping[str, float]]) -> None:
         writer.writerows(rows)
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_supervised_dataset(path: str | Path) -> dict[str, np.ndarray]:
+    """Load and minimally validate an existing deterministic oracle dataset."""
+
+    source = Path(path)
+    if not source.is_file():
+        raise FileNotFoundError(f"reused supervised dataset does not exist: {source}")
+    with np.load(source, allow_pickle=False) as archive:
+        dataset = {name: archive[name] for name in archive.files}
+    required = {
+        "train_observation",
+        "train_goal",
+        "train_value",
+        "train_sampling_group",
+        "eval_observation",
+        "eval_goal",
+        "eval_value",
+    }
+    missing = sorted(required - set(dataset))
+    if missing:
+        raise ValueError(f"reused supervised dataset is missing fields: {missing}")
+    train_count = len(dataset["train_value"])
+    eval_count = len(dataset["eval_value"])
+    for name in ("train_observation", "train_goal", "train_sampling_group"):
+        if len(dataset[name]) != train_count:
+            raise ValueError(f"{name} length does not match train_value")
+    for name in ("eval_observation", "eval_goal"):
+        if len(dataset[name]) != eval_count:
+            raise ValueError(f"{name} length does not match eval_value")
+    return dataset
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario-config", required=True)
@@ -635,6 +678,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--seed", type=int, default=20260823)
     parser.add_argument("--num-critics", type=int, default=2)
+    parser.add_argument("--iqe-dim", type=int, default=2048)
+    parser.add_argument("--iqe-components", type=int, default=64)
+    parser.add_argument(
+        "--reuse-dataset",
+        default=None,
+        help="train on an existing oracle_supervised_dataset.npz without resampling",
+    )
     parser.add_argument("--train-samples", type=int, default=200_000)
     parser.add_argument("--eval-samples", type=int, default=20_000)
     parser.add_argument("--low-cost-fraction", type=float, default=0.25)
@@ -673,12 +723,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    capacity = IQECapacity(
+        dim=int(args.iqe_dim),
+        components=int(args.iqe_components),
+    )
     if not 0.0 <= float(args.low_cost_fraction) <= 1.0:
         raise ValueError("--low-cost-fraction must lie in [0, 1]")
     if not 0.0 < float(args.targeted_local_fraction) < 1.0:
         raise ValueError("--targeted-local-fraction must lie strictly between 0 and 1")
-    if args.sampling_mode == "targeted_u_trap" and not args.targeted_failure_results:
-        raise ValueError("targeted_u_trap sampling requires --targeted-failure-results")
+    if (
+        args.sampling_mode == "targeted_u_trap"
+        and not args.reuse_dataset
+        and not args.targeted_failure_results
+    ):
+        raise ValueError(
+            "targeted_u_trap sampling requires --targeted-failure-results "
+            "unless --reuse-dataset is supplied"
+        )
     random.seed(int(args.seed))
     np.random.seed(int(args.seed))
     torch.manual_seed(int(args.seed))
@@ -704,35 +765,54 @@ def main() -> None:
     oracle = HybridAStarValueOracle(config, cache_dir=cache_dir)
     failed_starts = (
         _load_failed_start_states(args.targeted_failure_results)
-        if args.sampling_mode == "targeted_u_trap"
+        if args.sampling_mode == "targeted_u_trap" and not args.reuse_dataset
         else None
     )
 
     dataset_start = perf_counter()
-    dataset = build_supervised_dataset(
-        env,
-        oracle,
-        scenario,
-        train_samples=int(args.train_samples),
-        eval_samples=int(args.eval_samples),
-        low_cost_fraction=float(args.low_cost_fraction),
-        seed=int(args.seed),
-        sampling_mode=str(args.sampling_mode),
-        targeted_local_fraction=float(args.targeted_local_fraction),
-        failed_starts=failed_starts,
-        failure_position_radius=float(args.targeted_failure_position_radius),
-        failure_heading_radius=float(args.targeted_failure_heading_radius),
-    )
-    dataset_path = output_dir / "oracle_supervised_dataset.npz"
-    with dataset_path.open("wb") as handle:
-        np.savez_compressed(handle, **dataset)
+    if args.reuse_dataset:
+        dataset_path = Path(args.reuse_dataset).resolve()
+        dataset = load_supervised_dataset(dataset_path)
+        dataset_reused = True
+    else:
+        dataset = build_supervised_dataset(
+            env,
+            oracle,
+            scenario,
+            train_samples=int(args.train_samples),
+            eval_samples=int(args.eval_samples),
+            low_cost_fraction=float(args.low_cost_fraction),
+            seed=int(args.seed),
+            sampling_mode=str(args.sampling_mode),
+            targeted_local_fraction=float(args.targeted_local_fraction),
+            failed_starts=failed_starts,
+            failure_position_radius=float(args.targeted_failure_position_radius),
+            failure_heading_radius=float(args.targeted_failure_heading_radius),
+        )
+        dataset_path = output_dir / "oracle_supervised_dataset.npz"
+        with dataset_path.open("wb") as handle:
+            np.savez_compressed(handle, **dataset)
+        dataset_reused = False
     dataset_time = perf_counter() - dataset_start
+    dataset_sha256 = _file_sha256(dataset_path)
+    if args.sampling_mode == "targeted_u_trap":
+        targeted_fields = {
+            "targeted_local_pool_size",
+            "targeted_local_unique_sampled",
+            "targeted_local_sample_count",
+            "targeted_failed_start_states",
+        }
+        missing = sorted(targeted_fields - set(dataset))
+        if missing:
+            raise ValueError(f"targeted reused dataset is missing fields: {missing}")
 
     agent = _make_agent(
         env,
         scenario,
         num_critics=int(args.num_critics),
         total_steps=int(args.train_steps),
+        iqe_dim=capacity.dim,
+        iqe_components=capacity.components,
     )
     model_signature = {
         "num_critics": int(len(agent.critics)),
@@ -776,6 +856,10 @@ def main() -> None:
             "training_mode": f"supervised_reverse_dijkstra_oracle/{args.sampling_mode}",
             "objective": f"{args.loss}(d_theta(s,g), V_oracle(s,g))",
             "model_signature": model_signature,
+            "model_capacity": capacity.to_dict(),
+            "dataset": str(dataset_path.resolve()),
+            "dataset_reused": bool(dataset_reused),
+            "dataset_sha256": dataset_sha256,
             "config": vars(args),
         },
         checkpoint_path,
@@ -879,12 +963,15 @@ def main() -> None:
         "dataset": str(dataset_path.resolve()),
         "device": str(device),
         "model_signature": model_signature,
+        "model_capacity": capacity.to_dict(),
         "config": vars(args),
         "timing": {
             "dataset_generation_sec": float(dataset_time),
             "supervised_training_sec": float(training_time),
         },
         "dataset_summary": dataset_summary,
+        "dataset_reused": bool(dataset_reused),
+        "dataset_sha256": dataset_sha256,
         "metrics": {
             "global": global_metrics,
             "u_trap_local": local_metrics,

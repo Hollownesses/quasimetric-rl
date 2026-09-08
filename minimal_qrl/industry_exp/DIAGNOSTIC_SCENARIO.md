@@ -147,6 +147,37 @@ The four interventions can be overridden with
 `JOINT_FEASIBLE_STRONG_U_GOAL_ANCHORS`. Do not tune them against the held-out
 12-task MPPI result; inspect the full-graph certificate trajectory first.
 
+Run the pre-registered 2x IQE capacity arm after the 1x strong result:
+
+```bash
+PHASE=joint_feasible_iqe_capacity_2x DEVICE=mps \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+The capacity arm changes `iqe(dim=2048,components=64)` to
+`iqe(dim=4096,components=128)`, preserving 32 coordinates per component and
+leaving the encoder, projector hidden layer, graph, strong losses, sampling,
+30,000-step budget, seed, thresholds, and checkpoint rule unchanged. Because a
+1x checkpoint cannot initialize the enlarged projector, the phase first trains
+a capacity-matched supervised warm start for the same 10,000 updates. It reuses
+the exact saved 1x targeted-supervised `.npz` dataset and records its SHA-256,
+so no Oracle resampling is introduced.
+
+The warm start and joint results are written separately to
+`targeted_supervised_iqe_oracle_capacity_2x/` and
+`joint_feasible_iqe_strong_optimizer_capacity_2x/`. If the warm-start
+checkpoint already exists it is reused; set
+`JOINT_FEASIBLE_CAPACITY_RETRAIN_WARM=1` to deliberately retrain it. Do not use
+that flag after inspecting the joint result unless reporting the rerun as a
+separate trial.
+
+Interpret the arm with the existing certificate thresholds, without selecting
+a new tolerance after training. A 2x run that preserves both topology checks
+and reaches ordinary/Bellman max excess at most 0.25 is evidence for a finite
+1x capacity bottleneck. Improvement without a pass is a capacity effect but not
+a certificate. Failure to materially move the max excess leaves capacity and
+sup-norm optimization unresolved; it is not proof of non-representability.
+
 For a bounded pipeline smoke run without those downstream evaluations:
 
 ```bash
