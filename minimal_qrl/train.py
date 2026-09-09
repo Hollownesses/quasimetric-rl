@@ -68,10 +68,12 @@ from minimal_qrl.envs import (
 from minimal_qrl.dataset import (
     DenseUTrapTransitionConfig,
     FullGraphGoalSetQRLConfig,
+    FullGraphPointGoalQRLConfig,
     QRLExploreConfig,
     build_qrl_exploration_start_bank,
     create_dataset,
     create_full_graph_goal_set_qrl_dataset,
+    create_full_graph_point_goal_qrl_dataset,
 )
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
 from minimal_qrl.eval.comm_inspection_oracle_bank import (
@@ -521,7 +523,9 @@ def train(args):
     full_graph_modes = {
         'full_graph_goal_set',
         'full_graph_goal_set_stratified_constraints',
+        'full_graph_point_goal',
     }
+    point_goal_full_graph = training_mode == 'full_graph_point_goal'
     stratified_full_graph_constraints = (
         training_mode == 'full_graph_goal_set_stratified_constraints'
     )
@@ -624,7 +628,9 @@ def train(args):
     create_env_fn = create_env_factory(args.env_type, **env_kwargs)
     qrl_explore_config: Optional[QRLExploreConfig] = None
     dense_u_trap_config: Optional[DenseUTrapTransitionConfig] = None
-    full_graph_config: Optional[FullGraphGoalSetQRLConfig] = None
+    full_graph_config: Optional[
+        FullGraphGoalSetQRLConfig | FullGraphPointGoalQRLConfig
+    ] = None
     exploration_start_bank_path: Optional[str] = None
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         if args.env_type != 'comm_inspection_dubins_uav':
@@ -723,24 +729,45 @@ def train(args):
     if training_mode in full_graph_modes:
         if args.env_type != 'comm_inspection_dubins_uav':
             raise ValueError('full-graph goal-set QRL only supports comm_inspection_dubins_uav')
-        full_graph_config = FullGraphGoalSetQRLConfig(
+        common_full_graph_kwargs = dict(
             device_id=str(args.full_graph_device_id),
             position_resolution=float(args.full_graph_position_resolution),
             heading_bins=int(args.full_graph_heading_bins),
             primitive_steps=int(args.full_graph_primitive_steps),
             primitive_scales=tuple(float(value) for value in args.full_graph_primitive_scales),
             uniform_push_seed=int(args.full_graph_uniform_push_seed),
-            stratified_constraints=stratified_full_graph_constraints,
         )
-        logger.info(
-            'Full-Graph Baseline Goal-set QRL enabled: lattice=%.3f x %d headings, '
-            'macro primitives=%s x %d, explicit unified G, uniform state->G push, '
-            'continuous env.step=none, Oracle value labels=none',
-            full_graph_config.position_resolution,
-            full_graph_config.heading_bins,
-            full_graph_config.primitive_scales,
-            full_graph_config.primitive_steps,
-        )
+        if point_goal_full_graph:
+            full_graph_config = FullGraphPointGoalQRLConfig(
+                **common_full_graph_kwargs,
+                point_goal_candidate_index=int(
+                    args.full_graph_point_goal_candidate_index
+                ),
+            )
+            logger.info(
+                'Full-Graph Point-goal QRL enabled: lattice=%.3f x %d headings, '
+                'macro primitives=%s x %d, terminal candidate=%d, physical g*, '
+                'synthetic G=none, continuous env.step=none, Oracle value labels=none',
+                full_graph_config.position_resolution,
+                full_graph_config.heading_bins,
+                full_graph_config.primitive_scales,
+                full_graph_config.primitive_steps,
+                full_graph_config.point_goal_candidate_index,
+            )
+        else:
+            full_graph_config = FullGraphGoalSetQRLConfig(
+                **common_full_graph_kwargs,
+                stratified_constraints=stratified_full_graph_constraints,
+            )
+            logger.info(
+                'Full-Graph Baseline Goal-set QRL enabled: lattice=%.3f x %d headings, '
+                'macro primitives=%s x %d, explicit unified G, uniform state->G push, '
+                'continuous env.step=none, Oracle value labels=none',
+                full_graph_config.position_resolution,
+                full_graph_config.heading_bins,
+                full_graph_config.primitive_scales,
+                full_graph_config.primitive_steps,
+            )
         if stratified_full_graph_constraints:
             logger.info(
                 'Stratified constraint enforcement: ordinary=%d sampled/batch, '
@@ -782,11 +809,18 @@ def train(args):
     logger.info("创建数据集...")
     data_start = perf_counter()
     if full_graph_config is not None:
-        dataset = create_full_graph_goal_set_qrl_dataset(
-            create_env_fn(),
-            full_graph_config,
-            collection_stats=collection_stats,
-        )
+        if point_goal_full_graph:
+            dataset = create_full_graph_point_goal_qrl_dataset(
+                create_env_fn(),
+                full_graph_config,
+                collection_stats=collection_stats,
+            )
+        else:
+            dataset = create_full_graph_goal_set_qrl_dataset(
+                create_env_fn(),
+                full_graph_config,
+                collection_stats=collection_stats,
+            )
     else:
         dataset_conf = Dataset.Conf(
             kind=args.env_type,
@@ -1454,6 +1488,9 @@ def train(args):
     critic_steps_remaining = max(0, int(args.total_steps) - int(optim_steps))
     loss_result = None
     batch_data = None
+    checkpoint_experiment_metadata = {
+        'point_goal': collection_stats.get('full_graph_point_goal_qrl')
+    } if point_goal_full_graph else {}
     pbar = tqdm(total=critic_steps_remaining, desc="训练进度")
 
     if not getattr(args, 'init_checkpoint', None) or init_agent_only:
@@ -1464,6 +1501,7 @@ def train(args):
             'agent': agent.state_dict(),
             'losses': losses.state_dict(),
             'training_mode': training_mode,
+            **checkpoint_experiment_metadata,
         }, checkpoint_path)
         checkpoint_io_time += perf_counter() - checkpoint_start
         logger.info(f"保存初始检查点: {checkpoint_path}")
@@ -1770,6 +1808,7 @@ def train(args):
                     'agent': agent.state_dict(),
                     'losses': losses.state_dict(),
                     'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
+                    **checkpoint_experiment_metadata,
                 }, checkpoint_path)
                 checkpoint_io_time += perf_counter() - checkpoint_start
                 run_constraint_checkpoint_diagnostics(
@@ -1811,6 +1850,7 @@ def train(args):
         'agent': agent.state_dict(),
         'losses': losses.state_dict(),
         'training_mode': str(getattr(args, 'comm_dataset_mode', 'standard')),
+        **checkpoint_experiment_metadata,
     }, final_path)
     checkpoint_io_time += perf_counter() - checkpoint_start
     logger.info(f"保存最终模型: {final_path}")
@@ -2075,6 +2115,13 @@ def train(args):
             'nstep_bootstrap_weight': float(args.qrl_nstep_goal_constraint_weight),
             'success_transition_sampling_weight': float(args.qrl_success_transition_weight),
             'oracle_value_labels': False,
+            'goal_representation': (
+                'single_physical_lattice_observation'
+                if point_goal_full_graph
+                else 'abstract_goal_set_observation'
+                if full_graph_config is not None
+                else None
+            ),
         },
         'hardware': {
             'requested_device': str(args.device),
@@ -2296,13 +2343,15 @@ def main():
             'dense_transition_original',
             'full_graph_goal_set',
             'full_graph_goal_set_stratified_constraints',
+            'full_graph_point_goal',
         ],
         default='standard',
         help='通信巡检数据模式：standard=现有 random+teacher；'
              'qrl_explore=覆盖驱动、局部安全的无目标探索；'
              'dense_transition_original=global replay + exhaustive real U-trap lattice edges；'
              'full_graph_goal_set=validated full lattice macro-edges + explicit unified G；'
-             'full_graph_goal_set_stratified_constraints=same graph with three constraint families',
+             'full_graph_goal_set_stratified_constraints=same graph with three constraint families；'
+             'full_graph_point_goal=same lattice/primitives with one physical g* and no synthetic G',
     )
     parser.add_argument('--dense-transition-device-id', default='u_trap_target')
     parser.add_argument('--dense-transition-position-resolution', type=float, default=0.25)
@@ -2329,6 +2378,12 @@ def main():
         default=[-1.0, -0.5, 0.0, 0.5, 1.0],
     )
     parser.add_argument('--full-graph-uniform-push-seed', type=int, default=20260824)
+    parser.add_argument(
+        '--full-graph-point-goal-candidate-index',
+        type=int,
+        default=0,
+        help='full_graph_point_goal 中按确定性格点顺序选择的原 goal-set 终端候选序号',
+    )
     parser.add_argument('--full-graph-direct-goal-epsilon', type=float, default=0.25)
     parser.add_argument('--full-graph-terminal-goal-epsilon', type=float, default=0.0)
     parser.add_argument(

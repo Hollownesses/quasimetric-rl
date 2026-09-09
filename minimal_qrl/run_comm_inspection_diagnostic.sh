@@ -29,6 +29,7 @@
 #   PHASE=joint_feasible_iqe_capacity_2x DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=full_graph_goal_set_qrl_stratified_constraints DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=full_graph_point_goal_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_full_graph_audit DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_qrl_warm_start DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
@@ -979,6 +980,59 @@ full_graph_goal_set_qrl() {
     --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}"
 }
 
+full_graph_point_goal_qrl() {
+  local experiment_dir="${POINT_GOAL_QRL_DIR:-$OUTPUT_ROOT/full_graph_point_goal_qrl}"
+  local checkpoint="$experiment_dir/checkpoint_final.pth"
+  local candidate_index="${POINT_GOAL_CANDIDATE_INDEX:-0}"
+
+  "$PYTHON_BIN" minimal_qrl/train.py \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --output-dir "$experiment_dir" \
+    --seed "${FULL_GRAPH_QRL_SEED:-42}" \
+    --device "${DEVICE:-cpu}" \
+    --comm-dataset-mode full_graph_point_goal \
+    --full-graph-device-id u_trap_target \
+    --full-graph-point-goal-candidate-index "$candidate_index" \
+    --full-graph-position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --full-graph-heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --full-graph-primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --full-graph-primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --full-graph-uniform-push-seed "${FULL_GRAPH_UNIFORM_PUSH_SEED:-20260824}" \
+    --batch-size "${BATCH_SIZE:-256}" \
+    --total-steps "${TOTAL_STEPS:-120000}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --qrl-cost-source negative_reward \
+    --global-push-softplus-offset "${GLOBAL_PUSH_SOFTPLUS_OFFSET:-15.0}" \
+    --global-push-softplus-beta "${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}" \
+    --global-push-abstract-goal-ratio 1.0 \
+    --global-push-state-goal-ratio 0.0 \
+    --abstract-goal-edge-loss-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
+    --qrl-temporal-constraint-weight 0.0 \
+    --qrl-goal-return-constraint-weight 0.0 \
+    --qrl-nstep-goal-constraint-weight 0.0 \
+    --qrl-success-transition-weight 1.0 \
+    --task-aware-teacher-ratio 0.0 \
+    --log-interval "${LOG_INTERVAL:-100}" \
+    --save-interval "${SAVE_INTERVAL:-2000}" \
+    --eval-interval 0 \
+    --visualization-interval 0 \
+    --planning-eval-interval 0
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.point_goal_qrl_diagnostics \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --checkpoint "$checkpoint" \
+    --output-dir "$experiment_dir/point_goal_diagnostics" \
+    --device "${DEVICE:-auto}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --seed "${FULL_GRAPH_ORACLE_EVAL_SEED:-20260823}" \
+    --device-id u_trap_target \
+    --point-goal-candidate-index "$candidate_index" \
+    --astar-position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --astar-heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --astar-primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --astar-primitive-scales -1.0 -0.5 0.0 0.5 1.0
+}
+
 case "$PHASE" in
   prepare)
     ;;
@@ -1036,6 +1090,9 @@ case "$PHASE" in
       full_graph_goal_set_stratified_constraints \
       512
     ;;
+  full_graph_point_goal_qrl)
+    full_graph_point_goal_qrl
+    ;;
   benchmark)
     benchmark
     ;;
@@ -1046,7 +1103,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, joint_feasible_iqe_capacity_2x, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, joint_feasible_iqe_capacity_2x, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, full_graph_point_goal_qrl, benchmark, or all)" >&2
     exit 2
     ;;
 esac

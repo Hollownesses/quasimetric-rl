@@ -202,6 +202,8 @@ class HybridAStarValueOracle:
         valid_sources: np.ndarray,
         terminal_sources: np.ndarray,
         omega: float,
+        *,
+        point_goal_index: Optional[int] = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         states = grid_states.copy()
         source_active = valid_sources & ~terminal_sources
@@ -237,12 +239,21 @@ class HybridAStarValueOracle:
             proposed = np.stack([x_new, y_new, theta_new], axis=1).astype(np.float32)
             moved = active & ~collision & ~out_of_bounds
             states[moved] = proposed[moved]
-            step_cost, step_success = _state_terms(
+            step_cost, task_success = _state_terms(
                 env,
                 states,
                 collision,
                 out_of_bounds,
             )
+            if point_goal_index is None:
+                step_success = task_success
+            else:
+                # A point-goal lattice must not terminate when a trajectory
+                # merely enters some other member of the environment's task
+                # goal set.  It succeeds only when the continuous state
+                # projects to the preselected physical lattice node g*.
+                projected = self._state_indices(env, states)
+                step_success = moved & (projected == int(point_goal_index))
             costs[active] += step_cost[active]
             newly_successful = active & step_success
             success |= newly_successful

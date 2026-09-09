@@ -5,12 +5,20 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from minimal_qrl.baselines import HybridAStarConfig
 from minimal_qrl.dataset import (
     FullGraphGoalSetQRLConfig,
+    FullGraphPointGoalQRLConfig,
     create_full_graph_goal_set_qrl_dataset,
+    create_full_graph_point_goal_qrl_dataset,
 )
 from minimal_qrl.envs import CommInspectionDubinsUAV2D
 from minimal_qrl.industry_exp.diagnostic_scenario import build_diagnostic_scenario
+from minimal_qrl.industry_exp.exact_discrete_value_lp import (
+    build_discrete_point_goal_graph,
+    reverse_dijkstra,
+    select_fixed_terminal_lattice_goal,
+)
 from minimal_qrl.industry_exp.scalability_scenarios import scenario_to_env_kwargs
 
 
@@ -152,3 +160,108 @@ def test_diagnostic_shell_exposes_stratified_constraint_phase():
         "full_graph_baseline_goal_set_qrl_linear_push_stratified_constraints"
         in script
     )
+
+
+def test_point_goal_graph_uses_one_physical_goal_and_no_synthetic_edges():
+    scenario = build_diagnostic_scenario()
+    env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
+    stats = {}
+    dataset = create_full_graph_point_goal_qrl_dataset(
+        env,
+        FullGraphPointGoalQRLConfig(
+            position_resolution=0.5,
+            heading_bins=12,
+            primitive_steps=5,
+            uniform_push_seed=17,
+            point_goal_candidate_index=0,
+        ),
+        collection_stats=stats,
+    )
+    audit = stats["full_graph_point_goal_qrl"]
+    infos = dataset.raw_data.transition_infos
+    goal_bound = infos["full_graph_direct_goal_edge"].to(dtype=torch.bool)
+    goal_obs = infos["task_goal_observations"][0]
+    abstract_index = env.task_context_indices["abstract_goal"]
+
+    assert audit["original_terminal_lattice_states"] > 1
+    assert audit["synthetic_goal_edges"] == 0
+    assert audit["goal_node_audit"]["fixed_single_terminal_point_used"] is True
+    assert audit["goal_node_audit"]["construction"] == "one physical lattice observation g*"
+    assert not bool(infos["abstract_goal_edge"].any())
+    assert bool(goal_bound.any())
+    assert torch.all(dataset.raw_data.next_observations[goal_bound] == goal_obs)
+    assert torch.all(dataset.raw_data.terminals == goal_bound)
+    assert float(goal_obs[abstract_index]) == 0.0
+    assert torch.all(infos["task_goal_observations"] == goal_obs)
+
+
+def test_point_goal_selection_is_explicit_and_reproducible():
+    scenario = build_diagnostic_scenario()
+    env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
+    first_stats = {}
+    second_stats = {}
+    config = FullGraphPointGoalQRLConfig(
+        position_resolution=0.5,
+        heading_bins=12,
+        uniform_push_seed=17,
+        point_goal_candidate_index=1,
+    )
+    create_full_graph_point_goal_qrl_dataset(env, config, collection_stats=first_stats)
+    create_full_graph_point_goal_qrl_dataset(env, config, collection_stats=second_stats)
+    first = first_stats["full_graph_point_goal_qrl"]
+    second = second_stats["full_graph_point_goal_qrl"]
+    assert first["point_goal_state"] == second["point_goal_state"]
+    assert first["training_graph_digest"] == second["training_graph_digest"]
+
+    env.reset(seed=17, options={"device_id": "u_trap_target"})
+    standard_config = HybridAStarConfig(
+        position_resolution=0.25,
+        heading_bins=24,
+        primitive_steps=5,
+    )
+    goal, _goal_index, candidates = select_fixed_terminal_lattice_goal(
+        env,
+        standard_config,
+        candidate_index=0,
+    )
+    assert len(candidates) == 24
+    assert np.allclose(goal, [7.25, 3.5, -3.010693], atol=1e-6)
+
+
+def test_point_goal_dijkstra_has_exactly_one_physical_zero_node():
+    scenario = build_diagnostic_scenario()
+    env = CommInspectionDubinsUAV2D(**scenario_to_env_kwargs(scenario))
+    env.reset(seed=17, options={"device_id": "u_trap_target"})
+    config = HybridAStarConfig(
+        position_resolution=0.5,
+        heading_bins=12,
+        primitive_steps=5,
+    )
+    _goal, goal_index, candidates = select_fixed_terminal_lattice_goal(
+        env,
+        config,
+        candidate_index=0,
+    )
+    graph = build_discrete_point_goal_graph(
+        env,
+        config,
+        goal_state_index=goal_index,
+    )
+    values = reverse_dijkstra(graph)
+    other_candidates = candidates[candidates != goal_index]
+
+    assert int(graph.terminal.sum()) == 1
+    assert bool(graph.terminal[goal_index])
+    assert not bool(np.any(graph.destinations < 0))
+    assert values[goal_index] == 0.0
+    assert bool(np.any(np.isfinite(values[other_candidates])))
+    assert bool(np.all(values[other_candidates][np.isfinite(values[other_candidates])] > 0.0))
+
+
+def test_diagnostic_shell_exposes_point_goal_control_phase():
+    script = Path(__file__).with_name(
+        "run_comm_inspection_diagnostic.sh"
+    ).read_text(encoding="utf-8")
+    assert "full_graph_point_goal_qrl)" in script
+    assert "--comm-dataset-mode full_graph_point_goal" in script
+    assert "minimal_qrl.industry_exp.point_goal_qrl_diagnostics" in script

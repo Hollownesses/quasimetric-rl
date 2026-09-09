@@ -147,6 +147,106 @@ def build_discrete_value_graph(
     )
 
 
+def select_fixed_terminal_lattice_goal(
+    env: CommInspectionDubinsUAV2D,
+    config: HybridAStarConfig,
+    *,
+    candidate_index: int,
+) -> tuple[np.ndarray, int, np.ndarray]:
+    """Select one reproducible physical goal from the task's terminal lattice.
+
+    ``candidate_index`` addresses the terminal nodes in the deterministic flat
+    lattice order.  Returning both the selected global node index and all
+    candidates makes the selection auditable without exposing Dijkstra values.
+    """
+
+    helper = HybridAStarValueOracle(config)
+    states, shape = helper._grid(env)
+    helper._grid_shape = shape
+    valid = helper._valid_grid_states(env, states)
+    zeros = np.zeros(len(states), dtype=bool)
+    _unused_cost, terminal = _state_terms(env, states, zeros, zeros)
+    candidates = np.flatnonzero(terminal & valid).astype(np.int64)
+    if not len(candidates):
+        raise ValueError("the active task has no terminal lattice states")
+    rank = int(candidate_index)
+    if rank < 0 or rank >= len(candidates):
+        raise ValueError(
+            f"point-goal candidate index {rank} is outside [0, {len(candidates) - 1}]"
+        )
+    global_index = int(candidates[rank])
+    return states[global_index].copy(), global_index, candidates
+
+
+def build_discrete_point_goal_graph(
+    env: CommInspectionDubinsUAV2D,
+    config: HybridAStarConfig,
+    *,
+    goal_state_index: int,
+) -> DiscreteValueGraph:
+    """Materialize the primitive graph whose sole terminal node is ``g*``.
+
+    Unlike :func:`build_discrete_value_graph`, entering another state in the
+    environment's task goal set does not terminate a primitive.  All successful
+    edges retain the physical goal node as their destination; no synthetic
+    ``DIRECT_GOAL`` node is introduced.
+    """
+
+    helper = HybridAStarValueOracle(config)
+    states, shape = helper._grid(env)
+    helper._grid_shape = shape
+    valid = helper._valid_grid_states(env, states)
+    goal_state_index = int(goal_state_index)
+    if goal_state_index < 0 or goal_state_index >= len(states):
+        raise ValueError(f"invalid point-goal lattice index: {goal_state_index}")
+    if not bool(valid[goal_state_index]):
+        raise ValueError("point-goal lattice state is not physically valid")
+    terminal = np.zeros(len(states), dtype=bool)
+    terminal[goal_state_index] = True
+
+    edge_sources: list[np.ndarray] = []
+    edge_destinations: list[np.ndarray] = []
+    edge_costs: list[np.ndarray] = []
+    edge_actions: list[np.ndarray] = []
+    for action_index, scale in enumerate(config.primitive_scales):
+        sources, destinations, costs, success = helper._primitive_edges(
+            env,
+            states,
+            valid,
+            terminal,
+            float(scale) * float(env.omega_max),
+            point_goal_index=goal_state_index,
+        )
+        unfinished = ~success & (destinations >= 0)
+        usable = success.copy()
+        if np.any(unfinished):
+            unfinished_indices = np.flatnonzero(unfinished)
+            destination_valid = valid[destinations[unfinished_indices]]
+            usable[unfinished_indices[destination_valid]] = True
+        selected = np.flatnonzero(usable)
+        if not len(selected):
+            continue
+        edge_sources.append(sources[selected].astype(np.int64, copy=False))
+        edge_destinations.append(
+            destinations[selected].astype(np.int64, copy=False)
+        )
+        edge_costs.append(costs[selected].astype(np.float64, copy=False))
+        edge_actions.append(
+            np.full(len(selected), int(action_index), dtype=np.int16)
+        )
+
+    return DiscreteValueGraph(
+        states=states,
+        valid=valid,
+        terminal=terminal,
+        sources=np.concatenate(edge_sources),
+        destinations=np.concatenate(edge_destinations),
+        costs=np.concatenate(edge_costs),
+        action_indices=np.concatenate(edge_actions),
+        primitive_attempts=int(np.sum(valid & ~terminal) * len(config.primitive_scales)),
+    )
+
+
 def reverse_dijkstra(graph: DiscreteValueGraph) -> np.ndarray:
     """Exact shortest-path values on ``graph``; infinity means no path to G."""
 

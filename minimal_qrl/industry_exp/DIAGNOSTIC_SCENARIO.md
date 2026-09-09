@@ -65,6 +65,28 @@ The first run constructs and caches the reverse Hybrid A* value table. Use
 `RESUME=1` after interruption. Results are written to
 `results/diagnostic_u_shadow_corridors/oracle_mppi_test_u_trap/` by default.
 
+Run the label-free point-goal QRL control against one fixed physical terminal
+lattice state:
+
+```bash
+PHASE=full_graph_point_goal_qrl DEVICE=mps \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+The default fixes terminal candidate 0 (of the 24 candidates at the standard
+0.25 x 24 lattice). Override it with `POINT_GOAL_CANDIDATE_INDEX`. This arm
+keeps the IQE architecture, optimizer, 120,000 update budget, seed, primitive
+set, and uniform edge minibatch sampling of the non-stratified full-graph
+goal-set arm. It removes the synthetic `G` observation and all terminal-to-`G`
+zero edges. Every task-goal pair is instead `d_theta(s, g*)`, and both reverse
+reachability and post-training Dijkstra values are recomputed with `g*` as the
+sole physical terminal node. Dijkstra values are never used by the trainer.
+
+The run writes `full_graph_dataset_stats.json` with the selected physical state
+and `point_goal_diagnostics/point_goal_qrl_metrics.json` with global, U-trap,
+fixed-probe, and greedy-edge topology metrics. Do not reuse goal-set Oracle
+records for this arm because they target a different terminal condition.
+
 Run the supervised-IQE representability experiment and then evaluate its
 terminal value with the same MPPI controller on the 12 test U-traps:
 
