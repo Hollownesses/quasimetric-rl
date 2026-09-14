@@ -18,6 +18,9 @@
 #   PHASE=train_qrl_nstep_upper_bound DEVICE=mps \
 #     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_mqe_waypoint_consistency DEVICE=mps \
+#     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -42,7 +45,14 @@ CONFIG_DIR="$OUTPUT_ROOT/config"
 SCENARIO_CONFIG="$CONFIG_DIR/diagnostic_scenario.json"
 TASK_BANK="$CONFIG_DIR/diagnostic_task_bank.json"
 TRAIN_DIR="${TRAIN_DIR:-$OUTPUT_ROOT/qrl_training}"
-SHARED_ORACLE_DIR="${SHARED_ORACLE_DIR:-./results/shared_oracle_banks/chemical_process}"
+if [[ -d "./results/shared_oracle_banks/chemical_process" ]]; then
+  DEFAULT_SHARED_ORACLE_DIR="./results/shared_oracle_banks/chemical_process"
+elif [[ -d "../quasimetric-rl-industrial-inspection/results/shared_oracle_banks/chemical_process" ]]; then
+  DEFAULT_SHARED_ORACLE_DIR="../quasimetric-rl-industrial-inspection/results/shared_oracle_banks/chemical_process"
+else
+  DEFAULT_SHARED_ORACLE_DIR="./results/shared_oracle_banks/chemical_process"
+fi
+SHARED_ORACLE_DIR="${SHARED_ORACLE_DIR:-$DEFAULT_SHARED_ORACLE_DIR}"
 ORACLE_VALIDATION_BANK="${ORACLE_VALIDATION_BANK:-$SHARED_ORACLE_DIR/hybrid_astar_validation_192.json}"
 ORACLE_FINAL_TEST_BANK="${ORACLE_FINAL_TEST_BANK:-$SHARED_ORACLE_DIR/hybrid_astar_final_test_192.json}"
 
@@ -112,6 +122,13 @@ train_qrl() {
     --qrl-goal-return-constraint-weight "${QRL_GOAL_RETURN_CONSTRAINT_WEIGHT:-1.0}" \
     --qrl-nstep-goal-constraint-weight "${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-0.0}" \
     --qrl-nstep-target-tau "${QRL_NSTEP_TARGET_TAU:-0.005}" \
+    --qrl-mqe-waypoint-consistency-weight "${QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT:-0.0}" \
+    --qrl-mqe-goal-discount "${QRL_MQE_GOAL_DISCOUNT:-0.995}" \
+    --qrl-mqe-waypoint-lambda "${QRL_MQE_WAYPOINT_LAMBDA:-0.95}" \
+    --qrl-mqe-next-state-probability "${QRL_MQE_NEXT_STATE_PROBABILITY:-0.2}" \
+    --qrl-mqe-terminal-anchor-fraction "${QRL_MQE_TERMINAL_ANCHOR_FRACTION:-0.1}" \
+    --qrl-mqe-target-tau "${QRL_MQE_TARGET_TAU:-0.005}" \
+    --qrl-mqe-huber-delta "${QRL_MQE_HUBER_DELTA:-1.0}" \
     --qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}" \
     --task-aware-teacher-ratio "$teacher_ratio" \
     --log-interval "${LOG_INTERVAL:-100}" \
@@ -129,14 +146,14 @@ train_qrl() {
     --planning-eval-interval 0
 }
 
-# Controlled topology-learning sanity check: reuse the QRL-explore baseline and
-# change only the optional one-sided n-step task-goal upper-bound weight. Keep
-# this as a separate phase/output directory so it cannot overwrite the baseline.
+# One-sided n-step sanity check.  It reuses train_qrl and changes only the
+# optional task-goal upper-bound weight and output directory.
 train_qrl_nstep_upper_bound() {
   local nstep_train_dir="${NSTEP_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_nstep_upper_bound}"
 
   echo "QRL topology-improvement ablation:"
   echo "  variant=one_sided_nstep_upper_bound"
+  echo "  global_push_objective=softplus"
   echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
   echo "  nstep_weight=${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-1.0}"
   echo "  target_tau=${QRL_NSTEP_TARGET_TAU:-0.005}"
@@ -144,7 +161,34 @@ train_qrl_nstep_upper_bound() {
 
   QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
   QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT="${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-1.0}" \
+  QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
   TRAIN_DIR="$nstep_train_dir" \
+    train_qrl
+}
+
+# MQE-inspired two-sided consistency.  A fixed fraction of MQE-only slots is
+# drawn from complete natural successes, so abstract-goal anchors do not depend
+# on their prevalence in the main replay batch.
+train_qrl_mqe_waypoint_consistency() {
+  local mqe_train_dir="${MQE_WAYPOINT_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_mqe_waypoint_consistency}"
+
+  echo "QRL topology-improvement ablation:"
+  echo "  variant=mqe_inspired_two_sided_waypoint_consistency"
+  echo "  global_push_objective=softplus"
+  echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
+  echo "  waypoint_weight=${QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT:-1.0}"
+  echo "  goal_discount=${QRL_MQE_GOAL_DISCOUNT:-0.995}"
+  echo "  waypoint_lambda=${QRL_MQE_WAYPOINT_LAMBDA:-0.95}"
+  echo "  next_state_probability=${QRL_MQE_NEXT_STATE_PROBABILITY:-0.2}"
+  echo "  terminal_anchor_fraction=${QRL_MQE_TERMINAL_ANCHOR_FRACTION:-0.1}"
+  echo "  target_tau=${QRL_MQE_TARGET_TAU:-0.005}"
+  echo "  huber_delta=${QRL_MQE_HUBER_DELTA:-1.0}"
+  echo "  output_dir=$mqe_train_dir"
+
+  QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
+  QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT="${QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT:-1.0}" \
+  TRAIN_DIR="$mqe_train_dir" \
     train_qrl
 }
 
@@ -342,6 +386,9 @@ case "$PHASE" in
   train_qrl_nstep_upper_bound)
     train_qrl_nstep_upper_bound
     ;;
+  train_qrl_mqe_waypoint_consistency)
+    train_qrl_mqe_waypoint_consistency
+    ;;
   eval_qrl)
     eval_qrl
     ;;
@@ -358,7 +405,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, eval_qrl, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_mqe_waypoint_consistency, eval_qrl, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

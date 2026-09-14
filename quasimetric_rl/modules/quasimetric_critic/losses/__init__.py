@@ -37,6 +37,7 @@ from .latent_dynamics import LatentDynamicsLoss
 from .abstract_goal_edge import AbstractGoalEdgeLoss
 from .temporal_path import (
     GoalReturnConstraintLoss,
+    MQEInspiredWaypointConsistencyLoss,
     NstepGoalConsistencyLoss,
     TemporalPathConstraintLoss,
 )
@@ -52,6 +53,9 @@ class QuasimetricCriticLosses(CriticLossBase):
         temporal_path: TemporalPathConstraintLoss.Conf = TemporalPathConstraintLoss.Conf()
         goal_return: GoalReturnConstraintLoss.Conf = GoalReturnConstraintLoss.Conf()
         nstep_goal: NstepGoalConsistencyLoss.Conf = NstepGoalConsistencyLoss.Conf()
+        mqe_waypoint: MQEInspiredWaypointConsistencyLoss.Conf = (
+            MQEInspiredWaypointConsistencyLoss.Conf()
+        )
 
         critic_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-4)
         lagrange_mult_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-2)
@@ -67,6 +71,7 @@ class QuasimetricCriticLosses(CriticLossBase):
                 temporal_path=self.temporal_path.make(),
                 goal_return=self.goal_return.make(),
                 nstep_goal=self.nstep_goal.make(critic),
+                mqe_waypoint=self.mqe_waypoint.make(critic),
                 critic_optim_spec=self.critic_optim.make(),
                 lagrange_mult_optim_spec=self.lagrange_mult_optim.make(),
             )
@@ -78,6 +83,7 @@ class QuasimetricCriticLosses(CriticLossBase):
     temporal_path: TemporalPathConstraintLoss
     goal_return: GoalReturnConstraintLoss
     nstep_goal: NstepGoalConsistencyLoss
+    mqe_waypoint: MQEInspiredWaypointConsistencyLoss
 
     critic_optim: OptimWrapper
     critic_sched: torch.optim.lr_scheduler._LRScheduler
@@ -88,6 +94,7 @@ class QuasimetricCriticLosses(CriticLossBase):
                  local_constraint: LocalConstraintLoss, latent_dynamics: LatentDynamicsLoss,
                  abstract_goal_edge: AbstractGoalEdgeLoss, temporal_path: TemporalPathConstraintLoss,
                  goal_return: GoalReturnConstraintLoss, nstep_goal: NstepGoalConsistencyLoss,
+                 mqe_waypoint: MQEInspiredWaypointConsistencyLoss,
                  critic_optim_spec: AdamWSpec, lagrange_mult_optim_spec: AdamWSpec):
         super().__init__()
         self.global_push = global_push
@@ -97,6 +104,7 @@ class QuasimetricCriticLosses(CriticLossBase):
         self.temporal_path = temporal_path
         self.goal_return = goal_return
         self.nstep_goal = nstep_goal
+        self.mqe_waypoint = mqe_waypoint
 
         self.critic_optim, self.critic_sched = critic_optim_spec.create_optim_scheduler(
             critic.parameters(), total_optim_steps)
@@ -118,11 +126,13 @@ class QuasimetricCriticLosses(CriticLossBase):
                 temporal_path=self.temporal_path(data, critic_batch_info),
                 goal_return=self.goal_return(data, critic_batch_info),
                 nstep_goal=self.nstep_goal(data, critic_batch_info),
+                mqe_waypoint=self.mqe_waypoint(data, critic_batch_info),
             ))
             result.loss.backward()
 
         if optimize:
             self.nstep_goal.update_target(critic_batch_info.critic)
+            self.mqe_waypoint.update_target(critic_batch_info.critic)
             self.critic_sched.step()
             self.lagrange_mult_sched.step()
         return result

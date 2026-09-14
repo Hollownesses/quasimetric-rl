@@ -15,6 +15,7 @@ from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import Lo
 from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.temporal_path import (
     GoalReturnConstraintLoss,
+    MQEInspiredWaypointConsistencyLoss,
     NstepGoalConsistencyLoss,
     TemporalPathConstraintLoss,
 )
@@ -101,6 +102,22 @@ def test_global_push_prefers_explicit_free_state_pairs():
     )
     result = loss(data, batch_info)
     assert torch.isclose(result.info["global_push_state_state/dist"], torch.tensor(3.0))
+
+
+def test_global_push_remains_bounded_softplus_objective():
+    distances = torch.tensor([2.0, 7.0], requires_grad=True)
+    loss = GlobalPushLoss(
+        softplus_beta=0.1,
+        softplus_offset=15.0,
+        abstract_goal_ratio=1.0,
+        state_goal_ratio=0.0,
+    )._push_loss(distances)
+    expected = torch.nn.functional.softplus(
+        15.0 - distances,
+        beta=0.1,
+    ).mean()
+    assert torch.isclose(loss, expected)
+    assert loss.item() > 0.0
 
 
 def test_temporal_path_uses_executed_multistep_cost_as_one_sided_bound():
@@ -204,6 +221,112 @@ def test_optional_nstep_goal_uses_frozen_future_goal_estimate():
     assert torch.isclose(result.loss, torch.tensor(1.0 / 81.0))
     assert torch.isclose(result.info["target_future_dist"], torch.tensor(3.0))
     assert torch.isclose(result.info["future_steps"], torch.tensor(3.0))
+
+
+class _ScalarQuasimetric(torch.nn.Module):
+    def __init__(self, value):
+        super().__init__()
+        self.value = torch.nn.Parameter(torch.tensor(float(value)))
+
+    def forward(self, source, goal):
+        return self.value.expand(source.shape[0])
+
+
+class _ScalarCritic(torch.nn.Module):
+    def __init__(self, value):
+        super().__init__()
+        self.encoder = torch.nn.Identity()
+        self.quasimetric_model = _ScalarQuasimetric(value)
+
+    def forward(self, source, goal):
+        return self.quasimetric_model(self.encoder(source), self.encoder(goal))
+
+
+def _mqe_loss_batch(cost=0.0, *, terminal_anchor=False):
+    data = make_batch([-1.0])
+    data.transition_infos = {
+        "mqe_waypoint_valid": torch.tensor([True]),
+        "mqe_waypoint_source_observations": torch.tensor([[0.0, 0.0]]),
+        "mqe_waypoint_observations": torch.tensor([[1.0, 0.0]]),
+        "mqe_waypoint_goal_observations": torch.tensor([[4.0, 0.0]]),
+        "mqe_waypoint_cost": torch.tensor([cost]),
+        "mqe_waypoint_steps": torch.tensor([3]),
+        "mqe_waypoint_goal_steps": torch.tensor([5]),
+        "mqe_waypoint_forced_one_step": torch.tensor([False]),
+        "mqe_waypoint_physical_goal": torch.tensor([not terminal_anchor]),
+        "mqe_waypoint_terminal_anchor": torch.tensor([terminal_anchor]),
+    }
+    return data
+
+
+def test_mqe_two_sided_huber_has_gradients_for_over_and_under_estimates():
+    gradients = []
+    for current_value in (2.0, -2.0):
+        critic = _ScalarCritic(0.0)
+        loss = MQEInspiredWaypointConsistencyLoss(
+            critic=critic,
+            weight=1.0,
+            target_tau=0.25,
+            huber_delta=1.0,
+        )
+        critic.quasimetric_model.value.data.fill_(current_value)
+        info = CriticBatchInfo(
+            critic=critic,
+            zx=torch.zeros(1, 2),
+            zy=torch.zeros(1, 2),
+        )
+        result = loss(_mqe_loss_batch(), info)
+        result.loss.backward()
+        gradients.append(float(critic.quasimetric_model.value.grad))
+
+    assert gradients[0] > 0.0
+    assert gradients[1] < 0.0
+
+
+def test_mqe_terminal_anchor_uses_exact_zero_terminal_to_goal_distance():
+    critic = _ScalarCritic(4.0)
+    loss = MQEInspiredWaypointConsistencyLoss(
+        critic=critic,
+        weight=1.0,
+        target_tau=0.25,
+        huber_delta=1.0,
+    )
+    loss.target_critic.quasimetric_model.value.data.fill_(99.0)
+    info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(1, 2),
+        zy=torch.zeros(1, 2),
+    )
+    result = loss(_mqe_loss_batch(cost=3.0, terminal_anchor=True), info)
+
+    assert torch.isclose(result.info["target_waypoint_dist"], torch.tensor(0.0))
+    assert torch.isclose(result.info["target"], torch.tensor(3.0))
+    assert torch.isclose(result.info["terminal_anchor_count"], torch.tensor(1.0))
+    assert torch.isclose(result.info["terminal_anchor_fraction"], torch.tensor(1.0))
+
+
+def test_mqe_target_is_stop_gradient_and_updates_only_by_ema():
+    critic = _ScalarCritic(0.0)
+    loss = MQEInspiredWaypointConsistencyLoss(
+        critic=critic,
+        weight=1.0,
+        target_tau=0.25,
+        huber_delta=1.0,
+    )
+    critic.quasimetric_model.value.data.fill_(4.0)
+    info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(1, 2),
+        zy=torch.zeros(1, 2),
+    )
+    result = loss(_mqe_loss_batch(cost=1.0), info)
+    result.loss.backward()
+
+    target_parameter = loss.target_critic.quasimetric_model.value
+    assert target_parameter.grad is None
+    assert torch.isclose(target_parameter.detach(), torch.tensor(0.0))
+    loss.update_target(critic)
+    assert torch.isclose(target_parameter.detach(), torch.tensor(1.0))
 
 
 if __name__ == "__main__":

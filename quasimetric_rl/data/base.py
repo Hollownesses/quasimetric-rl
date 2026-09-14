@@ -178,6 +178,42 @@ def register_offline_env(kind: str, spec: str, *, load_episodes_fn, create_env_f
 
 
 class Dataset:
+    @attrs.define(frozen=True, kw_only=True)
+    class MQEInspiredWaypointSampling:
+        """Sampling-only subset adapted from MQE's multistep relabeling.
+
+        Physical goals and waypoints stay inside one episode.  A fixed fraction
+        of every MQE batch is independently resampled from naturally successful
+        episodes and connected to the abstract task goal through that episode's
+        physical terminal state.  This makes the anchor rate independent of the
+        (usually very small) successful-transition rate in the main dataloader.
+        """
+
+        goal_discount: float = attrs.field(
+            default=0.995,
+            validator=attrs.validators.and_(
+                attrs.validators.ge(0.0), attrs.validators.lt(1.0)
+            ),
+        )
+        waypoint_lambda: float = attrs.field(
+            default=0.95,
+            validator=attrs.validators.and_(
+                attrs.validators.ge(0.0), attrs.validators.lt(1.0)
+            ),
+        )
+        next_state_probability: float = attrs.field(
+            default=0.2,
+            validator=attrs.validators.and_(
+                attrs.validators.ge(0.0), attrs.validators.le(1.0)
+            ),
+        )
+        terminal_anchor_fraction: float = attrs.field(
+            default=0.1,
+            validator=attrs.validators.and_(
+                attrs.validators.ge(0.0), attrs.validators.le(1.0)
+            ),
+        )
+
     @attrs.define(kw_only=True)
     class Conf:
         # config / argparse uses this to specify behavior
@@ -249,6 +285,8 @@ class Dataset:
         indices_to_episode_indices = []
         indices_to_episode_timesteps = []
         obs_indices_to_cumulative_cost = []
+        legal_anchor_transition_indices = []
+        transition_offset = 0
         for eidx, episode in enumerate(episodes):
             l = episode.num_transitions
             obs_indices_to_obs_index_in_episode.append(torch.arange(l + 1, dtype=torch.int64))
@@ -259,6 +297,28 @@ class Dataset:
                 torch.zeros(1, dtype=costs.dtype),
                 torch.cumsum(costs, dim=0),
             ]))
+            abstract_edges = episode.transition_infos.get("abstract_goal_edge")
+            task_success = episode.transition_infos.get("task_success_episode")
+            task_goals = episode.transition_infos.get("task_goal_observations")
+            has_legal_task_terminal = (
+                bool(episode.terminals[-1])
+                and task_success is not None
+                and bool(task_success[-1])
+                and task_goals is not None
+                and not (
+                    abstract_edges is not None
+                    and bool(abstract_edges[-1])
+                )
+            )
+            if has_legal_task_terminal:
+                legal_anchor_transition_indices.append(
+                    torch.arange(
+                        transition_offset,
+                        transition_offset + l,
+                        dtype=torch.int64,
+                    )
+                )
+            transition_offset += l
 
         assert len(episodes) > 0, "must have at least one episode"
         self.raw_data = MultiEpisodeData.cat(episodes)
@@ -267,7 +327,183 @@ class Dataset:
         self.indices_to_episode_indices = torch.cat(indices_to_episode_indices, dim=0)
         self.indices_to_episode_timesteps = torch.cat(indices_to_episode_timesteps, dim=0)
         self.obs_indices_to_cumulative_cost = torch.cat(obs_indices_to_cumulative_cost, dim=0)
+        self.legal_anchor_transition_indices = (
+            torch.cat(legal_anchor_transition_indices)
+            if legal_anchor_transition_indices
+            else torch.empty(0, dtype=torch.int64)
+        )
         self.max_episode_length = self.raw_data.episode_lengths.max().item()
+        self.mqe_inspired_waypoint_sampling: Optional[
+            Dataset.MQEInspiredWaypointSampling
+        ] = None
+
+    def configure_mqe_inspired_waypoint_sampling(
+        self,
+        config: Optional[MQEInspiredWaypointSampling],
+    ) -> None:
+        """Enable isolated MQE samples without changing the main replay batch."""
+
+        if (
+            config is not None
+            and config.terminal_anchor_fraction > 0.0
+            and self.legal_anchor_transition_indices.numel() == 0
+        ):
+            raise ValueError(
+                "MQE terminal anchors require at least one complete, naturally "
+                "successful episode with task_goal_observations"
+            )
+        self.mqe_inspired_waypoint_sampling = config
+
+    @staticmethod
+    def _geometric_steps(
+        continuation_probability: float,
+        shape: torch.Size,
+    ) -> torch.Tensor:
+        """Sample Geom(1-continuation_probability) on {1, 2, ...}."""
+
+        continuation_probability = float(continuation_probability)
+        if continuation_probability == 0.0:
+            return torch.ones(shape, dtype=torch.int64)
+        failures = torch.distributions.Geometric(
+            probs=torch.full(shape, 1.0 - continuation_probability)
+        ).sample()
+        return failures.to(dtype=torch.int64) + 1
+
+    def _mqe_inspired_waypoint_infos(
+        self,
+        *,
+        indices: torch.Tensor,
+        episode_indices: torch.Tensor,
+        observation_indices: torch.Tensor,
+        timesteps: torch.Tensor,
+        episode_lengths: torch.Tensor,
+    ) -> Mapping[str, torch.Tensor]:
+        config = self.mqe_inspired_waypoint_sampling
+        if config is None:
+            return {}
+
+        # Start from the unchanged replay batch.  MQE-only anchor slots replace
+        # their source with a transition sampled from the legal success pool;
+        # no other loss sees this replacement.
+        source_indices = indices.clone()
+        source_episode_indices = episode_indices.clone()
+        source_observation_indices = observation_indices.clone()
+        source_timesteps = timesteps.clone()
+        source_episode_lengths = episode_lengths.clone()
+        terminal_anchor = torch.zeros(indices.shape, dtype=torch.bool)
+
+        batch_size = int(indices.numel())
+        if config.terminal_anchor_fraction > 0.0 and batch_size > 0:
+            anchor_count = min(
+                batch_size,
+                max(
+                    1,
+                    int(np.ceil(batch_size * config.terminal_anchor_fraction)),
+                ),
+            )
+            anchor_slots = torch.randperm(batch_size)[:anchor_count]
+            anchor_pool_slots = torch.randint(
+                self.legal_anchor_transition_indices.numel(),
+                (anchor_count,),
+            )
+            anchor_indices = self.legal_anchor_transition_indices[anchor_pool_slots]
+            anchor_episode_indices = self.indices_to_episode_indices[anchor_indices]
+            source_indices[anchor_slots] = anchor_indices
+            source_episode_indices[anchor_slots] = anchor_episode_indices
+            source_observation_indices[anchor_slots] = (
+                anchor_indices + anchor_episode_indices
+            )
+            source_timesteps[anchor_slots] = self.indices_to_episode_timesteps[
+                anchor_indices
+            ]
+            source_episode_lengths[anchor_slots] = self.raw_data.episode_lengths[
+                anchor_episode_indices
+            ]
+            terminal_anchor[anchor_slots] = True
+
+        shape = source_indices.shape
+        remaining_steps = source_episode_lengths - source_timesteps
+        abstract_edges = self.raw_data.transition_infos.get("abstract_goal_edge")
+        if abstract_edges is None:
+            valid = torch.ones(shape, dtype=torch.bool)
+        else:
+            valid = ~abstract_edges[source_indices].to(dtype=torch.bool)
+        valid &= remaining_steps >= 1
+
+        goal_steps = torch.minimum(
+            self._geometric_steps(config.goal_discount, shape),
+            remaining_steps,
+        )
+        geometric_waypoint_steps = self._geometric_steps(
+            config.waypoint_lambda,
+            shape,
+        )
+        forced_one_step = (
+            torch.rand(shape) < config.next_state_probability
+        ) & valid & ~terminal_anchor
+        waypoint_steps = torch.where(
+            forced_one_step,
+            torch.ones_like(geometric_waypoint_steps),
+            geometric_waypoint_steps,
+        )
+        waypoint_steps = torch.minimum(waypoint_steps, goal_steps)
+
+        # Abstract G is admitted only through the physical terminal state of a
+        # complete natural success.  It is never used as a waypoint.
+        goal_steps = torch.where(terminal_anchor, remaining_steps, goal_steps)
+        waypoint_steps = torch.where(
+            terminal_anchor,
+            remaining_steps,
+            waypoint_steps,
+        )
+
+        safe_waypoint_steps = torch.where(
+            valid, waypoint_steps, torch.zeros_like(waypoint_steps)
+        )
+        safe_goal_steps = torch.where(
+            valid, goal_steps, torch.zeros_like(goal_steps)
+        )
+        waypoint_observation_indices = (
+            source_observation_indices + safe_waypoint_steps
+        )
+        goal_observation_indices = source_observation_indices + safe_goal_steps
+        source_observations = self.get_observations(source_observation_indices)
+        waypoint_observations = self.get_observations(
+            waypoint_observation_indices
+        )
+        physical_goals = self.get_observations(goal_observation_indices)
+        task_goals = self.raw_data.transition_infos.get("task_goal_observations")
+        if task_goals is None:
+            goal_observations = physical_goals
+        else:
+            task_goal_observations = task_goals[source_indices]
+            goal_mask = terminal_anchor.reshape(
+                terminal_anchor.shape + (1,) * (physical_goals.ndim - 1)
+            )
+            goal_observations = torch.where(
+                goal_mask,
+                task_goal_observations,
+                physical_goals,
+            )
+        waypoint_cost = (
+            self.obs_indices_to_cumulative_cost[waypoint_observation_indices]
+            - self.obs_indices_to_cumulative_cost[source_observation_indices]
+        )
+
+        return {
+            "mqe_waypoint_valid": valid,
+            "mqe_waypoint_source_observations": source_observations,
+            "mqe_waypoint_observations": waypoint_observations,
+            "mqe_waypoint_goal_observations": goal_observations,
+            "mqe_waypoint_cost": waypoint_cost,
+            "mqe_waypoint_steps": waypoint_steps,
+            "mqe_waypoint_goal_steps": goal_steps,
+            "mqe_waypoint_forced_one_step": forced_one_step,
+            "mqe_waypoint_physical_goal": valid & ~terminal_anchor,
+            "mqe_waypoint_terminal_anchor": terminal_anchor & valid,
+            "mqe_waypoint_episode_index": source_episode_indices,
+            "mqe_waypoint_source_transition_index": source_indices,
+        }
 
     def get_observations(self, obs_indices: torch.Tensor):
         return self.raw_data.all_observations[obs_indices]
@@ -307,6 +543,13 @@ class Dataset:
             "temporal_future_cost": future_costs,
             "temporal_future_steps": deltas + 1,
         })
+        transition_infos.update(self._mqe_inspired_waypoint_infos(
+            indices=indices,
+            episode_indices=eindices,
+            observation_indices=obs_indices,
+            timesteps=tindices,
+            episode_lengths=epilengths,
+        ))
 
         return BatchData(
             observations=obs,

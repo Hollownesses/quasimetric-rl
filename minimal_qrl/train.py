@@ -52,6 +52,7 @@ from quasimetric_rl.modules.quasimetric_critic.losses.latent_dynamics import Lat
 from quasimetric_rl.modules.quasimetric_critic.losses.abstract_goal_edge import AbstractGoalEdgeLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.temporal_path import (
     GoalReturnConstraintLoss,
+    MQEInspiredWaypointConsistencyLoss,
     NstepGoalConsistencyLoss,
     TemporalPathConstraintLoss,
 )
@@ -505,6 +506,52 @@ def train(args):
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         args.task_aware_teacher_ratio = 0.0
         args.target_env_transitions = None
+    mqe_waypoint_weight = float(args.qrl_mqe_waypoint_consistency_weight)
+    if mqe_waypoint_weight < 0.0:
+        raise ValueError('--qrl-mqe-waypoint-consistency-weight must be nonnegative')
+    mqe_sampling_config = None
+    if mqe_waypoint_weight > 0.0:
+        if args.env_type != 'comm_inspection_dubins_uav':
+            raise ValueError(
+                'MQE-inspired waypoint consistency currently requires the '
+                'communication goal-set environment'
+            )
+        mqe_sampling_config = Dataset.MQEInspiredWaypointSampling(
+            goal_discount=float(args.qrl_mqe_goal_discount),
+            waypoint_lambda=float(args.qrl_mqe_waypoint_lambda),
+            next_state_probability=float(args.qrl_mqe_next_state_probability),
+            terminal_anchor_fraction=float(
+                args.qrl_mqe_terminal_anchor_fraction
+            ),
+        )
+    topology_improvement_metadata = {
+        'variant': (
+            'mqe_inspired_two_sided_waypoint_consistency'
+            if mqe_waypoint_weight > 0.0
+            else (
+                'one_sided_nstep_upper_bound'
+                if float(args.qrl_nstep_goal_constraint_weight) > 0.0
+                else 'qrl_control'
+            )
+        ),
+        'global_push_objective': 'softplus',
+        'global_push_softplus_offset': float(args.global_push_softplus_offset),
+        'global_push_softplus_beta': float(args.global_push_softplus_beta),
+        'nstep_goal_constraint_weight': float(
+            args.qrl_nstep_goal_constraint_weight
+        ),
+        'mqe_waypoint_consistency_weight': mqe_waypoint_weight,
+        'mqe_goal_discount': float(args.qrl_mqe_goal_discount),
+        'mqe_waypoint_lambda': float(args.qrl_mqe_waypoint_lambda),
+        'mqe_next_state_probability': float(
+            args.qrl_mqe_next_state_probability
+        ),
+        'mqe_terminal_anchor_fraction': float(
+            args.qrl_mqe_terminal_anchor_fraction
+        ),
+        'mqe_target_tau': float(args.qrl_mqe_target_tau),
+        'mqe_huber_delta': float(args.qrl_mqe_huber_delta),
+    }
     # 设置随机种子
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -670,6 +717,18 @@ def train(args):
         future_observation_discount=0.99,
     )
     dataset = dataset_conf.make(dummy=False)
+    if mqe_sampling_config is not None:
+        dataset.configure_mqe_inspired_waypoint_sampling(mqe_sampling_config)
+        logger.info(
+            'MQE-inspired waypoint sampling enabled: goal_discount=%.4f, '
+            'lambda=%.4f, next_state_probability=%.4f, '
+            'terminal_anchor_fraction=%.4f, legal_anchor_pool=%d',
+            mqe_sampling_config.goal_discount,
+            mqe_sampling_config.waypoint_lambda,
+            mqe_sampling_config.next_state_probability,
+            mqe_sampling_config.terminal_anchor_fraction,
+            int(dataset.legal_anchor_transition_indices.numel()),
+        )
     data_time_sec = float(prior_timing.get('data_time_sec', 0.0)) + (perf_counter() - data_start)
     logger.info(f"数据集大小: {len(dataset)} 个转移")
     success_transition_mask = dataset.raw_data.transition_infos.get(
@@ -805,6 +864,11 @@ def train(args):
                         weight=float(args.qrl_nstep_goal_constraint_weight),
                         min_future_steps=int(args.qrl_temporal_min_future_steps),
                         target_tau=float(args.qrl_nstep_target_tau),
+                    ),
+                    mqe_waypoint=MQEInspiredWaypointConsistencyLoss.Conf(
+                        weight=mqe_waypoint_weight,
+                        target_tau=float(args.qrl_mqe_target_tau),
+                        huber_delta=float(args.qrl_mqe_huber_delta),
                     ),
                     critic_optim=AdamWSpec.Conf(lr=5e-5),
                     lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
@@ -974,6 +1038,7 @@ def train(args):
             'optim_steps': optim_steps,
             'agent': agent.state_dict(),
             'losses': losses.state_dict(),
+            'experiment': topology_improvement_metadata,
         }, checkpoint_path)
         checkpoint_io_time += perf_counter() - checkpoint_start
         logger.info(f"保存初始检查点: {checkpoint_path}")
@@ -1249,6 +1314,7 @@ def train(args):
                     'optim_steps': optim_steps,
                     'agent': agent.state_dict(),
                     'losses': losses.state_dict(),
+                    'experiment': topology_improvement_metadata,
                 }, checkpoint_path)
                 checkpoint_io_time += perf_counter() - checkpoint_start
                 with open(timing_progress_path, 'w', encoding='utf-8') as f:
@@ -1285,6 +1351,7 @@ def train(args):
         'optim_steps': optim_steps,
         'agent': agent.state_dict(),
         'losses': losses.state_dict(),
+        'experiment': topology_improvement_metadata,
     }, final_path)
     checkpoint_io_time += perf_counter() - checkpoint_start
     logger.info(f"保存最终模型: {final_path}")
@@ -1500,6 +1567,7 @@ def train(args):
         ),
         'dataset_total_transitions': int(len(dataset)),
         'collection_stats': collection_stats or None,
+        'topology_improvement': topology_improvement_metadata,
         'hardware': {
             'requested_device': str(args.device),
             'resolved_device': str(device),
@@ -1694,6 +1762,48 @@ def main():
         type=float,
         default=0.005,
         help='n-step task-goal 自举中 EMA target critic 的软更新率',
+    )
+    parser.add_argument(
+        '--qrl-mqe-waypoint-consistency-weight',
+        type=float,
+        default=0.0,
+        help='MQE-inspired 双边 multistep waypoint Huber 损失权重；默认关闭',
+    )
+    parser.add_argument(
+        '--qrl-mqe-goal-discount',
+        type=float,
+        default=0.995,
+        help='future physical goal 几何采样的 continuation probability',
+    )
+    parser.add_argument(
+        '--qrl-mqe-waypoint-lambda',
+        type=float,
+        default=0.95,
+        help='非强制一步 waypoint 几何采样的 continuation probability',
+    )
+    parser.add_argument(
+        '--qrl-mqe-next-state-probability',
+        type=float,
+        default=0.2,
+        help='MQE Bernoulli mixture 中强制 k=1 的概率',
+    )
+    parser.add_argument(
+        '--qrl-mqe-terminal-anchor-fraction',
+        type=float,
+        default=0.1,
+        help='每个 MQE batch 中独立采自自然成功轨迹、连接抽象 G 的固定比例',
+    )
+    parser.add_argument(
+        '--qrl-mqe-target-tau',
+        type=float,
+        default=0.005,
+        help='MQE-inspired waypoint EMA target critic 的软更新率',
+    )
+    parser.add_argument(
+        '--qrl-mqe-huber-delta',
+        type=float,
+        default=1.0,
+        help='双边 waypoint consistency Huber delta',
     )
     parser.add_argument(
         '--qrl-success-transition-weight',

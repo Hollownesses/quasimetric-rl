@@ -84,6 +84,8 @@ def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
     assert args.qrl_temporal_min_future_steps == 2
     assert np.isclose(args.qrl_goal_return_constraint_weight, 1.0)
     assert np.isclose(args.qrl_nstep_goal_constraint_weight, 0.0)
+    assert np.isclose(args.qrl_mqe_waypoint_consistency_weight, 0.0)
+    assert np.isclose(args.qrl_mqe_terminal_anchor_fraction, 0.1)
     assert np.isclose(args.qrl_success_transition_weight, 4.0)
 
 
@@ -102,7 +104,10 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert '--qrl-temporal-constraint-weight "${QRL_TEMPORAL_CONSTRAINT_WEIGHT:-1.0}"' in script
     assert '--qrl-goal-return-constraint-weight "${QRL_GOAL_RETURN_CONSTRAINT_WEIGHT:-1.0}"' in script
     assert '--qrl-nstep-goal-constraint-weight "${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-0.0}"' in script
+    assert '--qrl-mqe-waypoint-consistency-weight "${QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT:-0.0}"' in script
+    assert '--qrl-mqe-terminal-anchor-fraction "${QRL_MQE_TERMINAL_ANCHOR_FRACTION:-0.1}"' in script
     assert '--qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}"' in script
+    assert '../quasimetric-rl-industrial-inspection/results/shared_oracle_banks/chemical_process' in script
     assert 'teacher_ratio="0.0"' in script
     assert '--task-aware-teacher-ratio "$teacher_ratio"' in script
     assert 'local_nav_eval()' in script
@@ -129,3 +134,16 @@ def test_diagnostic_shell_has_isolated_nstep_upper_bound_ablation():
     )
     assert "variant=one_sided_nstep_upper_bound" in script
     assert "train_qrl_nstep_upper_bound)" in script
+
+
+def test_diagnostic_shell_has_isolated_mqe_waypoint_ablation():
+    script = (
+        Path(__file__).with_name("run_comm_inspection_diagnostic.sh")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "train_qrl_mqe_waypoint_consistency()" in script
+    assert "variant=mqe_inspired_two_sided_waypoint_consistency" in script
+    assert "global_push_objective=softplus" in script
+    assert "terminal_anchor_fraction=${QRL_MQE_TERMINAL_ANCHOR_FRACTION:-0.1}" in script
+    assert "train_qrl_mqe_waypoint_consistency)" in script
