@@ -266,6 +266,10 @@ class NstepGoalConsistencyLoss(CriticLossBase):
         bound = path_cost + target_future.reshape_as(dist).clamp_min(0.0)
         result = _upper_bound_result(dist=dist, bound=bound, weight=self.weight)
         result.info["target_future_dist"] = target_future.mean()
+        result.info["future_steps"] = infos["temporal_future_steps"].to(
+            device=device,
+            dtype=dist.dtype,
+        )[mask].float().mean()
         return result
 
     def extra_repr(self) -> str:

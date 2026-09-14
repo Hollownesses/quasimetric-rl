@@ -203,6 +203,7 @@ def test_optional_nstep_goal_uses_frozen_future_goal_estimate():
     # d(s, G)=4, while the semi-gradient bound is 0.5+d_target(s_3,G)=3.5.
     assert torch.isclose(result.loss, torch.tensor(1.0 / 81.0))
     assert torch.isclose(result.info["target_future_dist"], torch.tensor(3.0))
+    assert torch.isclose(result.info["future_steps"], torch.tensor(3.0))
 
 
 if __name__ == "__main__":

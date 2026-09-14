@@ -15,6 +15,9 @@
 #   PHASE=train_qrl QRL_DATASET_MODE=qrl_explore \
 #     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_explore \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_nstep_upper_bound DEVICE=mps \
+#     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -124,6 +127,25 @@ train_qrl() {
     --oracle-final-bootstrap-samples "${ORACLE_FINAL_BOOTSTRAP_SAMPLES:-2000}" \
     --visualization-interval "${VIS_INTERVAL:-1000}" \
     --planning-eval-interval 0
+}
+
+# Controlled topology-learning sanity check: reuse the QRL-explore baseline and
+# change only the optional one-sided n-step task-goal upper-bound weight. Keep
+# this as a separate phase/output directory so it cannot overwrite the baseline.
+train_qrl_nstep_upper_bound() {
+  local nstep_train_dir="${NSTEP_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_nstep_upper_bound}"
+
+  echo "QRL topology-improvement ablation:"
+  echo "  variant=one_sided_nstep_upper_bound"
+  echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
+  echo "  nstep_weight=${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-1.0}"
+  echo "  target_tau=${QRL_NSTEP_TARGET_TAU:-0.005}"
+  echo "  output_dir=$nstep_train_dir"
+
+  QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
+  QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT="${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-1.0}" \
+  TRAIN_DIR="$nstep_train_dir" \
+    train_qrl
 }
 
 local_nav_eval() {
@@ -317,6 +339,9 @@ case "$PHASE" in
   train_qrl)
     train_qrl
     ;;
+  train_qrl_nstep_upper_bound)
+    train_qrl_nstep_upper_bound
+    ;;
   eval_qrl)
     eval_qrl
     ;;
@@ -333,7 +358,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, eval_qrl, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

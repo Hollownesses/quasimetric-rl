@@ -101,6 +101,7 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert '--explore-start-boundary-margin "${EXPLORE_START_BOUNDARY_MARGIN:-0.5}"' in script
     assert '--qrl-temporal-constraint-weight "${QRL_TEMPORAL_CONSTRAINT_WEIGHT:-1.0}"' in script
     assert '--qrl-goal-return-constraint-weight "${QRL_GOAL_RETURN_CONSTRAINT_WEIGHT:-1.0}"' in script
+    assert '--qrl-nstep-goal-constraint-weight "${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-0.0}"' in script
     assert '--qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}"' in script
     assert 'teacher_ratio="0.0"' in script
     assert '--task-aware-teacher-ratio "$teacher_ratio"' in script
@@ -108,3 +109,23 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert 'LOCAL_NAV_REUSE_ORACLE_JSON' in script
     assert '--reuse-oracle-json "$LOCAL_NAV_REUSE_ORACLE_JSON"' in script
     assert '--astar-heuristic-weight "${LOCAL_NAV_ASTAR_HEURISTIC_WEIGHT:-1.0}"' in script
+
+
+def test_diagnostic_shell_has_isolated_nstep_upper_bound_ablation():
+    script = (
+        Path(__file__).with_name("run_comm_inspection_diagnostic.sh")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "train_qrl_nstep_upper_bound()" in script
+    assert (
+        'local nstep_train_dir="${NSTEP_TRAIN_DIR:-$OUTPUT_ROOT/'
+        'qrl_training_nstep_upper_bound}"'
+    ) in script
+    assert 'QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}"' in script
+    assert (
+        'QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT="${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-1.0}"'
+        in script
+    )
+    assert "variant=one_sided_nstep_upper_bound" in script
+    assert "train_qrl_nstep_upper_bound)" in script
