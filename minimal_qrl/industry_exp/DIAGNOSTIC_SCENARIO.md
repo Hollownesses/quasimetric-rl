@@ -153,6 +153,38 @@ one `metrics.json` and `train_loss_history.csv` per arm, and
 set `AUTOPSY_SAVE_EVAL_CHECKPOINTS=1` when they are needed for a separate
 downstream evaluator.
 
+Use the two-stage Dual-responsiveness and Latent-Dynamics-gradient experiment
+after the loss autopsy:
+
+```bash
+PHASE=warm_start_dual_screen DEVICE=mps \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+
+PHASE=warm_start_dual_dynamics_2x2 DEVICE=mps \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+The first command runs a short, identically seeded Full-QRL screen. Its default
+Dual candidates are the original softplus-Adam reference, fixed multipliers
+`0.1`, `1`, and `10`, and direct projected-lambda ascent at learning rate
+`1e-4` with `1`, `5`, or `10` updates per primal step. It writes
+`warm_start_dual_screen/best_dual_scheme.json`. The original Dual is a
+reference and cannot select itself. Selection first minimizes catastrophic
+checkpoints, then uses a pre-registered equal-weight ordinal rank over final
+and worst U-topology, MPPI ranking, value error, Oracle regret, and U Bellman
+tail metrics. Override candidates with `DUAL_SCREEN_CANDIDATES`, using specs
+such as `fixed:1` or `projected:0.0001:5`.
+
+The second command reads that JSON and runs the four cells
+`{baseline Dual, selected Dual} x {shared Dynamics gradients, Dynamics-head
+only}`. Head-only mode detaches encoder latents and treats the quasimetric head
+as fixed for the Latent Dynamics component, so that component updates only the
+latent-dynamics prediction head. Other losses continue to update the critic
+normally. Set `SELECTED_DUAL_JSON` only when using a selection file outside the
+default screen directory. Besides the four cell histories, the phase writes
+`dual_dynamics_2x2_effects.csv/json` with the selected-Dual main effect, the
+head-only main effect, and their interaction at every evaluation step.
+
 Run the Joint-feasible IQE constructive search:
 
 ```bash
