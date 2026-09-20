@@ -21,6 +21,9 @@
 #   PHASE=train_qrl_mqe_waypoint_consistency DEVICE=mps \
 #     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_mqe_separate_anchor_stop_loss DEVICE=mps \
+#     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -129,6 +132,8 @@ train_qrl() {
     --qrl-mqe-terminal-anchor-fraction "${QRL_MQE_TERMINAL_ANCHOR_FRACTION:-0.1}" \
     --qrl-mqe-target-tau "${QRL_MQE_TARGET_TAU:-0.005}" \
     --qrl-mqe-huber-delta "${QRL_MQE_HUBER_DELTA:-1.0}" \
+    --qrl-mqe-family-normalization "${QRL_MQE_FAMILY_NORMALIZATION:-mixed}" \
+    --qrl-mqe-terminal-anchor-loss-weight "${QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT:-1.0}" \
     --qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}" \
     --task-aware-teacher-ratio "$teacher_ratio" \
     --log-interval "${LOG_INTERVAL:-100}" \
@@ -188,7 +193,33 @@ train_qrl_mqe_waypoint_consistency() {
   QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
   QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
   QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT="${QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT:-1.0}" \
+  QRL_MQE_FAMILY_NORMALIZATION=mixed \
   TRAIN_DIR="$mqe_train_dir" \
+    train_qrl
+}
+
+# MQE-v2.1 stop-loss experiment.  Sampling and every other QRL loss remain
+# unchanged; only physical and terminal-anchor Huber families are normalized
+# independently, while preserving the previous physical-family coefficient.
+train_qrl_mqe_separate_anchor_stop_loss() {
+  local stop_loss_train_dir="${MQE_STOP_LOSS_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_mqe_separate_anchor_stop_loss}"
+
+  echo "QRL topology-improvement stop-loss ablation:"
+  echo "  variant=mqe_separately_normalized_terminal_anchor_stop_loss"
+  echo "  global_push_objective=softplus"
+  echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
+  echo "  waypoint_weight=${QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT:-1.0}"
+  echo "  family_normalization=separate"
+  echo "  terminal_anchor_loss_weight=${QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT:-1.0}"
+  echo "  terminal_anchor_fraction=${QRL_MQE_TERMINAL_ANCHOR_FRACTION:-0.1}"
+  echo "  output_dir=$stop_loss_train_dir"
+
+  QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
+  QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT="${QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT:-1.0}" \
+  QRL_MQE_FAMILY_NORMALIZATION=separate \
+  QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT="${QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT:-1.0}" \
+  TRAIN_DIR="$stop_loss_train_dir" \
     train_qrl
 }
 
@@ -389,6 +420,9 @@ case "$PHASE" in
   train_qrl_mqe_waypoint_consistency)
     train_qrl_mqe_waypoint_consistency
     ;;
+  train_qrl_mqe_separate_anchor_stop_loss)
+    train_qrl_mqe_separate_anchor_stop_loss
+    ;;
   eval_qrl)
     eval_qrl
     ;;
@@ -405,7 +439,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_mqe_waypoint_consistency, eval_qrl, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

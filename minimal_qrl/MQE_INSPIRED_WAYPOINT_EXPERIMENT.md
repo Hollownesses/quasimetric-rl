@@ -39,6 +39,26 @@ Training logs expose `terminal_anchor_count`, `terminal_anchor_fraction`,
 Every checkpoint and `timing.json` also record the experiment variant, the
 softplus GlobalPush objective and its parameters, and all MQE hyperparameters.
 
+## MQE-v2.1 stop-loss experiment
+
+The stop-loss ablation keeps the same dataset, MQE samples, EMA target,
+GlobalPush, and all other QRL losses.  It only normalizes the physical and
+terminal-anchor Huber families separately.  If `p` is the physical fraction in
+the valid MQE batch, its objective is
+
+```text
+L_mqe = p * (L_physical + lambda_G * L_anchor).
+```
+
+Multiplying by `p` preserves the previous physical-family coefficient.  With
+229 physical and 26 anchor samples, `lambda_G=1` changes approximately
+`0.898 L_physical + 0.102 L_anchor` into
+`0.898 L_physical + 0.898 L_anchor` without changing sampling.
+
+Per-device terminal-anchor count, Huber loss, residual, absolute residual, and
+over/under-estimation fractions are logged using the scenario device ids, for
+example `terminal_anchor_u_trap_target_huber`.
+
 ## Commands
 
 ```bash
@@ -47,6 +67,10 @@ PHASE=train_qrl_nstep_upper_bound DEVICE=mps \
   bash minimal_qrl/run_comm_inspection_diagnostic.sh
 
 PHASE=train_qrl_mqe_waypoint_consistency DEVICE=mps \
+  OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+
+PHASE=train_qrl_mqe_separate_anchor_stop_loss DEVICE=mps \
   OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
   bash minimal_qrl/run_comm_inspection_diagnostic.sh
 ```

@@ -86,6 +86,8 @@ def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
     assert np.isclose(args.qrl_nstep_goal_constraint_weight, 0.0)
     assert np.isclose(args.qrl_mqe_waypoint_consistency_weight, 0.0)
     assert np.isclose(args.qrl_mqe_terminal_anchor_fraction, 0.1)
+    assert args.qrl_mqe_family_normalization == "mixed"
+    assert np.isclose(args.qrl_mqe_terminal_anchor_loss_weight, 1.0)
     assert np.isclose(args.qrl_success_transition_weight, 4.0)
 
 
@@ -106,6 +108,8 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert '--qrl-nstep-goal-constraint-weight "${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-0.0}"' in script
     assert '--qrl-mqe-waypoint-consistency-weight "${QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT:-0.0}"' in script
     assert '--qrl-mqe-terminal-anchor-fraction "${QRL_MQE_TERMINAL_ANCHOR_FRACTION:-0.1}"' in script
+    assert '--qrl-mqe-family-normalization "${QRL_MQE_FAMILY_NORMALIZATION:-mixed}"' in script
+    assert '--qrl-mqe-terminal-anchor-loss-weight "${QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT:-1.0}"' in script
     assert '--qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}"' in script
     assert '../quasimetric-rl-industrial-inspection/results/shared_oracle_banks/chemical_process' in script
     assert 'teacher_ratio="0.0"' in script
@@ -147,3 +151,23 @@ def test_diagnostic_shell_has_isolated_mqe_waypoint_ablation():
     assert "global_push_objective=softplus" in script
     assert "terminal_anchor_fraction=${QRL_MQE_TERMINAL_ANCHOR_FRACTION:-0.1}" in script
     assert "train_qrl_mqe_waypoint_consistency)" in script
+
+
+def test_diagnostic_shell_has_separate_anchor_stop_loss_ablation():
+    script = (
+        Path(__file__).with_name("run_comm_inspection_diagnostic.sh")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "train_qrl_mqe_separate_anchor_stop_loss()" in script
+    assert "variant=mqe_separately_normalized_terminal_anchor_stop_loss" in script
+    assert "QRL_MQE_FAMILY_NORMALIZATION=separate" in script
+    assert (
+        'QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT="${QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT:-1.0}"'
+        in script
+    )
+    assert (
+        'qrl_training_mqe_separate_anchor_stop_loss}'
+        in script
+    )
+    assert "train_qrl_mqe_separate_anchor_stop_loss)" in script

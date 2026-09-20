@@ -80,6 +80,7 @@ def _mqe_episode(
     task_goal=99.0,
     abstract_edge=False,
     terminal=True,
+    device_index=0,
 ):
     values = np.asarray(values, dtype=np.float32)
     n = len(costs)
@@ -96,6 +97,7 @@ def _mqe_episode(
             "source_terminal_goal_state": np.full(n, abstract_edge, dtype=np.bool_),
             "task_success_episode": np.full(n, success, dtype=np.bool_),
             "task_goal_observations": np.full((n, 1), task_goal, dtype=np.float32),
+            "device_index": np.full(n, device_index, dtype=np.int64),
         },
     )
 
@@ -188,7 +190,7 @@ def test_mqe_waypoints_stay_in_episode_and_accumulate_variable_cost(monkeypatch)
 
 def test_mqe_terminal_anchor_quota_is_independent_of_replay_success_rate():
     physical_success = _mqe_episode(
-        [0, 1, 2, 3], [1.0, 2.0, 3.0], success=True
+        [0, 1, 2, 3], [1.0, 2.0, 3.0], success=True, device_index=2
     )
     synthetic_abstract = _mqe_episode(
         [3, 99], [0.0], success=False, abstract_edge=True
@@ -217,6 +219,10 @@ def test_mqe_terminal_anchor_quota_is_independent_of_replay_success_rate():
     anchors = infos["mqe_waypoint_terminal_anchor"]
     assert int(anchors.sum()) == 26
     assert torch.all(infos["mqe_waypoint_source_transition_index"][anchors] < 3)
+    assert torch.equal(
+        infos["mqe_waypoint_device_index"][anchors],
+        torch.full((26,), 2, dtype=torch.int64),
+    )
     assert torch.equal(
         infos["mqe_waypoint_observations"][anchors].flatten(),
         torch.full((26,), 3.0),

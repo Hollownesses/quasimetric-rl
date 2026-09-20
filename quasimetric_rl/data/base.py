@@ -489,6 +489,17 @@ class Dataset:
             self.obs_indices_to_cumulative_cost[waypoint_observation_indices]
             - self.obs_indices_to_cumulative_cost[source_observation_indices]
         )
+        device_indices = self.raw_data.transition_infos.get("device_index")
+        if device_indices is None:
+            mqe_device_indices = torch.full(
+                source_indices.shape,
+                -1,
+                dtype=torch.int64,
+            )
+        else:
+            mqe_device_indices = device_indices[source_indices].to(
+                dtype=torch.int64
+            )
 
         return {
             "mqe_waypoint_valid": valid,
@@ -501,6 +512,7 @@ class Dataset:
             "mqe_waypoint_forced_one_step": forced_one_step,
             "mqe_waypoint_physical_goal": valid & ~terminal_anchor,
             "mqe_waypoint_terminal_anchor": terminal_anchor & valid,
+            "mqe_waypoint_device_index": mqe_device_indices,
             "mqe_waypoint_episode_index": source_episode_indices,
             "mqe_waypoint_source_transition_index": source_indices,
         }

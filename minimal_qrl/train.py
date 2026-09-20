@@ -506,9 +506,24 @@ def train(args):
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         args.task_aware_teacher_ratio = 0.0
         args.target_env_transitions = None
+    mqe_diagnostic_device_names = ()
+    if args._scenario_data is not None:
+        raw_devices = args._scenario_data.get('device_catalog', {}).get('devices', ())
+        mqe_diagnostic_device_names = tuple(
+            ''.join(
+                character if character.isalnum() or character == '_' else '_'
+                for character in str(device['id'])
+            )
+            for device in raw_devices
+        )
     mqe_waypoint_weight = float(args.qrl_mqe_waypoint_consistency_weight)
     if mqe_waypoint_weight < 0.0:
         raise ValueError('--qrl-mqe-waypoint-consistency-weight must be nonnegative')
+    mqe_terminal_anchor_loss_weight = float(
+        args.qrl_mqe_terminal_anchor_loss_weight
+    )
+    if mqe_terminal_anchor_loss_weight < 0.0:
+        raise ValueError('--qrl-mqe-terminal-anchor-loss-weight must be nonnegative')
     mqe_sampling_config = None
     if mqe_waypoint_weight > 0.0:
         if args.env_type != 'comm_inspection_dubins_uav':
@@ -526,7 +541,11 @@ def train(args):
         )
     topology_improvement_metadata = {
         'variant': (
-            'mqe_inspired_two_sided_waypoint_consistency'
+            (
+                'mqe_separately_normalized_terminal_anchor_stop_loss'
+                if str(args.qrl_mqe_family_normalization) == 'separate'
+                else 'mqe_inspired_two_sided_waypoint_consistency'
+            )
             if mqe_waypoint_weight > 0.0
             else (
                 'one_sided_nstep_upper_bound'
@@ -551,6 +570,11 @@ def train(args):
         ),
         'mqe_target_tau': float(args.qrl_mqe_target_tau),
         'mqe_huber_delta': float(args.qrl_mqe_huber_delta),
+        'mqe_family_normalization': str(args.qrl_mqe_family_normalization),
+        'mqe_terminal_anchor_loss_weight': float(
+            mqe_terminal_anchor_loss_weight
+        ),
+        'mqe_diagnostic_device_names': list(mqe_diagnostic_device_names),
     }
     # 设置随机种子
     np.random.seed(args.seed)
@@ -869,6 +893,13 @@ def train(args):
                         weight=mqe_waypoint_weight,
                         target_tau=float(args.qrl_mqe_target_tau),
                         huber_delta=float(args.qrl_mqe_huber_delta),
+                        family_normalization=str(
+                            args.qrl_mqe_family_normalization
+                        ),
+                        terminal_anchor_loss_weight=float(
+                            mqe_terminal_anchor_loss_weight
+                        ),
+                        diagnostic_device_names=mqe_diagnostic_device_names,
                     ),
                     critic_optim=AdamWSpec.Conf(lr=5e-5),
                     lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
@@ -1804,6 +1835,21 @@ def main():
         type=float,
         default=1.0,
         help='双边 waypoint consistency Huber delta',
+    )
+    parser.add_argument(
+        '--qrl-mqe-family-normalization',
+        choices=['mixed', 'separate'],
+        default='mixed',
+        help=(
+            'MQE physical/terminal-anchor family 归一化方式；'
+            'separate 保留 physical 原系数并独立加权 anchor'
+        ),
+    )
+    parser.add_argument(
+        '--qrl-mqe-terminal-anchor-loss-weight',
+        type=float,
+        default=1.0,
+        help='separate family normalization 中的 terminal-anchor lambda_G',
     )
     parser.add_argument(
         '--qrl-success-transition-weight',

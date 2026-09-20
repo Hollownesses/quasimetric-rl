@@ -259,6 +259,24 @@ def _mqe_loss_batch(cost=0.0, *, terminal_anchor=False):
     return data
 
 
+def _mqe_family_batch():
+    data = make_batch([-1.0, -1.0, -1.0])
+    data.transition_infos = {
+        "mqe_waypoint_valid": torch.ones(3, dtype=torch.bool),
+        "mqe_waypoint_source_observations": torch.zeros(3, 2),
+        "mqe_waypoint_observations": torch.ones(3, 2),
+        "mqe_waypoint_goal_observations": torch.full((3, 2), 4.0),
+        "mqe_waypoint_cost": torch.tensor([0.0, 0.0, 10.0]),
+        "mqe_waypoint_steps": torch.tensor([1, 2, 3]),
+        "mqe_waypoint_goal_steps": torch.tensor([2, 3, 4]),
+        "mqe_waypoint_forced_one_step": torch.tensor([True, False, False]),
+        "mqe_waypoint_physical_goal": torch.tensor([True, True, False]),
+        "mqe_waypoint_terminal_anchor": torch.tensor([False, False, True]),
+        "mqe_waypoint_device_index": torch.tensor([0, 1, 0]),
+    }
+    return data
+
+
 def test_mqe_two_sided_huber_has_gradients_for_over_and_under_estimates():
     gradients = []
     for current_value in (2.0, -2.0):
@@ -327,6 +345,77 @@ def test_mqe_target_is_stop_gradient_and_updates_only_by_ema():
     assert torch.isclose(target_parameter.detach(), torch.tensor(0.0))
     loss.update_target(critic)
     assert torch.isclose(target_parameter.detach(), torch.tensor(1.0))
+
+
+def test_mqe_mixed_family_normalization_preserves_original_batch_mean():
+    critic = _ScalarCritic(0.0)
+    loss = MQEInspiredWaypointConsistencyLoss(
+        critic=critic,
+        weight=1.0,
+        target_tau=0.25,
+        huber_delta=1.0,
+    )
+    critic.quasimetric_model.value.data.fill_(2.0)
+    info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(3, 2),
+        zy=torch.zeros(3, 2),
+    )
+    result = loss(_mqe_family_batch(), info)
+
+    # Two physical samples have Huber 1.5 and one anchor has Huber 7.5.
+    assert torch.isclose(result.loss, torch.tensor(3.5))
+    assert torch.isclose(result.info["mixed_huber"], torch.tensor(3.5))
+    assert torch.isclose(
+        result.info["terminal_anchor_loss_contribution"],
+        torch.tensor(2.5),
+    )
+
+
+def test_mqe_separate_family_normalization_preserves_physical_coefficient():
+    critic = _ScalarCritic(0.0)
+    loss = MQEInspiredWaypointConsistencyLoss(
+        critic=critic,
+        weight=1.0,
+        target_tau=0.25,
+        huber_delta=1.0,
+        family_normalization="separate",
+        terminal_anchor_loss_weight=1.0,
+        diagnostic_device_names=("u_trap_target", "easy_north"),
+    )
+    critic.quasimetric_model.value.data.fill_(2.0)
+    info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(3, 2),
+        zy=torch.zeros(3, 2),
+    )
+    result = loss(_mqe_family_batch(), info)
+
+    # Preserve the old 2/3 physical coefficient, but independently normalize
+    # the anchor family: 2/3 * (1.5 + 7.5) = 6.0.
+    assert torch.isclose(result.loss, torch.tensor(6.0))
+    assert torch.isclose(
+        result.info["physical_loss_contribution"], torch.tensor(1.0)
+    )
+    assert torch.isclose(
+        result.info["terminal_anchor_loss_contribution"], torch.tensor(5.0)
+    )
+    assert torch.isclose(
+        result.info["terminal_anchor_u_trap_target_count"], torch.tensor(1.0)
+    )
+    assert torch.isclose(
+        result.info["terminal_anchor_u_trap_target_huber"], torch.tensor(7.5)
+    )
+    assert torch.isclose(
+        result.info["terminal_anchor_u_trap_target_residual"], torch.tensor(-8.0)
+    )
+    assert torch.isclose(
+        result.info["terminal_anchor_u_trap_target_underestimate_fraction"],
+        torch.tensor(1.0),
+    )
+    assert torch.isclose(
+        result.info["terminal_anchor_easy_north_count"], torch.tensor(0.0)
+    )
 
 
 if __name__ == "__main__":

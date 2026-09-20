@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Optional
+from typing import Optional, Tuple
 
 import attrs
 import torch
@@ -308,6 +308,18 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
             default=1.0,
             validator=attrs.validators.gt(0.0),
         )
+        family_normalization: str = attrs.field(
+            default="mixed",
+            validator=attrs.validators.in_(("mixed", "separate")),
+        )
+        terminal_anchor_loss_weight: float = attrs.field(
+            default=1.0,
+            validator=attrs.validators.ge(0.0),
+        )
+        diagnostic_device_names: Tuple[str, ...] = attrs.field(
+            factory=tuple,
+            converter=tuple,
+        )
 
         def make(
             self,
@@ -318,6 +330,9 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
                 weight=self.weight,
                 target_tau=self.target_tau,
                 huber_delta=self.huber_delta,
+                family_normalization=self.family_normalization,
+                terminal_anchor_loss_weight=self.terminal_anchor_loss_weight,
+                diagnostic_device_names=self.diagnostic_device_names,
             )
 
     def __init__(
@@ -327,21 +342,35 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
         weight: float,
         target_tau: float,
         huber_delta: float,
+        family_normalization: str = "mixed",
+        terminal_anchor_loss_weight: float = 1.0,
+        diagnostic_device_names: Tuple[str, ...] = (),
     ) -> None:
         super().__init__()
         self.weight = float(weight)
         self.target_tau = float(target_tau)
         self.huber_delta = float(huber_delta)
+        if family_normalization not in ("mixed", "separate"):
+            raise ValueError(
+                "MQE family_normalization must be 'mixed' or 'separate'"
+            )
+        self.family_normalization = str(family_normalization)
+        self.terminal_anchor_loss_weight = float(terminal_anchor_loss_weight)
+        if self.terminal_anchor_loss_weight < 0.0:
+            raise ValueError("MQE terminal_anchor_loss_weight must be nonnegative")
+        self.diagnostic_device_names = tuple(
+            str(name) for name in diagnostic_device_names
+        )
         self.target_critic: Optional[QuasimetricCritic] = None
         if self.weight > 0.0:
             self.target_critic = copy.deepcopy(critic)
             self.target_critic.eval()
 
-    @staticmethod
-    def _empty_info(zero: torch.Tensor) -> dict[str, torch.Tensor]:
+    def _empty_info(self, zero: torch.Tensor) -> dict[str, torch.Tensor]:
         value = zero.detach()
-        return {
+        info = {
             "huber": value,
+            "mixed_huber": value,
             "dist": value,
             "target": value,
             "target_waypoint_dist": value,
@@ -364,7 +393,31 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
             "waypoint_cost_mean": value,
             "physical_huber": value,
             "terminal_anchor_huber": value,
+            "physical_loss_contribution": value,
+            "terminal_anchor_loss_contribution": value,
+            "physical_family_scale": value,
+            "terminal_anchor_loss_weight": torch.as_tensor(
+                self.terminal_anchor_loss_weight,
+                device=value.device,
+                dtype=value.dtype,
+            ),
+            "separate_family_normalization": torch.as_tensor(
+                float(self.family_normalization == "separate"),
+                device=value.device,
+                dtype=value.dtype,
+            ),
         }
+        for device_name in self.diagnostic_device_names:
+            prefix = f"terminal_anchor_{device_name}"
+            info.update({
+                f"{prefix}_count": value,
+                f"{prefix}_huber": value,
+                f"{prefix}_residual": value,
+                f"{prefix}_abs_residual": value,
+                f"{prefix}_overestimate_fraction": value,
+                f"{prefix}_underestimate_fraction": value,
+            })
+        return info
 
     @torch.no_grad()
     def update_target(self, critic: QuasimetricCritic) -> None:
@@ -455,8 +508,7 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
             reduction="none",
             delta=self.huber_delta,
         )
-        huber = per_sample_huber.mean()
-        weighted_loss = self.weight * huber
+        mixed_huber = per_sample_huber.mean()
         residual = dist - target
         steps = infos["mqe_waypoint_steps"].to(
             device=device,
@@ -475,6 +527,7 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
             dtype=torch.bool,
         )[mask].reshape(-1)
         flat_huber = per_sample_huber.reshape(-1)
+        flat_residual = residual.reshape(-1)
 
         def family_mean(family_mask: torch.Tensor) -> torch.Tensor:
             if bool(family_mask.any()):
@@ -482,10 +535,77 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
             return zero.detach()
 
         count = mask.sum().to(dtype=dist.dtype)
+        physical_count = physical_goal.sum().to(dtype=dist.dtype)
+        terminal_anchor_count = terminal_anchor.sum().to(dtype=dist.dtype)
+        physical_huber = family_mean(physical_goal)
+        terminal_anchor_huber = family_mean(terminal_anchor)
+        physical_fraction = physical_count / count.clamp_min(1.0)
+
+        if self.family_normalization == "separate":
+            # Preserve the mixed objective's physical coefficient while giving
+            # the independently normalized anchor family an explicit weight.
+            # With 229 physical and 26 anchor samples this changes
+            #   .898 L_phys + .102 L_anchor
+            # into
+            #   .898 (L_phys + lambda_G L_anchor).
+            physical_family_scale = (
+                physical_fraction
+                if bool(physical_goal.any())
+                else torch.ones_like(physical_fraction)
+            )
+            physical_contribution = physical_family_scale * physical_huber
+            terminal_anchor_contribution = (
+                physical_family_scale
+                * self.terminal_anchor_loss_weight
+                * terminal_anchor_huber
+            )
+            huber = physical_contribution + terminal_anchor_contribution
+        else:
+            physical_family_scale = physical_fraction
+            physical_contribution = physical_fraction * physical_huber
+            terminal_anchor_contribution = (
+                terminal_anchor_count / count.clamp_min(1.0)
+            ) * terminal_anchor_huber
+            huber = mixed_huber
+        weighted_loss = self.weight * huber
+
+        device_info = {}
+        raw_device_indices = infos.get("mqe_waypoint_device_index")
+        if raw_device_indices is None:
+            device_indices = torch.full_like(terminal_anchor, -1, dtype=torch.int64)
+        else:
+            device_indices = raw_device_indices.to(
+                device=device,
+                dtype=torch.int64,
+            )[mask].reshape(-1)
+
+        def masked_mean(values: torch.Tensor, family_mask: torch.Tensor) -> torch.Tensor:
+            if bool(family_mask.any()):
+                return values[family_mask].mean()
+            return zero.detach()
+
+        for device_index, device_name in enumerate(self.diagnostic_device_names):
+            device_anchor = terminal_anchor & (device_indices == device_index)
+            prefix = f"terminal_anchor_{device_name}"
+            device_info.update({
+                f"{prefix}_count": device_anchor.sum().to(dist.dtype),
+                f"{prefix}_huber": masked_mean(flat_huber, device_anchor),
+                f"{prefix}_residual": masked_mean(flat_residual, device_anchor),
+                f"{prefix}_abs_residual": masked_mean(
+                    flat_residual.abs(), device_anchor
+                ),
+                f"{prefix}_overestimate_fraction": masked_mean(
+                    (flat_residual > 0).to(dist.dtype), device_anchor
+                ),
+                f"{prefix}_underestimate_fraction": masked_mean(
+                    (flat_residual < 0).to(dist.dtype), device_anchor
+                ),
+            })
         return LossResult(
             loss=weighted_loss,
             info={
                 "huber": huber,
+                "mixed_huber": mixed_huber,
                 "dist": dist.mean(),
                 "target": target.mean(),
                 "target_waypoint_dist": target_waypoint_dist.mean(),
@@ -494,8 +614,8 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
                 "overestimate_fraction": (residual > 0).to(dist.dtype).mean(),
                 "underestimate_fraction": (residual < 0).to(dist.dtype).mean(),
                 "valid_count": count,
-                "physical_goal_count": physical_goal.sum().to(dist.dtype),
-                "terminal_anchor_count": terminal_anchor.sum().to(dist.dtype),
+                "physical_goal_count": physical_count,
+                "terminal_anchor_count": terminal_anchor_count,
                 "terminal_anchor_fraction": terminal_anchor.to(dist.dtype).mean(),
                 "k1_ratio": (steps == 1).to(dist.dtype).mean(),
                 "forced_k1_ratio": forced.to(dist.dtype).mean(),
@@ -506,13 +626,29 @@ class MQEInspiredWaypointConsistencyLoss(CriticLossBase):
                 "waypoint_steps_p95": torch.quantile(steps, 0.95),
                 "goal_steps_mean": goal_steps.mean(),
                 "waypoint_cost_mean": waypoint_cost.mean(),
-                "physical_huber": family_mean(physical_goal),
-                "terminal_anchor_huber": family_mean(terminal_anchor),
+                "physical_huber": physical_huber,
+                "terminal_anchor_huber": terminal_anchor_huber,
+                "physical_loss_contribution": physical_contribution,
+                "terminal_anchor_loss_contribution": terminal_anchor_contribution,
+                "physical_family_scale": physical_family_scale,
+                "terminal_anchor_loss_weight": torch.as_tensor(
+                    self.terminal_anchor_loss_weight,
+                    device=dist.device,
+                    dtype=dist.dtype,
+                ),
+                "separate_family_normalization": torch.as_tensor(
+                    float(self.family_normalization == "separate"),
+                    device=dist.device,
+                    dtype=dist.dtype,
+                ),
+                **device_info,
             },
         )
 
     def extra_repr(self) -> str:
         return (
             f"weight={self.weight:g}, target_tau={self.target_tau:g}, "
-            f"huber_delta={self.huber_delta:g}"
+            f"huber_delta={self.huber_delta:g}, "
+            f"family_normalization={self.family_normalization}, "
+            f"terminal_anchor_loss_weight={self.terminal_anchor_loss_weight:g}"
         )
