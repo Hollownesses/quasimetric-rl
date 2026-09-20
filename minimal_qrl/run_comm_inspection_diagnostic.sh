@@ -32,6 +32,7 @@
 #   PHASE=full_graph_point_goal_qrl DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_full_graph_audit DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=targeted_supervised_qrl_warm_start DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=warm_start_loss_autopsy DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -574,6 +575,63 @@ targeted_supervised_qrl_warm_start() {
     --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}"
 }
 
+warm_start_loss_autopsy() {
+  local supervised_dir="${TARGETED_SUPERVISED_IQE_DIR:-$OUTPUT_ROOT/targeted_supervised_iqe_oracle}"
+  local init_checkpoint="${AUTOPSY_INIT_CHECKPOINT:-$supervised_dir/checkpoint_final.pth}"
+  local experiment_dir="${AUTOPSY_DIR:-$OUTPUT_ROOT/warm_start_loss_autopsy}"
+  local arms=()
+  local eval_steps=()
+  if [[ ! -f "$init_checkpoint" ]]; then
+    echo "Missing Targeted Supervised-IQE autopsy checkpoint: $init_checkpoint" >&2
+    exit 1
+  fi
+  read -r -a arms <<< "${AUTOPSY_ARMS:-a0 a1 a2 a3 a4 a5 a6}"
+  read -r -a eval_steps <<< "${AUTOPSY_EVAL_STEPS:-0 1 10 50 100 250 500 1000 2000}"
+
+  local save_checkpoint_args=()
+  if [[ "${AUTOPSY_SAVE_EVAL_CHECKPOINTS:-0}" == "1" ]]; then
+    save_checkpoint_args+=(--save-eval-checkpoints)
+  fi
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.warm_start_loss_autopsy \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --task-bank "$TASK_BANK" \
+    --init-checkpoint "$init_checkpoint" \
+    --output-dir "$experiment_dir" \
+    --device "${DEVICE:-auto}" \
+    --device-id u_trap_target \
+    --seed "${AUTOPSY_SEED:-42}" \
+    --num-critics "${NUM_CRITICS:-2}" \
+    --critic-index "${AUTOPSY_CRITIC_INDEX:-0}" \
+    --arms "${arms[@]}" \
+    --steps "${AUTOPSY_STEPS:-2000}" \
+    --scheduler-total-steps "${AUTOPSY_SCHEDULER_TOTAL_STEPS:-20000}" \
+    --eval-steps "${eval_steps[@]}" \
+    --batch-size "${AUTOPSY_BATCH_SIZE:-512}" \
+    --eval-batch-size "${AUTOPSY_EVAL_BATCH_SIZE:-4096}" \
+    --critic-lr "${AUTOPSY_CRITIC_LR:-0.00005}" \
+    --dual-lr "${AUTOPSY_DUAL_LR:-0.005}" \
+    --ordinary-epsilon "${FULL_GRAPH_ORDINARY_EPSILON:-0.25}" \
+    --direct-goal-epsilon "${FULL_GRAPH_DIRECT_GOAL_EPSILON:-0.25}" \
+    --terminal-goal-epsilon "${FULL_GRAPH_TERMINAL_GOAL_EPSILON:-0.0}" \
+    --latent-dynamics-weight "${AUTOPSY_LATENT_DYNAMICS_WEIGHT:-0.1}" \
+    --abstract-goal-edge-weight "${ABSTRACT_GOAL_EDGE_LOSS_WEIGHT:-1.0}" \
+    --position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --uniform-push-seed "${FULL_GRAPH_UNIFORM_PUSH_SEED:-20260824}" \
+    --contract-split "${AUTOPSY_CONTRACT_SPLIT:-validation}" \
+    --contract-repeats "${AUTOPSY_CONTRACT_REPEATS:-4}" \
+    --mppi-horizon "${MPPI_HORIZON:-10}" \
+    --mppi-num-samples "${MPPI_NUM_SAMPLES:-128}" \
+    --mppi-noise-sigma "${MPPI_NOISE_SIGMA:-0.8}" \
+    --mppi-temperature "${MPPI_TEMPERATURE:-1.0}" \
+    --mppi-terminal-weight "${MPPI_TERMINAL_WEIGHT:-1.0}" \
+    --oracle-value-cache-dir "${ORACLE_VALUE_CACHE_DIR:-$OUTPUT_ROOT/oracle_value_cache}" \
+    ${save_checkpoint_args[@]+"${save_checkpoint_args[@]}"}
+}
+
 dense_transition_qrl() {
   local experiment_dir="${DENSE_TRANSITION_QRL_DIR:-$OUTPUT_ROOT/dense_transition_original_qrl}"
   local checkpoint="$experiment_dir/checkpoint_final.pth"
@@ -1063,6 +1121,9 @@ case "$PHASE" in
   targeted_supervised_qrl_warm_start)
     targeted_supervised_qrl_warm_start
     ;;
+  warm_start_loss_autopsy)
+    warm_start_loss_autopsy
+    ;;
   dense_transition_qrl)
     dense_transition_qrl
     ;;
@@ -1103,7 +1164,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, joint_feasible_iqe_capacity_2x, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, full_graph_point_goal_qrl, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, warm_start_loss_autopsy, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, joint_feasible_iqe_capacity_2x, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, full_graph_point_goal_qrl, benchmark, or all)" >&2
     exit 2
     ;;
 esac

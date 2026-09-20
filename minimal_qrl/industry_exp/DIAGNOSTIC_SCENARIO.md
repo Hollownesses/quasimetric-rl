@@ -123,6 +123,36 @@ TABULAR_FULL_STEPS=10 TABULAR_EVAL_INTERVAL=5 \
 bash minimal_qrl/run_comm_inspection_diagnostic.sh
 ```
 
+Run the supervised warm-start loss autopsy before changing the QRL objective:
+
+```bash
+PHASE=warm_start_loss_autopsy DEVICE=mps \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+All seven arms start from the same targeted-supervised IQE checkpoint and use
+identically seeded full-graph batches: no update, Global Push only, Local
+Constraint only, Latent Dynamics only, Abstract Goal Edge only, Push+Local,
+and the full four-loss QRL core. The default 2,000-step run evaluates at steps
+`0,1,10,50,100,250,500,1000,2000`; override the selection with
+`AUTOPSY_ARMS` and `AUTOPSY_EVAL_STEPS`. The learning-rate scheduler retains
+the original 20,000-step warm-start horizon, so the short autopsy does not
+artificially anneal its learning rate to zero.
+
+The evaluator uses reverse-Dijkstra values only after each checkpoint. It
+reports full U-region successor top-1/pairwise topology and Oracle regret,
+U-source pairwise/Bellman constraint p99/p99.9/max tails split into
+Oracle-optimal versus non-optimal outgoing edges, and a horizon-10 MPPI ranking
+contract over fixed validation candidate banks. The contract compares learned
+and Oracle ordering, top-k overlap, selected-rollout Oracle regret, and the
+MPPI-weighted first action. Training never consumes these labels.
+
+Results are written to `warm_start_loss_autopsy.json`, a compact summary CSV,
+one `metrics.json` and `train_loss_history.csv` per arm, and
+`step0_gradient_autopsy.json`. Intermediate model files are omitted by default;
+set `AUTOPSY_SAVE_EVAL_CHECKPOINTS=1` when they are needed for a separate
+downstream evaluator.
+
 Run the Joint-feasible IQE constructive search:
 
 ```bash

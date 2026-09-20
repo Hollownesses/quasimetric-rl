@@ -392,26 +392,156 @@ def lattice_successor_ranking(
     ends = np.searchsorted(ordered_sources, allowed, side="right")
     top1: list[float] = []
     pairwise: list[float] = []
-    for begin, end in zip(begins, ends):
+    regrets: list[float] = []
+    action_gaps: list[float] = []
+    source_indices: list[int] = []
+    per_source: list[dict[str, Any]] = []
+    for source_index, begin, end in zip(allowed, begins, ends):
         indices = order[begin:end]
         if len(indices) < 2:
             continue
         predicted = predicted_scores[indices]
         target = reference_scores[indices]
         chosen = int(np.argmin(predicted))
-        top1.append(float(target[chosen] <= float(np.min(target)) + 1e-6))
+        target_min = float(np.min(target))
+        regret = max(0.0, float(target[chosen]) - target_min)
+        target_sorted = np.sort(target)
+        action_gap = max(0.0, float(target_sorted[1] - target_sorted[0]))
+        correct = float(target[chosen] <= target_min + 1e-6)
+        top1.append(correct)
+        regrets.append(regret)
+        action_gaps.append(action_gap)
+        source_indices.append(int(source_index))
+        local_pairwise: list[float] = []
         for left in range(len(indices)):
             for right in range(left + 1, len(indices)):
                 target_delta = float(target[left] - target[right])
                 if abs(target_delta) <= 1e-9:
                     continue
                 prediction_delta = float(predicted[left] - predicted[right])
-                pairwise.append(float(prediction_delta * target_delta > 0.0))
+                agreement = float(prediction_delta * target_delta > 0.0)
+                pairwise.append(agreement)
+                local_pairwise.append(agreement)
+        per_source.append(
+            {
+                "source_index": int(source_index),
+                "top1_correct": correct,
+                "oracle_regret": regret,
+                "oracle_action_gap": action_gap,
+                "pairwise_accuracy": (
+                    float(np.mean(local_pairwise)) if local_pairwise else None
+                ),
+                "pair_count": int(len(local_pairwise)),
+            }
+        )
+
+    def summarize_regret(values: Sequence[float]) -> dict[str, Any]:
+        array = np.asarray(values, dtype=np.float64)
+        if not len(array):
+            return {
+                "mean": None,
+                "p50": None,
+                "p95": None,
+                "p99": None,
+                "max": None,
+                "zero_fraction": None,
+            }
+        return {
+            "mean": float(np.mean(array)),
+            "p50": float(np.quantile(array, 0.50)),
+            "p95": float(np.quantile(array, 0.95)),
+            "p99": float(np.quantile(array, 0.99)),
+            "max": float(np.max(array)),
+            "zero_fraction": float(np.mean(array <= 1e-6)),
+        }
+
+    def summarize_subset(mask: np.ndarray) -> dict[str, Any]:
+        selected = np.flatnonzero(mask)
+        selected_pairs = [
+            per_source[int(index)]["pairwise_accuracy"]
+            for index in selected
+            if per_source[int(index)]["pairwise_accuracy"] is not None
+        ]
+        selected_pair_counts = [
+            per_source[int(index)]["pair_count"] for index in selected
+        ]
+        weighted_pairwise = None
+        if selected_pairs and sum(selected_pair_counts) > 0:
+            weighted_pairwise = float(
+                sum(
+                    float(per_source[int(index)]["pairwise_accuracy"])
+                    * int(per_source[int(index)]["pair_count"])
+                    for index in selected
+                    if per_source[int(index)]["pairwise_accuracy"] is not None
+                )
+                / sum(
+                    int(per_source[int(index)]["pair_count"])
+                    for index in selected
+                    if per_source[int(index)]["pairwise_accuracy"] is not None
+                )
+            )
+        return {
+            "source_states": int(len(selected)),
+            "top1_accuracy": (
+                float(np.mean(np.asarray(top1)[selected])) if len(selected) else None
+            ),
+            "pairwise_accuracy": weighted_pairwise,
+            "oracle_regret": summarize_regret(np.asarray(regrets)[selected]),
+            "oracle_action_gap_mean": (
+                float(np.mean(np.asarray(action_gaps)[selected]))
+                if len(selected)
+                else None
+            ),
+        }
+
+    source_states = problem.states[np.asarray(source_indices, dtype=np.int64)]
+    breakdown: dict[str, Any] = {}
+    if len(source_states):
+        x_values = source_states[:, 0]
+        x_min = float(np.min(x_values))
+        x_max = float(np.max(x_values))
+        one_third = x_min + (x_max - x_min) / 3.0
+        two_thirds = x_min + 2.0 * (x_max - x_min) / 3.0
+        breakdown["depth"] = {
+            "mouth": summarize_subset(x_values <= one_third),
+            "middle": summarize_subset(
+                (x_values > one_third) & (x_values <= two_thirds)
+            ),
+            "deep": summarize_subset(x_values > two_thirds),
+        }
+        heading = (source_states[:, 2] + np.pi) % (2.0 * np.pi) - np.pi
+        cardinal = np.asarray(
+            [
+                int(
+                    np.argmin(
+                        np.abs(
+                            (angle - np.asarray([np.pi, np.pi / 2, 0.0, -np.pi / 2]) + np.pi)
+                            % (2.0 * np.pi)
+                            - np.pi
+                        )
+                    )
+                )
+                for angle in heading
+            ],
+            dtype=np.int64,
+        )
+        breakdown["heading"] = {
+            name: summarize_subset(cardinal == index)
+            for index, name in enumerate(("west", "north", "east", "south"))
+        }
     return {
         "source_states": int(len(top1)),
         "top1_accuracy": float(np.mean(top1)) if top1 else None,
         "pairwise_accuracy": float(np.mean(pairwise)) if pairwise else None,
         "pair_count": int(len(pairwise)),
+        "oracle_regret": summarize_regret(regrets),
+        "oracle_action_gap": {
+            "mean": float(np.mean(action_gaps)) if action_gaps else None,
+            "p50": float(np.quantile(action_gaps, 0.50)) if action_gaps else None,
+            "p95": float(np.quantile(action_gaps, 0.95)) if action_gaps else None,
+            "max": float(np.max(action_gaps)) if action_gaps else None,
+        },
+        "breakdown": breakdown,
     }
 
 
