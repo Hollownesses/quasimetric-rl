@@ -35,6 +35,7 @@
 #   PHASE=warm_start_loss_autopsy DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=warm_start_dual_screen DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=warm_start_dual_dynamics_2x2 DEVICE=mps bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=static_vector_field_kkt_autopsy bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -846,6 +847,36 @@ exact_value_lp() {
     ${real_dynamics_args[@]+"${real_dynamics_args[@]}"}
 }
 
+static_vector_field_kkt_autopsy() {
+  local output_dir="${STATIC_AUTOPSY_DIR:-$OUTPUT_ROOT/static_vector_field_kkt_autopsy}"
+  local family_lambdas=()
+  local family_epsilons=()
+  local step_multipliers=()
+  read -r -a family_lambdas <<< "${STATIC_AUTOPSY_FAMILY_LAMBDAS:-10 10 10}"
+  read -r -a family_epsilons <<< "${STATIC_AUTOPSY_FAMILY_EPSILONS:-0.25 0.25 0.0}"
+  read -r -a step_multipliers <<< "${STATIC_AUTOPSY_STEP_MULTIPLIERS:-0.1 1 10}"
+
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.static_vector_field_kkt_autopsy \
+    --scenario-config "$SCENARIO_CONFIG" \
+    --output-dir "$output_dir" \
+    --device-id u_trap_target \
+    --seed "${STATIC_AUTOPSY_SEED:-20260921}" \
+    --position-resolution "${FULL_GRAPH_POSITION_RESOLUTION:-0.25}" \
+    --heading-bins "${FULL_GRAPH_HEADING_BINS:-24}" \
+    --primitive-steps "${FULL_GRAPH_PRIMITIVE_STEPS:-5}" \
+    --primitive-scales -1.0 -0.5 0.0 0.5 1.0 \
+    --lp-time-limit-sec "${STATIC_AUTOPSY_LP_TIME_LIMIT_SEC:-600}" \
+    --active-tolerance "${STATIC_AUTOPSY_ACTIVE_TOLERANCE:-0.000001}" \
+    --family-lambdas "${family_lambdas[@]}" \
+    --family-epsilons "${family_epsilons[@]}" \
+    --minibatch-samples "${STATIC_AUTOPSY_MINIBATCH_SAMPLES:-2000}" \
+    --ordinary-batch-size "${STATIC_AUTOPSY_ORDINARY_BATCH_SIZE:-512}" \
+    --push-batch-size "${STATIC_AUTOPSY_PUSH_BATCH_SIZE:-0}" \
+    --topology-sample-count "${STATIC_AUTOPSY_TOPOLOGY_SAMPLES:-200}" \
+    --base-learning-rate "${STATIC_AUTOPSY_BASE_LR:-0.1}" \
+    --step-multipliers "${step_multipliers[@]}"
+}
+
 tabular_potential_qrl() {
   local output_dir="${TABULAR_POTENTIAL_QRL_DIR:-$OUTPUT_ROOT/tabular_potential_qrl_2x2}"
   local seeds=(${TABULAR_POTENTIAL_SEEDS:-0 1 2 3 4})
@@ -1223,6 +1254,9 @@ case "$PHASE" in
   exact_value_lp)
     exact_value_lp
     ;;
+  static_vector_field_kkt_autopsy)
+    static_vector_field_kkt_autopsy
+    ;;
   tabular_potential_qrl)
     tabular_potential_qrl
     ;;
@@ -1257,7 +1291,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, warm_start_loss_autopsy, warm_start_dual_screen, warm_start_dual_dynamics_2x2, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, joint_feasible_iqe_capacity_2x, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, full_graph_point_goal_qrl, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, eval_qrl, local_nav_eval, oracle_mppi, supervised_iqe, targeted_supervised_iqe, targeted_supervised_full_graph_audit, targeted_supervised_qrl_warm_start, warm_start_loss_autopsy, warm_start_dual_screen, warm_start_dual_dynamics_2x2, static_vector_field_kkt_autopsy, dense_transition_qrl, exact_value_lp, tabular_potential_qrl, joint_feasible_iqe, joint_feasible_iqe_strong, joint_feasible_iqe_capacity_2x, full_graph_goal_set_qrl, full_graph_goal_set_qrl_stratified_constraints, full_graph_point_goal_qrl, benchmark, or all)" >&2
     exit 2
     ;;
 esac

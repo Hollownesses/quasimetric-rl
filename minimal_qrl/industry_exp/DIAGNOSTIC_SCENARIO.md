@@ -185,6 +185,33 @@ default screen directory. Besides the four cell histories, the phase writes
 `dual_dynamics_2x2_effects.csv/json` with the selected-Dual main effect, the
 head-only main effect, and their interaction at every evaluation step.
 
+Before introducing any teacher/proximal repair, run the static vector-field
+and KKT autopsy at the exact reverse-Dijkstra potential:
+
+```bash
+PHASE=static_vector_field_kkt_autopsy \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+This phase performs no training. It solves the per-edge mean-push LP and
+checks primal feasibility, dual feasibility, complementarity, and
+stationarity using the HiGHS edge multipliers. At the same exact value vector
+it then measures the full-graph Global Push, family-scalar constraint, and
+combined loss gradients for the current squared hinge and for a linear-hinge
+right subgradient on active edges. A nonnegative least-squares fit reports
+whether any three family scalars can cancel Global Push, separating a bad
+chosen lambda from insufficient dual granularity.
+
+The same run draws 2,000 independent current-style minibatches by default and
+reports estimator bias, cosine, variance, SNR, coordinate-sign agreement, and
+U/non-U breakdowns for Push, constraints, and their sum. It also evaluates
+the U successor topology after one projected step at `0.1x`, `1x`, and `10x`
+the tabular learning rate, both for full gradients, the minibatch mean, and a
+fixed subset of individual minibatches. Results are saved under
+`static_vector_field_kkt_autopsy/` as JSON, compressed gradient arrays, and a
+per-minibatch CSV. The exact values are a probe location only and never enter
+an optimization target.
+
 Run the Joint-feasible IQE constructive search:
 
 ```bash
