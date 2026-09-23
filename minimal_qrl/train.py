@@ -888,6 +888,19 @@ def train(args):
                         ),
                         dual_max=float(args.qrl_kkt_dual_max),
                         dual_steps=int(args.qrl_kkt_dual_steps),
+                        dual_active_margin=float(
+                            args.qrl_kkt_dual_active_margin
+                        ),
+                        dual_start_violation_fraction=float(
+                            args.qrl_kkt_dual_start_violation_fraction
+                        ),
+                        dual_slack_weight=float(
+                            args.qrl_kkt_dual_slack_weight
+                        ),
+                        dual_feature_scale=float(
+                            args.qrl_kkt_dual_feature_scale
+                        ),
+                        dual_raw_min=float(args.qrl_kkt_dual_raw_min),
                     ),
                     abstract_goal_edge=AbstractGoalEdgeLoss.Conf(weight=float(args.abstract_goal_edge_loss_weight)),
                     temporal_path=TemporalPathConstraintLoss.Conf(
@@ -1129,6 +1142,40 @@ def train(args):
                 }
                 train_row.update(_flatten_scalar_info(loss_result.info))
                 train_metric_rows.append(train_row)
+                if str(args.qrl_local_constraint_mode) == "kkt_functional":
+                    for critic_name, critic_info in loss_result.info.items():
+                        if not str(critic_name).startswith("critic_"):
+                            continue
+                        dual_info = (
+                            critic_info.get("local_constraint", {})
+                            .get("dual_update", {})
+                        )
+                        if not dual_info:
+                            continue
+                        violation_fraction = _scalarize_for_csv(
+                            dual_info.get("violation_fraction")
+                        )
+                        lagrange_mult_max = _scalarize_for_csv(
+                            dual_info.get("lagrange_mult_max")
+                        )
+                        if (
+                            violation_fraction is not None
+                            and lagrange_mult_max is not None
+                            and violation_fraction
+                            >= float(args.qrl_kkt_fail_violation_fraction)
+                            and lagrange_mult_max
+                            < float(args.qrl_kkt_fail_lagrange_max)
+                        ):
+                            _write_metric_rows_csv(
+                                os.path.join(output_dir, "train_metrics.csv"),
+                                train_metric_rows,
+                            )
+                            raise RuntimeError(
+                                "functional dual collapsed: "
+                                f"{critic_name} violation_fraction="
+                                f"{violation_fraction:.6g}, lagrange_mult_max="
+                                f"{lagrange_mult_max:.6g}"
+                            )
                 # 监控一步距离与 TD 类偏差（便于验证收敛与震荡）
                 try:
                     lc = loss_result.info.get('critic_00', {}).get('local_constraint', {})
@@ -1800,8 +1847,38 @@ def main():
     parser.add_argument(
         '--qrl-kkt-dual-steps',
         type=int,
-        default=3,
+        default=1,
         help='每次 critic 更新之前执行的 functional dual 更新次数',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-active-margin',
+        type=float,
+        default=1.0,
+        help='dual 更新包含的 near-active slack 区间：d-c >= -margin',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-start-violation-fraction',
+        type=float,
+        default=0.05,
+        help='batch violation fraction 首次达到该值后永久开启 dual 更新',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-slack-weight',
+        type=float,
+        default=0.1,
+        help='near-active slack dual objective 相对 positive objective 的权重',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-feature-scale',
+        type=float,
+        default=5.0,
+        help='functional dual signed-log 输入特征缩放',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-raw-min',
+        type=float,
+        default=-10.0,
+        help='softplus 前 raw dual 的 straight-through 下界',
     )
     parser.add_argument(
         '--qrl-kkt-init-lagrange-multiplier',
@@ -1812,8 +1889,20 @@ def main():
     parser.add_argument(
         '--qrl-kkt-dual-lr',
         type=float,
-        default=5e-3,
+        default=1e-4,
         help='local-constraint dual optimizer 学习率',
+    )
+    parser.add_argument(
+        '--qrl-kkt-fail-violation-fraction',
+        type=float,
+        default=0.05,
+        help='dual fail-fast 的最小 constraint violation fraction',
+    )
+    parser.add_argument(
+        '--qrl-kkt-fail-lagrange-max',
+        type=float,
+        default=1e-8,
+        help='violation 较高且 lambda_max 低于该值时终止训练',
     )
     parser.add_argument('--global-push-softplus-offset', type=float, default=15.0,
                         help='goal-set GlobalPush softplus offset；控制 push 梯度开始衰减的距离尺度')

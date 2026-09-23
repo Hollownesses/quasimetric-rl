@@ -50,7 +50,30 @@ class LocalConstraintLoss(CriticLossBase):
             converter=tuple,
         )
         dual_max: float = attrs.field(default=100000.0, validator=attrs.validators.gt(0))
-        dual_steps: int = attrs.field(default=3, validator=attrs.validators.gt(0))
+        dual_steps: int = attrs.field(default=1, validator=attrs.validators.gt(0))
+        dual_active_margin: float = attrs.field(
+            default=1.0,
+            validator=attrs.validators.ge(0),
+        )
+        dual_start_violation_fraction: float = attrs.field(
+            default=0.05,
+            validator=attrs.validators.and_(
+                attrs.validators.ge(0),
+                attrs.validators.le(1),
+            ),
+        )
+        dual_slack_weight: float = attrs.field(
+            default=0.1,
+            validator=attrs.validators.ge(0),
+        )
+        dual_feature_scale: float = attrs.field(
+            default=5.0,
+            validator=attrs.validators.gt(0),
+        )
+        dual_raw_min: float = attrs.field(
+            default=-10.0,
+            validator=attrs.validators.lt(0),
+        )
 
         def make(
             self,
@@ -69,6 +92,11 @@ class LocalConstraintLoss(CriticLossBase):
                 dual_hidden_sizes=self.dual_hidden_sizes,
                 dual_max=self.dual_max,
                 dual_steps=self.dual_steps,
+                dual_active_margin=self.dual_active_margin,
+                dual_start_violation_fraction=self.dual_start_violation_fraction,
+                dual_slack_weight=self.dual_slack_weight,
+                dual_feature_scale=self.dual_feature_scale,
+                dual_raw_min=self.dual_raw_min,
                 observation_size=observation_size,
             )
 
@@ -81,6 +109,11 @@ class LocalConstraintLoss(CriticLossBase):
     dual_hidden_sizes: Tuple[int, ...]
     dual_max: float
     dual_steps: int
+    dual_active_margin: float
+    dual_start_violation_fraction: float
+    dual_slack_weight: float
+    dual_feature_scale: float
+    dual_raw_min: float
 
     raw_lagrange_multiplier: Optional[nn.Parameter]
     dual_network: Optional[MLP]
@@ -96,7 +129,12 @@ class LocalConstraintLoss(CriticLossBase):
         augmented_lagrangian_rho: float = 1.0,
         dual_hidden_sizes: Tuple[int, ...] = (128, 128),
         dual_max: float = 100000.0,
-        dual_steps: int = 3,
+        dual_steps: int = 1,
+        dual_active_margin: float = 1.0,
+        dual_start_violation_fraction: float = 0.05,
+        dual_slack_weight: float = 0.1,
+        dual_feature_scale: float = 5.0,
+        dual_raw_min: float = -10.0,
         observation_size: Optional[int] = None,
     ):
         super().__init__()
@@ -112,6 +150,16 @@ class LocalConstraintLoss(CriticLossBase):
             raise ValueError("augmented_lagrangian_rho must be non-negative")
         if int(dual_steps) <= 0:
             raise ValueError("dual_steps must be positive")
+        if float(dual_active_margin) < 0.0:
+            raise ValueError("dual_active_margin must be non-negative")
+        if not 0.0 <= float(dual_start_violation_fraction) <= 1.0:
+            raise ValueError("dual_start_violation_fraction must be in [0, 1]")
+        if float(dual_slack_weight) < 0.0:
+            raise ValueError("dual_slack_weight must be non-negative")
+        if float(dual_feature_scale) <= 0.0:
+            raise ValueError("dual_feature_scale must be positive")
+        if float(dual_raw_min) >= 0.0:
+            raise ValueError("dual_raw_min must be negative")
         if float(dual_max) <= float(init_lagrange_multiplier):
             raise ValueError(
                 "dual_max must be greater than init_lagrange_multiplier"
@@ -121,6 +169,13 @@ class LocalConstraintLoss(CriticLossBase):
         self.dual_hidden_sizes = tuple(int(size) for size in dual_hidden_sizes)
         self.dual_max = float(dual_max)
         self.dual_steps = int(dual_steps)
+        self.dual_active_margin = float(dual_active_margin)
+        self.dual_start_violation_fraction = float(
+            dual_start_violation_fraction
+        )
+        self.dual_slack_weight = float(dual_slack_weight)
+        self.dual_feature_scale = float(dual_feature_scale)
+        self.dual_raw_min = float(dual_raw_min)
 
         if self.mode == "legacy_squared_hinge":
             self.raw_lagrange_multiplier = nn.Parameter(
@@ -131,6 +186,7 @@ class LocalConstraintLoss(CriticLossBase):
             )
             self.dual_network = None
             self.register_buffer("dual_raw_offset", None)
+            self.register_buffer("dual_updates_started", None)
         else:
             if observation_size is None or int(observation_size) <= 0:
                 raise ValueError(
@@ -148,6 +204,10 @@ class LocalConstraintLoss(CriticLossBase):
                 dtype=torch.float32,
             )
             self.register_buffer("dual_raw_offset", initial_raw)
+            self.register_buffer(
+                "dual_updates_started",
+                torch.tensor(False, dtype=torch.bool),
+            )
 
     def _target_cost(self, data: BatchData, dist: torch.Tensor) -> torch.Tensor:
         if self.cost_source == "fixed":
@@ -168,26 +228,40 @@ class LocalConstraintLoss(CriticLossBase):
         observations: torch.Tensor,
         next_observations: torch.Tensor,
         target_cost: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.dual_network is None or self.dual_raw_offset is None:
             raise RuntimeError("functional dual requested in legacy mode")
         # Use fixed raw edge observations rather than the moving critic latent
         # coordinates.  This keeps the dual field independent of theta.
-        cost_feature = torch.log1p(target_cost.detach().clamp_min(0)).unsqueeze(-1)
         features = torch.cat(
             [
                 observations.detach().flatten(start_dim=1),
                 next_observations.detach().flatten(start_dim=1),
-                cost_feature,
+                target_cost.detach().clamp_min(0).unsqueeze(-1),
             ],
             dim=-1,
         )
-        raw = self.dual_network(features).squeeze(-1)
-        raw = raw + self.dual_raw_offset.to(
-            device=raw.device,
-            dtype=raw.dtype,
+        # Raw environment coordinates span very different scales.  A fixed
+        # signed-log transform keeps the dual field edge-conditioned without
+        # making its output depend on the current minibatch statistics.
+        features = (
+            torch.sign(features)
+            * torch.log1p(features.abs())
+            / self.dual_feature_scale
         )
-        return F.softplus(raw).clamp_max(self.dual_max)
+        raw_unbounded = self.dual_network(features).squeeze(-1)
+        raw_unbounded = raw_unbounded + self.dual_raw_offset.to(
+            device=raw_unbounded.device,
+            dtype=raw_unbounded.dtype,
+        )
+        # Forward values cannot enter the unrecoverable lower softplus tail.
+        # The straight-through form preserves a recovery gradient if the
+        # unconstrained network output temporarily crosses the trust region.
+        raw_effective = raw_unbounded + (
+            raw_unbounded.clamp_min(self.dual_raw_min) - raw_unbounded
+        ).detach()
+        lagrange_mult = F.softplus(raw_effective).clamp_max(self.dual_max)
+        return lagrange_mult, raw_unbounded, raw_effective
 
     def _functional_terms(
         self,
@@ -195,7 +269,13 @@ class LocalConstraintLoss(CriticLossBase):
         critic_batch_info: CriticBatchInfo,
         *,
         detach_constraint: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
         if detach_constraint:
             with torch.no_grad():
                 dist = critic_batch_info.critic.quasimetric_model(
@@ -211,12 +291,20 @@ class LocalConstraintLoss(CriticLossBase):
             )
             target_cost = self._target_cost(data, dist)
             residual = dist - target_cost
-        lagrange_mult = self._functional_lagrange_multiplier(
-            data.observations,
-            data.next_observations,
-            target_cost,
+        lagrange_mult, raw_unbounded, raw_effective = (
+            self._functional_lagrange_multiplier(
+                data.observations,
+                data.next_observations,
+                target_cost,
+            )
         )
-        return residual, target_cost, lagrange_mult
+        return (
+            residual,
+            target_cost,
+            lagrange_mult,
+            raw_unbounded,
+            raw_effective,
+        )
 
     def dual_loss(
         self,
@@ -227,22 +315,68 @@ class LocalConstraintLoss(CriticLossBase):
 
         if not self.uses_separate_dual_updates:
             raise RuntimeError("separate dual loss is only defined in kkt_functional mode")
-        residual, _target_cost, lagrange_mult = self._functional_terms(
+        (
+            residual,
+            _target_cost,
+            lagrange_mult,
+            raw_unbounded,
+            raw_effective,
+        ) = self._functional_terms(
             data,
             critic_batch_info,
             detach_constraint=True,
         )
-        dual_objective = (lagrange_mult * residual).mean()
+        violation_mask = residual > 0
+        near_slack_mask = (residual <= 0) & (
+            residual >= -self.dual_active_margin
+        )
+        violation_fraction = violation_mask.to(residual.dtype).mean()
+        if self.dual_updates_started is None:
+            raise RuntimeError("functional dual start state is unavailable")
+        with torch.no_grad():
+            should_start = (
+                violation_fraction >= self.dual_start_violation_fraction
+            )
+            self.dual_updates_started.logical_or_(should_start)
+
+        weighted_residual = lagrange_mult * residual
+        positive_objective = (
+            (weighted_residual * violation_mask).sum()
+            / violation_mask.sum().clamp_min(1)
+        )
+        near_slack_objective = (
+            (weighted_residual * near_slack_mask).sum()
+            / near_slack_mask.sum().clamp_min(1)
+        )
+        update_enabled = self.dual_updates_started & violation_mask.any()
+        dual_objective = (
+            positive_objective
+            + self.dual_slack_weight * near_slack_objective
+        ) * update_enabled.to(residual.dtype)
         return LossResult(
             loss=-dual_objective,
             info=dict(
                 objective=dual_objective,
+                positive_objective=positive_objective,
+                near_slack_objective=near_slack_objective,
+                update_enabled=update_enabled.to(residual.dtype),
+                updates_started=self.dual_updates_started.to(residual.dtype),
                 residual_mean=residual.mean(),
                 residual_max=residual.max(),
-                violation_fraction=(residual > 0).to(residual.dtype).mean(),
+                violation_fraction=violation_fraction,
+                dual_candidate_fraction=(violation_mask | near_slack_mask).to(
+                    residual.dtype
+                ).mean(),
                 lagrange_mult_mean=lagrange_mult.mean(),
                 lagrange_mult_min=lagrange_mult.min(),
                 lagrange_mult_max=lagrange_mult.max(),
+                raw_dual_mean=raw_unbounded.mean(),
+                raw_dual_min=raw_unbounded.min(),
+                raw_dual_max=raw_unbounded.max(),
+                raw_dual_effective_min=raw_effective.min(),
+                dual_lower_saturation_fraction=(
+                    raw_unbounded < self.dual_raw_min
+                ).to(residual.dtype).mean(),
                 dual_saturation_fraction=(lagrange_mult >= self.dual_max).to(
                     residual.dtype
                 ).mean(),
@@ -252,7 +386,13 @@ class LocalConstraintLoss(CriticLossBase):
     def forward(self, data: BatchData, critic_batch_info: CriticBatchInfo) -> LossResult:
 
         if self.uses_separate_dual_updates:
-            residual, target_cost, lagrange_mult = self._functional_terms(
+            (
+                residual,
+                target_cost,
+                lagrange_mult,
+                raw_unbounded,
+                raw_effective,
+            ) = self._functional_terms(
                 data,
                 critic_batch_info,
                 detach_constraint=False,
@@ -287,6 +427,13 @@ class LocalConstraintLoss(CriticLossBase):
                     lagrange_mult=lagrange_mult.mean(),
                     lagrange_mult_min=lagrange_mult.min(),
                     lagrange_mult_max=lagrange_mult.max(),
+                    raw_dual_mean=raw_unbounded.mean(),
+                    raw_dual_min=raw_unbounded.min(),
+                    raw_dual_max=raw_unbounded.max(),
+                    raw_dual_effective_min=raw_effective.min(),
+                    dual_lower_saturation_fraction=(
+                        raw_unbounded < self.dual_raw_min
+                    ).to(residual.dtype).mean(),
                     dual_saturation_fraction=(lagrange_mult >= self.dual_max).to(
                         residual.dtype
                     ).mean(),
@@ -326,5 +473,8 @@ class LocalConstraintLoss(CriticLossBase):
         return (
             f"mode={self.mode}, rho={self.augmented_lagrangian_rho:g}, "
             f"dual_steps={self.dual_steps}, dual_max={self.dual_max:g}, "
+            f"active_margin={self.dual_active_margin:g}, "
+            f"start_violation_fraction={self.dual_start_violation_fraction:g}, "
+            f"raw_min={self.dual_raw_min:g}, "
             f"step_cost={self.step_cost:g}, cost_source={self.cost_source}"
         )

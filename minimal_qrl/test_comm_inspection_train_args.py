@@ -98,9 +98,16 @@ def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
     assert np.isclose(args.qrl_kkt_augmented_lagrangian_rho, 1.0)
     assert args.qrl_kkt_dual_hidden_sizes == [128, 128]
     assert np.isclose(args.qrl_kkt_dual_max, 100000.0)
-    assert args.qrl_kkt_dual_steps == 3
+    assert args.qrl_kkt_dual_steps == 1
+    assert np.isclose(args.qrl_kkt_dual_active_margin, 1.0)
+    assert np.isclose(args.qrl_kkt_dual_start_violation_fraction, 0.05)
+    assert np.isclose(args.qrl_kkt_dual_slack_weight, 0.1)
+    assert np.isclose(args.qrl_kkt_dual_feature_scale, 5.0)
+    assert np.isclose(args.qrl_kkt_dual_raw_min, -10.0)
     assert np.isclose(args.qrl_kkt_init_lagrange_multiplier, 0.01)
-    assert np.isclose(args.qrl_kkt_dual_lr, 5e-3)
+    assert np.isclose(args.qrl_kkt_dual_lr, 1e-4)
+    assert np.isclose(args.qrl_kkt_fail_violation_fraction, 0.05)
+    assert np.isclose(args.qrl_kkt_fail_lagrange_max, 1e-8)
 
 
 def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget():
@@ -124,7 +131,13 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert '--qrl-mqe-terminal-anchor-loss-weight "${QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT:-1.0}"' in script
     assert '--qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}"' in script
     assert '--qrl-local-constraint-mode "${QRL_LOCAL_CONSTRAINT_MODE:-legacy_squared_hinge}"' in script
-    assert '--qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-3}"' in script
+    assert '--qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-1}"' in script
+    assert '--qrl-kkt-dual-active-margin "${QRL_KKT_DUAL_ACTIVE_MARGIN:-1.0}"' in script
+    assert (
+        '--qrl-kkt-dual-start-violation-fraction '
+        '"${QRL_KKT_DUAL_START_VIOLATION_FRACTION:-0.05}"'
+    ) in script
+    assert '--qrl-kkt-dual-lr "${QRL_KKT_DUAL_LR:-0.0001}"' in script
     assert '../quasimetric-rl-industrial-inspection/results/shared_oracle_banks/chemical_process' in script
     assert 'teacher_ratio="0.0"' in script
     assert '--task-aware-teacher-ratio "$teacher_ratio"' in script
@@ -140,7 +153,7 @@ def test_diagnostic_shell_has_isolated_kkt_functional_ablation():
     )
 
     assert "train_qrl_kkt_functional()" in script
-    assert "variant=kkt_functional_primal_dual_v1" in script
+    assert "variant=kkt_functional_primal_dual_v2" in script
     assert "GLOBAL_PUSH_OBJECTIVE=linear" in script
     assert "QRL_LOCAL_CONSTRAINT_MODE=kkt_functional" in script
     assert "QRL_TEMPORAL_CONSTRAINT_WEIGHT=0.0" in script

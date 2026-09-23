@@ -67,9 +67,16 @@ fi
   --qrl-kkt-augmented-lagrangian-rho "${QRL_KKT_AUGMENTED_LAGRANGIAN_RHO:-1.0}" \
   --qrl-kkt-dual-hidden-sizes ${QRL_KKT_DUAL_HIDDEN_SIZES:-128 128} \
   --qrl-kkt-dual-max "${QRL_KKT_DUAL_MAX:-100000.0}" \
-  --qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-3}" \
+  --qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-1}" \
+  --qrl-kkt-dual-active-margin "${QRL_KKT_DUAL_ACTIVE_MARGIN:-1.0}" \
+  --qrl-kkt-dual-start-violation-fraction "${QRL_KKT_DUAL_START_VIOLATION_FRACTION:-0.05}" \
+  --qrl-kkt-dual-slack-weight "${QRL_KKT_DUAL_SLACK_WEIGHT:-0.1}" \
+  --qrl-kkt-dual-feature-scale "${QRL_KKT_DUAL_FEATURE_SCALE:-5.0}" \
+  --qrl-kkt-dual-raw-min "${QRL_KKT_DUAL_RAW_MIN:--10.0}" \
   --qrl-kkt-init-lagrange-multiplier "${QRL_KKT_INIT_LAGRANGE_MULTIPLIER:-0.01}" \
-  --qrl-kkt-dual-lr "${QRL_KKT_DUAL_LR:-0.005}" \
+  --qrl-kkt-dual-lr "${QRL_KKT_DUAL_LR:-0.0001}" \
+  --qrl-kkt-fail-violation-fraction "${QRL_KKT_FAIL_VIOLATION_FRACTION:-0.05}" \
+  --qrl-kkt-fail-lagrange-max "${QRL_KKT_FAIL_LAGRANGE_MAX:-1e-8}" \
   --global-push-objective "${GLOBAL_PUSH_OBJECTIVE:-softplus}" \
   --global-push-softplus-offset "${GLOBAL_PUSH_SOFTPLUS_OFFSET:-15.0}" \
   --global-push-softplus-beta "${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}" \
