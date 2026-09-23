@@ -385,7 +385,7 @@ def _build_topology_improvement_metadata(
     mqe_diagnostic_device_names: Sequence[str],
 ) -> dict:
     if str(args.qrl_local_constraint_mode) == "kkt_functional":
-        variant = "kkt_functional_primal_dual_v2"
+        variant = "kkt_functional_projected_dual_v3"
     elif mqe_waypoint_weight > 0.0:
         variant = (
             "mqe_separately_normalized_terminal_anchor_stop_loss"
@@ -408,11 +408,13 @@ def _build_topology_improvement_metadata(
         ),
         "kkt_dual_steps": int(args.qrl_kkt_dual_steps),
         "kkt_dual_lr": float(args.qrl_kkt_dual_lr),
-        "kkt_dual_active_margin": float(args.qrl_kkt_dual_active_margin),
         "kkt_dual_start_violation_fraction": float(
             args.qrl_kkt_dual_start_violation_fraction
         ),
-        "kkt_dual_slack_weight": float(args.qrl_kkt_dual_slack_weight),
+        "kkt_dual_projected_step_size": float(
+            args.qrl_kkt_dual_projected_step_size
+        ),
+        "kkt_dual_huber_delta": float(args.qrl_kkt_dual_huber_delta),
         "kkt_dual_feature_scale": float(args.qrl_kkt_dual_feature_scale),
         "kkt_dual_raw_min": float(args.qrl_kkt_dual_raw_min),
         "nstep_goal_constraint_weight": float(
@@ -917,14 +919,14 @@ def train(args):
                         ),
                         dual_max=float(args.qrl_kkt_dual_max),
                         dual_steps=int(args.qrl_kkt_dual_steps),
-                        dual_active_margin=float(
-                            args.qrl_kkt_dual_active_margin
-                        ),
                         dual_start_violation_fraction=float(
                             args.qrl_kkt_dual_start_violation_fraction
                         ),
-                        dual_slack_weight=float(
-                            args.qrl_kkt_dual_slack_weight
+                        dual_projected_step_size=float(
+                            args.qrl_kkt_dual_projected_step_size
+                        ),
+                        dual_huber_delta=float(
+                            args.qrl_kkt_dual_huber_delta
                         ),
                         dual_feature_scale=float(
                             args.qrl_kkt_dual_feature_scale
@@ -1880,22 +1882,22 @@ def main():
         help='每次 critic 更新之前执行的 functional dual 更新次数',
     )
     parser.add_argument(
-        '--qrl-kkt-dual-active-margin',
-        type=float,
-        default=1.0,
-        help='dual 更新包含的 near-active slack 区间：d-c >= -margin',
-    )
-    parser.add_argument(
         '--qrl-kkt-dual-start-violation-fraction',
         type=float,
         default=0.05,
         help='batch violation fraction 首次达到该值后永久开启 dual 更新',
     )
     parser.add_argument(
-        '--qrl-kkt-dual-slack-weight',
+        '--qrl-kkt-dual-projected-step-size',
         type=float,
         default=0.1,
-        help='near-active slack dual objective 相对 positive objective 的权重',
+        help='逐 edge projected dual target 中 lambda <- [lambda + eta*h]_+ 的 eta',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-huber-delta',
+        type=float,
+        default=1.0,
+        help='functional dual 拟合 projected raw target 的 Huber delta',
     )
     parser.add_argument(
         '--qrl-kkt-dual-feature-scale',

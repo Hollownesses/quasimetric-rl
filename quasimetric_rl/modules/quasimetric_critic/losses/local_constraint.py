@@ -51,10 +51,6 @@ class LocalConstraintLoss(CriticLossBase):
         )
         dual_max: float = attrs.field(default=100000.0, validator=attrs.validators.gt(0))
         dual_steps: int = attrs.field(default=1, validator=attrs.validators.gt(0))
-        dual_active_margin: float = attrs.field(
-            default=1.0,
-            validator=attrs.validators.ge(0),
-        )
         dual_start_violation_fraction: float = attrs.field(
             default=0.05,
             validator=attrs.validators.and_(
@@ -62,9 +58,13 @@ class LocalConstraintLoss(CriticLossBase):
                 attrs.validators.le(1),
             ),
         )
-        dual_slack_weight: float = attrs.field(
+        dual_projected_step_size: float = attrs.field(
             default=0.1,
-            validator=attrs.validators.ge(0),
+            validator=attrs.validators.gt(0),
+        )
+        dual_huber_delta: float = attrs.field(
+            default=1.0,
+            validator=attrs.validators.gt(0),
         )
         dual_feature_scale: float = attrs.field(
             default=5.0,
@@ -92,9 +92,9 @@ class LocalConstraintLoss(CriticLossBase):
                 dual_hidden_sizes=self.dual_hidden_sizes,
                 dual_max=self.dual_max,
                 dual_steps=self.dual_steps,
-                dual_active_margin=self.dual_active_margin,
                 dual_start_violation_fraction=self.dual_start_violation_fraction,
-                dual_slack_weight=self.dual_slack_weight,
+                dual_projected_step_size=self.dual_projected_step_size,
+                dual_huber_delta=self.dual_huber_delta,
                 dual_feature_scale=self.dual_feature_scale,
                 dual_raw_min=self.dual_raw_min,
                 observation_size=observation_size,
@@ -109,9 +109,9 @@ class LocalConstraintLoss(CriticLossBase):
     dual_hidden_sizes: Tuple[int, ...]
     dual_max: float
     dual_steps: int
-    dual_active_margin: float
     dual_start_violation_fraction: float
-    dual_slack_weight: float
+    dual_projected_step_size: float
+    dual_huber_delta: float
     dual_feature_scale: float
     dual_raw_min: float
 
@@ -130,9 +130,9 @@ class LocalConstraintLoss(CriticLossBase):
         dual_hidden_sizes: Tuple[int, ...] = (128, 128),
         dual_max: float = 100000.0,
         dual_steps: int = 1,
-        dual_active_margin: float = 1.0,
         dual_start_violation_fraction: float = 0.05,
-        dual_slack_weight: float = 0.1,
+        dual_projected_step_size: float = 0.1,
+        dual_huber_delta: float = 1.0,
         dual_feature_scale: float = 5.0,
         dual_raw_min: float = -10.0,
         observation_size: Optional[int] = None,
@@ -150,12 +150,12 @@ class LocalConstraintLoss(CriticLossBase):
             raise ValueError("augmented_lagrangian_rho must be non-negative")
         if int(dual_steps) <= 0:
             raise ValueError("dual_steps must be positive")
-        if float(dual_active_margin) < 0.0:
-            raise ValueError("dual_active_margin must be non-negative")
         if not 0.0 <= float(dual_start_violation_fraction) <= 1.0:
             raise ValueError("dual_start_violation_fraction must be in [0, 1]")
-        if float(dual_slack_weight) < 0.0:
-            raise ValueError("dual_slack_weight must be non-negative")
+        if float(dual_projected_step_size) <= 0.0:
+            raise ValueError("dual_projected_step_size must be positive")
+        if float(dual_huber_delta) <= 0.0:
+            raise ValueError("dual_huber_delta must be positive")
         if float(dual_feature_scale) <= 0.0:
             raise ValueError("dual_feature_scale must be positive")
         if float(dual_raw_min) >= 0.0:
@@ -169,11 +169,11 @@ class LocalConstraintLoss(CriticLossBase):
         self.dual_hidden_sizes = tuple(int(size) for size in dual_hidden_sizes)
         self.dual_max = float(dual_max)
         self.dual_steps = int(dual_steps)
-        self.dual_active_margin = float(dual_active_margin)
         self.dual_start_violation_fraction = float(
             dual_start_violation_fraction
         )
-        self.dual_slack_weight = float(dual_slack_weight)
+        self.dual_projected_step_size = float(dual_projected_step_size)
+        self.dual_huber_delta = float(dual_huber_delta)
         self.dual_feature_scale = float(dual_feature_scale)
         self.dual_raw_min = float(dual_raw_min)
 
@@ -311,7 +311,7 @@ class LocalConstraintLoss(CriticLossBase):
         data: BatchData,
         critic_batch_info: CriticBatchInfo,
     ) -> LossResult:
-        """Loss minimized by the dual optimizer (the negative dual objective)."""
+        """Fit one projected per-edge dual-ascent step in output space."""
 
         if not self.uses_separate_dual_updates:
             raise RuntimeError("separate dual loss is only defined in kkt_functional mode")
@@ -327,9 +327,6 @@ class LocalConstraintLoss(CriticLossBase):
             detach_constraint=True,
         )
         violation_mask = residual > 0
-        near_slack_mask = (residual <= 0) & (
-            residual >= -self.dual_active_margin
-        )
         violation_fraction = violation_mask.to(residual.dtype).mean()
         if self.dual_updates_started is None:
             raise RuntimeError("functional dual start state is unavailable")
@@ -339,32 +336,54 @@ class LocalConstraintLoss(CriticLossBase):
             )
             self.dual_updates_started.logical_or_(should_start)
 
-        weighted_residual = lagrange_mult * residual
-        positive_objective = (
-            (weighted_residual * violation_mask).sum()
-            / violation_mask.sum().clamp_min(1)
+        update_enabled = self.dual_updates_started
+        with torch.no_grad():
+            target_lagrange_mult = (
+                lagrange_mult.detach()
+                + self.dual_projected_step_size * residual
+            ).clamp(min=0.0, max=self.dual_max)
+            lagrange_floor = F.softplus(
+                torch.as_tensor(
+                    self.dual_raw_min,
+                    device=residual.device,
+                    dtype=residual.dtype,
+                )
+            )
+            raw_target_input = target_lagrange_mult.clamp_min(lagrange_floor)
+            # Stable inverse softplus: x + log(1 - exp(-x)).
+            target_raw = raw_target_input + torch.log(
+                -torch.expm1(-raw_target_input)
+            )
+            projected_delta = target_lagrange_mult - lagrange_mult.detach()
+
+        fitted_loss = F.huber_loss(
+            raw_effective,
+            target_raw,
+            reduction="mean",
+            delta=self.dual_huber_delta,
         )
-        near_slack_objective = (
-            (weighted_residual * near_slack_mask).sum()
-            / near_slack_mask.sum().clamp_min(1)
-        )
-        update_enabled = self.dual_updates_started & violation_mask.any()
-        dual_objective = (
-            positive_objective
-            + self.dual_slack_weight * near_slack_objective
-        ) * update_enabled.to(residual.dtype)
+        loss = fitted_loss * update_enabled.to(residual.dtype)
         return LossResult(
-            loss=-dual_objective,
+            loss=loss,
             info=dict(
-                objective=dual_objective,
-                positive_objective=positive_objective,
-                near_slack_objective=near_slack_objective,
+                fitted_loss=fitted_loss,
                 update_enabled=update_enabled.to(residual.dtype),
                 updates_started=self.dual_updates_started.to(residual.dtype),
                 residual_mean=residual.mean(),
                 residual_max=residual.max(),
                 violation_fraction=violation_fraction,
-                dual_candidate_fraction=(violation_mask | near_slack_mask).to(
+                target_lagrange_mult_mean=target_lagrange_mult.mean(),
+                target_lagrange_mult_min=target_lagrange_mult.min(),
+                target_lagrange_mult_max=target_lagrange_mult.max(),
+                projected_delta_mean=projected_delta.mean(),
+                projected_delta_abs_mean=projected_delta.abs().mean(),
+                projected_increase_fraction=(projected_delta > 0).to(
+                    residual.dtype
+                ).mean(),
+                projected_decrease_fraction=(projected_delta < 0).to(
+                    residual.dtype
+                ).mean(),
+                projected_zero_fraction=(target_lagrange_mult == 0).to(
                     residual.dtype
                 ).mean(),
                 lagrange_mult_mean=lagrange_mult.mean(),
@@ -406,6 +425,9 @@ class LocalConstraintLoss(CriticLossBase):
             )
             loss = linear_lagrangian + augmented_penalty
             dual_objective = (lagrange_mult * residual.detach()).mean()
+            complementarity_abs = (
+                lagrange_mult.detach() * residual.detach().abs()
+            ).mean()
             return LossResult(
                 loss=loss,
                 info=dict(
@@ -424,6 +446,7 @@ class LocalConstraintLoss(CriticLossBase):
                     linear_lagrangian=linear_lagrangian,
                     augmented_penalty=augmented_penalty,
                     dual_objective=dual_objective,
+                    complementarity_abs=complementarity_abs,
                     lagrange_mult=lagrange_mult.mean(),
                     lagrange_mult_min=lagrange_mult.min(),
                     lagrange_mult_max=lagrange_mult.max(),
@@ -473,7 +496,8 @@ class LocalConstraintLoss(CriticLossBase):
         return (
             f"mode={self.mode}, rho={self.augmented_lagrangian_rho:g}, "
             f"dual_steps={self.dual_steps}, dual_max={self.dual_max:g}, "
-            f"active_margin={self.dual_active_margin:g}, "
+            f"projected_step_size={self.dual_projected_step_size:g}, "
+            f"dual_huber_delta={self.dual_huber_delta:g}, "
             f"start_violation_fraction={self.dual_start_violation_fraction:g}, "
             f"raw_min={self.dual_raw_min:g}, "
             f"step_cost={self.step_cost:g}, cost_source={self.cost_source}"

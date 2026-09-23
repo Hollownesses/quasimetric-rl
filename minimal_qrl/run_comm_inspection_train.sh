@@ -68,9 +68,9 @@ fi
   --qrl-kkt-dual-hidden-sizes ${QRL_KKT_DUAL_HIDDEN_SIZES:-128 128} \
   --qrl-kkt-dual-max "${QRL_KKT_DUAL_MAX:-100000.0}" \
   --qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-1}" \
-  --qrl-kkt-dual-active-margin "${QRL_KKT_DUAL_ACTIVE_MARGIN:-1.0}" \
   --qrl-kkt-dual-start-violation-fraction "${QRL_KKT_DUAL_START_VIOLATION_FRACTION:-0.05}" \
-  --qrl-kkt-dual-slack-weight "${QRL_KKT_DUAL_SLACK_WEIGHT:-0.1}" \
+  --qrl-kkt-dual-projected-step-size "${QRL_KKT_DUAL_PROJECTED_STEP_SIZE:-0.1}" \
+  --qrl-kkt-dual-huber-delta "${QRL_KKT_DUAL_HUBER_DELTA:-1.0}" \
   --qrl-kkt-dual-feature-scale "${QRL_KKT_DUAL_FEATURE_SCALE:-5.0}" \
   --qrl-kkt-dual-raw-min "${QRL_KKT_DUAL_RAW_MIN:--10.0}" \
   --qrl-kkt-init-lagrange-multiplier "${QRL_KKT_INIT_LAGRANGE_MULTIPLIER:-0.01}" \

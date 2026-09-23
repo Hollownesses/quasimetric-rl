@@ -135,7 +135,53 @@ def test_kkt_functional_dual_update_is_detached_from_critic_and_increases_on_vio
     after = float(loss.dual_loss(data, batch_info).info["lagrange_mult_mean"])
 
     assert critic.quasimetric_model.value.grad is None
+    assert float(dual_result.info["projected_increase_fraction"]) == 1.0
+    assert torch.isclose(
+        dual_result.info["target_lagrange_mult_mean"],
+        torch.tensor(0.3),
+        atol=1e-6,
+    )
     assert after > before
+
+
+def test_kkt_functional_projected_dual_decreases_on_deep_slack():
+    critic = _ScalarCritic(0.0)
+    data = make_batch([-1.0, -1.0])
+    batch_info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(2, 2),
+        zy=torch.ones(2, 2),
+    )
+    loss = LocalConstraintLoss(
+        epsilon=0.25,
+        step_cost=1.0,
+        cost_source="negative_reward",
+        init_lagrange_multiplier=0.2,
+        mode="kkt_functional",
+        augmented_lagrangian_rho=1.0,
+        dual_hidden_sizes=(8,),
+        dual_max=10.0,
+        dual_steps=1,
+        dual_start_violation_fraction=0.0,
+        dual_projected_step_size=0.1,
+        observation_size=2,
+    )
+    optimizer = torch.optim.SGD(loss.parameters(), lr=0.1)
+
+    before = float(loss.dual_loss(data, batch_info).info["lagrange_mult_mean"])
+    optimizer.zero_grad()
+    dual_result = loss.dual_loss(data, batch_info)
+    dual_result.loss.backward()
+    optimizer.step()
+    after = float(loss.dual_loss(data, batch_info).info["lagrange_mult_mean"])
+
+    assert float(dual_result.info["projected_decrease_fraction"]) == 1.0
+    assert torch.isclose(
+        dual_result.info["target_lagrange_mult_mean"],
+        torch.tensor(0.1),
+        atol=1e-6,
+    )
+    assert after < before
 
 
 def test_kkt_functional_keeps_dual_frozen_until_violations_wake_it_up():
@@ -156,7 +202,6 @@ def test_kkt_functional_keeps_dual_frozen_until_violations_wake_it_up():
         dual_hidden_sizes=(8,),
         dual_max=10.0,
         dual_steps=1,
-        dual_active_margin=1.0,
         dual_start_violation_fraction=0.05,
         observation_size=2,
     )

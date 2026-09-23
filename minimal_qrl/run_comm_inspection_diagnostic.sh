@@ -123,9 +123,9 @@ train_qrl() {
     --qrl-kkt-dual-hidden-sizes ${QRL_KKT_DUAL_HIDDEN_SIZES:-128 128} \
     --qrl-kkt-dual-max "${QRL_KKT_DUAL_MAX:-100000.0}" \
     --qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-1}" \
-    --qrl-kkt-dual-active-margin "${QRL_KKT_DUAL_ACTIVE_MARGIN:-1.0}" \
     --qrl-kkt-dual-start-violation-fraction "${QRL_KKT_DUAL_START_VIOLATION_FRACTION:-0.05}" \
-    --qrl-kkt-dual-slack-weight "${QRL_KKT_DUAL_SLACK_WEIGHT:-0.1}" \
+    --qrl-kkt-dual-projected-step-size "${QRL_KKT_DUAL_PROJECTED_STEP_SIZE:-0.1}" \
+    --qrl-kkt-dual-huber-delta "${QRL_KKT_DUAL_HUBER_DELTA:-1.0}" \
     --qrl-kkt-dual-feature-scale "${QRL_KKT_DUAL_FEATURE_SCALE:-5.0}" \
     --qrl-kkt-dual-raw-min "${QRL_KKT_DUAL_RAW_MIN:--10.0}" \
     --qrl-kkt-init-lagrange-multiplier "${QRL_KKT_INIT_LAGRANGE_MULTIPLIER:-0.01}" \
@@ -189,21 +189,21 @@ train_qrl_nstep_upper_bound() {
     train_qrl
 }
 
-# KKT-aligned functional dual with violation-triggered wake-up, active-set
-# updates, normalized edge features, and a recoverable softplus trust region.
+# KKT-aligned functional dual with violation-triggered wake-up, fitted
+# per-edge projected updates, normalized features, and a recoverable raw bound.
 # Optional temporal/MQE additions stay disabled to isolate the optimizer change.
 train_qrl_kkt_functional() {
   local kkt_train_dir="${KKT_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_kkt_functional}"
 
   echo "QRL topology-improvement ablation:"
-  echo "  variant=kkt_functional_primal_dual_v2"
+  echo "  variant=kkt_functional_projected_dual_v3"
   echo "  global_push_objective=linear"
   echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
   echo "  augmented_rho=${QRL_KKT_AUGMENTED_LAGRANGIAN_RHO:-1.0}"
   echo "  dual_steps=${QRL_KKT_DUAL_STEPS:-1}"
   echo "  dual_lr=${QRL_KKT_DUAL_LR:-0.0001}"
-  echo "  dual_active_margin=${QRL_KKT_DUAL_ACTIVE_MARGIN:-1.0}"
   echo "  dual_start_violation_fraction=${QRL_KKT_DUAL_START_VIOLATION_FRACTION:-0.05}"
+  echo "  dual_projected_step_size=${QRL_KKT_DUAL_PROJECTED_STEP_SIZE:-0.1}"
   echo "  output_dir=$kkt_train_dir"
 
   QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
