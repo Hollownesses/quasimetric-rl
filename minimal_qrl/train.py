@@ -377,6 +377,66 @@ def _comm_inspection_global_push_conf(args) -> GlobalPushLoss.Conf:
     )
 
 
+def _build_topology_improvement_metadata(
+    args,
+    *,
+    mqe_waypoint_weight: float,
+    mqe_terminal_anchor_loss_weight: float,
+    mqe_diagnostic_device_names: Sequence[str],
+) -> dict:
+    if str(args.qrl_local_constraint_mode) == "kkt_functional":
+        variant = "kkt_functional_primal_dual_v2"
+    elif mqe_waypoint_weight > 0.0:
+        variant = (
+            "mqe_separately_normalized_terminal_anchor_stop_loss"
+            if str(args.qrl_mqe_family_normalization) == "separate"
+            else "mqe_inspired_two_sided_waypoint_consistency"
+        )
+    elif float(args.qrl_nstep_goal_constraint_weight) > 0.0:
+        variant = "one_sided_nstep_upper_bound"
+    else:
+        variant = "qrl_control"
+
+    return {
+        "variant": variant,
+        "local_constraint_mode": str(args.qrl_local_constraint_mode),
+        "global_push_objective": str(args.global_push_objective),
+        "global_push_softplus_offset": float(args.global_push_softplus_offset),
+        "global_push_softplus_beta": float(args.global_push_softplus_beta),
+        "kkt_augmented_lagrangian_rho": float(
+            args.qrl_kkt_augmented_lagrangian_rho
+        ),
+        "kkt_dual_steps": int(args.qrl_kkt_dual_steps),
+        "kkt_dual_lr": float(args.qrl_kkt_dual_lr),
+        "kkt_dual_active_margin": float(args.qrl_kkt_dual_active_margin),
+        "kkt_dual_start_violation_fraction": float(
+            args.qrl_kkt_dual_start_violation_fraction
+        ),
+        "kkt_dual_slack_weight": float(args.qrl_kkt_dual_slack_weight),
+        "kkt_dual_feature_scale": float(args.qrl_kkt_dual_feature_scale),
+        "kkt_dual_raw_min": float(args.qrl_kkt_dual_raw_min),
+        "nstep_goal_constraint_weight": float(
+            args.qrl_nstep_goal_constraint_weight
+        ),
+        "mqe_waypoint_consistency_weight": mqe_waypoint_weight,
+        "mqe_goal_discount": float(args.qrl_mqe_goal_discount),
+        "mqe_waypoint_lambda": float(args.qrl_mqe_waypoint_lambda),
+        "mqe_next_state_probability": float(
+            args.qrl_mqe_next_state_probability
+        ),
+        "mqe_terminal_anchor_fraction": float(
+            args.qrl_mqe_terminal_anchor_fraction
+        ),
+        "mqe_target_tau": float(args.qrl_mqe_target_tau),
+        "mqe_huber_delta": float(args.qrl_mqe_huber_delta),
+        "mqe_family_normalization": str(args.qrl_mqe_family_normalization),
+        "mqe_terminal_anchor_loss_weight": float(
+            mqe_terminal_anchor_loss_weight
+        ),
+        "mqe_diagnostic_device_names": list(mqe_diagnostic_device_names),
+    }
+
+
 def _load_excluded_exploration_starts(
     task_bank_path: Optional[str],
     bounds: Sequence[float],
@@ -540,43 +600,12 @@ def train(args):
                 args.qrl_mqe_terminal_anchor_fraction
             ),
         )
-    topology_improvement_metadata = {
-        'variant': (
-            (
-                'mqe_separately_normalized_terminal_anchor_stop_loss'
-                if str(args.qrl_mqe_family_normalization) == 'separate'
-                else 'mqe_inspired_two_sided_waypoint_consistency'
-            )
-            if mqe_waypoint_weight > 0.0
-            else (
-                'one_sided_nstep_upper_bound'
-                if float(args.qrl_nstep_goal_constraint_weight) > 0.0
-                else 'qrl_control'
-            )
-        ),
-        'global_push_objective': 'softplus',
-        'global_push_softplus_offset': float(args.global_push_softplus_offset),
-        'global_push_softplus_beta': float(args.global_push_softplus_beta),
-        'nstep_goal_constraint_weight': float(
-            args.qrl_nstep_goal_constraint_weight
-        ),
-        'mqe_waypoint_consistency_weight': mqe_waypoint_weight,
-        'mqe_goal_discount': float(args.qrl_mqe_goal_discount),
-        'mqe_waypoint_lambda': float(args.qrl_mqe_waypoint_lambda),
-        'mqe_next_state_probability': float(
-            args.qrl_mqe_next_state_probability
-        ),
-        'mqe_terminal_anchor_fraction': float(
-            args.qrl_mqe_terminal_anchor_fraction
-        ),
-        'mqe_target_tau': float(args.qrl_mqe_target_tau),
-        'mqe_huber_delta': float(args.qrl_mqe_huber_delta),
-        'mqe_family_normalization': str(args.qrl_mqe_family_normalization),
-        'mqe_terminal_anchor_loss_weight': float(
-            mqe_terminal_anchor_loss_weight
-        ),
-        'mqe_diagnostic_device_names': list(mqe_diagnostic_device_names),
-    }
+    topology_improvement_metadata = _build_topology_improvement_metadata(
+        args,
+        mqe_waypoint_weight=mqe_waypoint_weight,
+        mqe_terminal_anchor_loss_weight=mqe_terminal_anchor_loss_weight,
+        mqe_diagnostic_device_names=mqe_diagnostic_device_names,
+    )
     # 设置随机种子
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)

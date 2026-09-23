@@ -72,6 +72,7 @@ QRL_KKT_DUAL_HIDDEN_SIZES="128 128"
 ```bash
 PHASE=train_qrl_kkt_functional \
 DEVICE=cpu \
+OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
 TOTAL_STEPS=2000 \
 LOG_INTERVAL=10 \
 SAVE_INTERVAL=500 \

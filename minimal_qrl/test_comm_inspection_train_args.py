@@ -42,6 +42,38 @@ def test_comm_global_push_cli_values_reach_loss_config(monkeypatch):
     assert config.objective == "linear"
 
 
+def test_kkt_metadata_records_actual_variant_and_global_push(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(train_module, "train", lambda args: captured.setdefault("args", args))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "minimal_qrl/train.py",
+            "--env-type",
+            "comm_inspection_dubins_uav",
+            "--qrl-local-constraint-mode",
+            "kkt_functional",
+            "--global-push-objective",
+            "linear",
+        ],
+    )
+
+    train_module.main()
+    metadata = train_module._build_topology_improvement_metadata(
+        captured["args"],
+        mqe_waypoint_weight=0.0,
+        mqe_terminal_anchor_loss_weight=1.0,
+        mqe_diagnostic_device_names=("u_trap_target", "easy_north"),
+    )
+
+    assert metadata["variant"] == "kkt_functional_primal_dual_v2"
+    assert metadata["local_constraint_mode"] == "kkt_functional"
+    assert metadata["global_push_objective"] == "linear"
+    assert metadata["kkt_dual_steps"] == 1
+    assert np.isclose(metadata["kkt_dual_lr"], 1e-4)
+
+
 def test_comm_training_shell_forwards_global_push_environment_variables():
     script = (
         Path(__file__).with_name("run_comm_inspection_train.sh")
