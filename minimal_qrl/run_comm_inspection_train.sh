@@ -63,6 +63,14 @@ fi
   --total-steps "${TOTAL_STEPS:-30000}" \
   --num-critics "${NUM_CRITICS:-2}" \
   --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
+  --qrl-local-constraint-mode "${QRL_LOCAL_CONSTRAINT_MODE:-legacy_squared_hinge}" \
+  --qrl-kkt-augmented-lagrangian-rho "${QRL_KKT_AUGMENTED_LAGRANGIAN_RHO:-1.0}" \
+  --qrl-kkt-dual-hidden-sizes ${QRL_KKT_DUAL_HIDDEN_SIZES:-128 128} \
+  --qrl-kkt-dual-max "${QRL_KKT_DUAL_MAX:-100000.0}" \
+  --qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-3}" \
+  --qrl-kkt-init-lagrange-multiplier "${QRL_KKT_INIT_LAGRANGE_MULTIPLIER:-0.01}" \
+  --qrl-kkt-dual-lr "${QRL_KKT_DUAL_LR:-0.005}" \
+  --global-push-objective "${GLOBAL_PUSH_OBJECTIVE:-softplus}" \
   --global-push-softplus-offset "${GLOBAL_PUSH_SOFTPLUS_OFFSET:-15.0}" \
   --global-push-softplus-beta "${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}" \
   --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.6}" \

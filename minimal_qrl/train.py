@@ -369,6 +369,7 @@ def _write_metric_rows_csv(path: str, rows: list):
 def _comm_inspection_global_push_conf(args) -> GlobalPushLoss.Conf:
     """Build the task-aware GlobalPush config from communication CLI args."""
     return GlobalPushLoss.Conf(
+        objective=str(args.global_push_objective),
         softplus_offset=float(args.global_push_softplus_offset),
         softplus_beta=float(args.global_push_softplus_beta),
         abstract_goal_ratio=float(args.global_push_abstract_goal_ratio),
@@ -875,6 +876,18 @@ def train(args):
                     local_constraint=LocalConstraintLoss.Conf(
                         step_cost=step_cost,
                         cost_source=qrl_cost_source,
+                        init_lagrange_multiplier=float(
+                            args.qrl_kkt_init_lagrange_multiplier
+                        ),
+                        mode=str(args.qrl_local_constraint_mode),
+                        augmented_lagrangian_rho=float(
+                            args.qrl_kkt_augmented_lagrangian_rho
+                        ),
+                        dual_hidden_sizes=tuple(
+                            int(size) for size in args.qrl_kkt_dual_hidden_sizes
+                        ),
+                        dual_max=float(args.qrl_kkt_dual_max),
+                        dual_steps=int(args.qrl_kkt_dual_steps),
                     ),
                     abstract_goal_edge=AbstractGoalEdgeLoss.Conf(weight=float(args.abstract_goal_edge_loss_weight)),
                     temporal_path=TemporalPathConstraintLoss.Conf(
@@ -902,7 +915,9 @@ def train(args):
                         diagnostic_device_names=mqe_diagnostic_device_names,
                     ),
                     critic_optim=AdamWSpec.Conf(lr=5e-5),
-                    lagrange_mult_optim=AdamWSpec.Conf(lr=5e-3),
+                    lagrange_mult_optim=AdamWSpec.Conf(
+                        lr=float(args.qrl_kkt_dual_lr)
+                    ),
                 )
             ),
         )
@@ -1754,8 +1769,60 @@ def main():
                         choices=['negative_reward', 'fixed'],
                         help='comm_inspection_dubins_uav 的 QRL local constraint 单步代价来源：'
                              'negative_reward 使用环境 task cost；fixed 使用原始固定 step_cost=1.0')
+    parser.add_argument(
+        '--qrl-local-constraint-mode',
+        choices=['legacy_squared_hinge', 'kkt_functional'],
+        default='legacy_squared_hinge',
+        help=(
+            'local constraint 优化方式；kkt_functional 使用 edge-conditioned '
+            'linear Lagrangian、augmented penalty 和独立 dual 更新'
+        ),
+    )
+    parser.add_argument(
+        '--qrl-kkt-augmented-lagrangian-rho',
+        type=float,
+        default=1.0,
+        help='kkt_functional 的 0.5*rho*relu(d-c)^2 系数',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-hidden-sizes',
+        type=int,
+        nargs='+',
+        default=[128, 128],
+        help='functional dual MLP 隐藏层宽度',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-max',
+        type=float,
+        default=100000.0,
+        help='softplus functional dual 的安全上限',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-steps',
+        type=int,
+        default=3,
+        help='每次 critic 更新之前执行的 functional dual 更新次数',
+    )
+    parser.add_argument(
+        '--qrl-kkt-init-lagrange-multiplier',
+        type=float,
+        default=0.01,
+        help='functional dual 的初始 multiplier',
+    )
+    parser.add_argument(
+        '--qrl-kkt-dual-lr',
+        type=float,
+        default=5e-3,
+        help='local-constraint dual optimizer 学习率',
+    )
     parser.add_argument('--global-push-softplus-offset', type=float, default=15.0,
                         help='goal-set GlobalPush softplus offset；控制 push 梯度开始衰减的距离尺度')
+    parser.add_argument(
+        '--global-push-objective',
+        choices=['softplus', 'linear'],
+        default='softplus',
+        help='Global Push 目标；linear 对应理论目标 -mean(d)',
+    )
     parser.add_argument('--global-push-softplus-beta', type=float, default=0.1,
                         help='goal-set GlobalPush softplus beta；越小则大距离范围内的衰减越平滑')
     parser.add_argument('--global-push-abstract-goal-ratio', type=float, default=0.6,

@@ -65,7 +65,7 @@ class QuasimetricCriticLosses(CriticLossBase):
                 critic,
                 total_optim_steps=total_optim_steps,
                 global_push=self.global_push.make(),
-                local_constraint=self.local_constraint.make(),
+                local_constraint=self.local_constraint.make(critic),
                 latent_dynamics=self.latent_dynamics.make(),
                 abstract_goal_edge=self.abstract_goal_edge.make(),
                 temporal_path=self.temporal_path.make(),
@@ -108,33 +108,65 @@ class QuasimetricCriticLosses(CriticLossBase):
 
         self.critic_optim, self.critic_sched = critic_optim_spec.create_optim_scheduler(
             critic.parameters(), total_optim_steps)
+        dual_optim_steps = int(total_optim_steps)
+        if local_constraint.uses_separate_dual_updates:
+            dual_optim_steps *= int(local_constraint.dual_steps)
         self.lagrange_mult_optim, self.lagrange_mult_sched = lagrange_mult_optim_spec.create_optim_scheduler(
-            local_constraint.parameters(), total_optim_steps)
-        assert len(list(local_constraint.parameters())) == 1
+            local_constraint.parameters(), dual_optim_steps)
+        assert len(list(local_constraint.parameters())) > 0
+
+    def _combined_result(
+        self,
+        data: BatchData,
+        critic_batch_info: CriticBatchInfo,
+    ) -> LossResult:
+        return LossResult.combine(dict(
+            global_push=self.global_push(data, critic_batch_info),
+            local_constraint=self.local_constraint(data, critic_batch_info),
+            latent_dynamics=self.latent_dynamics(data, critic_batch_info),
+            abstract_goal_edge=self.abstract_goal_edge(data, critic_batch_info),
+            temporal_path=self.temporal_path(data, critic_batch_info),
+            goal_return=self.goal_return(data, critic_batch_info),
+            nstep_goal=self.nstep_goal(data, critic_batch_info),
+            mqe_waypoint=self.mqe_waypoint(data, critic_batch_info),
+        ))
 
 
     def forward(self, data: BatchData, critic_batch_info: CriticBatchInfo, *,
                 optimize: bool = True) -> LossResult:
-        with self.critic_optim.update_context(optimize=optimize), \
-                self.lagrange_mult_optim.update_context(optimize=optimize):
+        if not optimize:
+            return self._combined_result(data, critic_batch_info)
 
-            result = LossResult.combine(dict(
-                global_push=self.global_push(data, critic_batch_info),
-                local_constraint=self.local_constraint(data, critic_batch_info),
-                latent_dynamics=self.latent_dynamics(data, critic_batch_info),
-                abstract_goal_edge=self.abstract_goal_edge(data, critic_batch_info),
-                temporal_path=self.temporal_path(data, critic_batch_info),
-                goal_return=self.goal_return(data, critic_batch_info),
-                nstep_goal=self.nstep_goal(data, critic_batch_info),
-                mqe_waypoint=self.mqe_waypoint(data, critic_batch_info),
-            ))
-            result.loss.backward()
+        dual_update_info = None
+        if self.local_constraint.uses_separate_dual_updates:
+            # Track the current constraint field faster than the critic.  The
+            # constraint residual and critic features are detached inside
+            # dual_loss, so these inner steps update only the functional dual.
+            for _ in range(int(self.local_constraint.dual_steps)):
+                with self.lagrange_mult_optim.update_context(optimize=True):
+                    dual_result = self.local_constraint.dual_loss(
+                        data,
+                        critic_batch_info,
+                    )
+                    dual_result.loss.backward()
+                self.lagrange_mult_sched.step()
+            dual_update_info = dual_result.info
 
-        if optimize:
-            self.nstep_goal.update_target(critic_batch_info.critic)
-            self.mqe_waypoint.update_target(critic_batch_info.critic)
-            self.critic_sched.step()
+            with self.critic_optim.update_context(optimize=True):
+                result = self._combined_result(data, critic_batch_info)
+                result.loss.backward()
+        else:
+            with self.critic_optim.update_context(optimize=True), \
+                    self.lagrange_mult_optim.update_context(optimize=True):
+                result = self._combined_result(data, critic_batch_info)
+                result.loss.backward()
             self.lagrange_mult_sched.step()
+
+        if dual_update_info is not None:
+            result.info["local_constraint"]["dual_update"] = dual_update_info
+        self.nstep_goal.update_target(critic_batch_info.critic)
+        self.mqe_waypoint.update_target(critic_batch_info.critic)
+        self.critic_sched.step()
         return result
 
     # for type hints

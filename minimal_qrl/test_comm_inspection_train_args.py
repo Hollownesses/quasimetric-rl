@@ -26,6 +26,8 @@ def test_comm_global_push_cli_values_reach_loss_config(monkeypatch):
             "0.5",
             "--global-push-state-goal-ratio",
             "0.5",
+            "--global-push-objective",
+            "linear",
         ],
     )
 
@@ -37,6 +39,7 @@ def test_comm_global_push_cli_values_reach_loss_config(monkeypatch):
     assert np.isclose(config.softplus_beta, 0.01)
     assert np.isclose(config.abstract_goal_ratio, 0.5)
     assert np.isclose(config.state_goal_ratio, 0.5)
+    assert config.objective == "linear"
 
 
 def test_comm_training_shell_forwards_global_push_environment_variables():
@@ -53,6 +56,7 @@ def test_comm_training_shell_forwards_global_push_environment_variables():
         '--global-push-softplus-beta '
         '"${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}"'
     ) in script
+    assert '--global-push-objective "${GLOBAL_PUSH_OBJECTIVE:-softplus}"' in script
 
 
 def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
@@ -89,6 +93,14 @@ def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
     assert args.qrl_mqe_family_normalization == "mixed"
     assert np.isclose(args.qrl_mqe_terminal_anchor_loss_weight, 1.0)
     assert np.isclose(args.qrl_success_transition_weight, 4.0)
+    assert args.qrl_local_constraint_mode == "legacy_squared_hinge"
+    assert args.global_push_objective == "softplus"
+    assert np.isclose(args.qrl_kkt_augmented_lagrangian_rho, 1.0)
+    assert args.qrl_kkt_dual_hidden_sizes == [128, 128]
+    assert np.isclose(args.qrl_kkt_dual_max, 100000.0)
+    assert args.qrl_kkt_dual_steps == 3
+    assert np.isclose(args.qrl_kkt_init_lagrange_multiplier, 0.01)
+    assert np.isclose(args.qrl_kkt_dual_lr, 5e-3)
 
 
 def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget():
@@ -111,12 +123,30 @@ def test_diagnostic_shell_exposes_qrl_explore_without_changing_standard_budget()
     assert '--qrl-mqe-family-normalization "${QRL_MQE_FAMILY_NORMALIZATION:-mixed}"' in script
     assert '--qrl-mqe-terminal-anchor-loss-weight "${QRL_MQE_TERMINAL_ANCHOR_LOSS_WEIGHT:-1.0}"' in script
     assert '--qrl-success-transition-weight "${QRL_SUCCESS_TRANSITION_WEIGHT:-4.0}"' in script
+    assert '--qrl-local-constraint-mode "${QRL_LOCAL_CONSTRAINT_MODE:-legacy_squared_hinge}"' in script
+    assert '--qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-3}"' in script
     assert '../quasimetric-rl-industrial-inspection/results/shared_oracle_banks/chemical_process' in script
     assert 'teacher_ratio="0.0"' in script
     assert '--task-aware-teacher-ratio "$teacher_ratio"' in script
     assert 'local_nav_eval()' in script
     assert 'LOCAL_NAV_REUSE_ORACLE_JSON' in script
     assert '--reuse-oracle-json "$LOCAL_NAV_REUSE_ORACLE_JSON"' in script
+
+
+def test_diagnostic_shell_has_isolated_kkt_functional_ablation():
+    script = (
+        Path(__file__).with_name("run_comm_inspection_diagnostic.sh")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "train_qrl_kkt_functional()" in script
+    assert "variant=kkt_functional_primal_dual_v1" in script
+    assert "GLOBAL_PUSH_OBJECTIVE=linear" in script
+    assert "QRL_LOCAL_CONSTRAINT_MODE=kkt_functional" in script
+    assert "QRL_TEMPORAL_CONSTRAINT_WEIGHT=0.0" in script
+    assert "QRL_GOAL_RETURN_CONSTRAINT_WEIGHT=0.0" in script
+    assert "QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0" in script
+    assert "train_qrl_kkt_functional)" in script
     assert '--astar-heuristic-weight "${LOCAL_NAV_ASTAR_HEURISTIC_WEIGHT:-1.0}"' in script
 
 

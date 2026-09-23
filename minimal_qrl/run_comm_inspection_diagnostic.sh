@@ -24,6 +24,9 @@
 #   PHASE=train_qrl_mqe_separate_anchor_stop_loss DEVICE=mps \
 #     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_kkt_functional DEVICE=mps \
+#     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -115,6 +118,14 @@ train_qrl() {
     --total-steps "${TOTAL_STEPS:-120000}" \
     --num-critics "${NUM_CRITICS:-2}" \
     --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
+    --qrl-local-constraint-mode "${QRL_LOCAL_CONSTRAINT_MODE:-legacy_squared_hinge}" \
+    --qrl-kkt-augmented-lagrangian-rho "${QRL_KKT_AUGMENTED_LAGRANGIAN_RHO:-1.0}" \
+    --qrl-kkt-dual-hidden-sizes ${QRL_KKT_DUAL_HIDDEN_SIZES:-128 128} \
+    --qrl-kkt-dual-max "${QRL_KKT_DUAL_MAX:-100000.0}" \
+    --qrl-kkt-dual-steps "${QRL_KKT_DUAL_STEPS:-3}" \
+    --qrl-kkt-init-lagrange-multiplier "${QRL_KKT_INIT_LAGRANGE_MULTIPLIER:-0.01}" \
+    --qrl-kkt-dual-lr "${QRL_KKT_DUAL_LR:-0.005}" \
+    --global-push-objective "${GLOBAL_PUSH_OBJECTIVE:-softplus}" \
     --global-push-softplus-offset "${GLOBAL_PUSH_SOFTPLUS_OFFSET:-15.0}" \
     --global-push-softplus-beta "${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}" \
     --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.6}" \
@@ -168,6 +179,31 @@ train_qrl_nstep_upper_bound() {
   QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT="${QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT:-1.0}" \
   QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
   TRAIN_DIR="$nstep_train_dir" \
+    train_qrl
+}
+
+# KKT-aligned first implementation: edge-conditioned linear Lagrangian,
+# augmented violation penalty, and faster functional-dual updates.  Disable the
+# optional temporal/MQE additions so this phase isolates the optimizer change.
+train_qrl_kkt_functional() {
+  local kkt_train_dir="${KKT_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_kkt_functional}"
+
+  echo "QRL topology-improvement ablation:"
+  echo "  variant=kkt_functional_primal_dual_v1"
+  echo "  global_push_objective=linear"
+  echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
+  echo "  augmented_rho=${QRL_KKT_AUGMENTED_LAGRANGIAN_RHO:-1.0}"
+  echo "  dual_steps=${QRL_KKT_DUAL_STEPS:-3}"
+  echo "  output_dir=$kkt_train_dir"
+
+  QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
+  QRL_LOCAL_CONSTRAINT_MODE=kkt_functional \
+  GLOBAL_PUSH_OBJECTIVE=linear \
+  QRL_TEMPORAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_GOAL_RETURN_CONSTRAINT_WEIGHT=0.0 \
+  QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
+  TRAIN_DIR="$kkt_train_dir" \
     train_qrl
 }
 
@@ -417,6 +453,9 @@ case "$PHASE" in
   train_qrl_nstep_upper_bound)
     train_qrl_nstep_upper_bound
     ;;
+  train_qrl_kkt_functional)
+    train_qrl_kkt_functional
+    ;;
   train_qrl_mqe_waypoint_consistency)
     train_qrl_mqe_waypoint_consistency
     ;;
@@ -439,7 +478,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

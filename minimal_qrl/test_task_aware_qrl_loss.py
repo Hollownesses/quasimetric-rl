@@ -11,8 +11,11 @@ import torch
 
 from quasimetric_rl.data import BatchData
 from quasimetric_rl.modules.quasimetric_critic.losses import CriticBatchInfo
+from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
+from quasimetric_rl.modules.optim import AdamWSpec
+from quasimetric_rl.modules.utils import LossResult
 from quasimetric_rl.modules.quasimetric_critic.losses.temporal_path import (
     GoalReturnConstraintLoss,
     MQEInspiredWaypointConsistencyLoss,
@@ -68,6 +71,131 @@ def test_positive_rewards_are_clipped_to_zero_and_reported():
     assert torch.isclose(result.info["target_cost_mean"], torch.tensor(2.0 / 3.0))
 
 
+def test_kkt_functional_has_nonzero_primal_gradient_at_active_boundary():
+    critic = _ScalarCritic(1.0)
+    data = make_batch([-1.0])
+    batch_info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(1, 2),
+        zy=torch.ones(1, 2),
+    )
+    loss = LocalConstraintLoss(
+        epsilon=0.25,
+        step_cost=1.0,
+        cost_source="negative_reward",
+        init_lagrange_multiplier=0.2,
+        mode="kkt_functional",
+        augmented_lagrangian_rho=1.0,
+        dual_hidden_sizes=(8,),
+        dual_max=10.0,
+        dual_steps=3,
+        observation_size=2,
+    )
+
+    result = loss(data, batch_info)
+    result.loss.backward()
+
+    # At d=c the augmented hinge is flat, but lambda*(d-c) still supplies the
+    # KKT boundary reaction to the critic.
+    assert torch.isclose(
+        critic.quasimetric_model.value.grad,
+        torch.tensor(0.2),
+        atol=1e-6,
+    )
+    assert all(parameter.grad is None for parameter in loss.parameters())
+
+
+def test_kkt_functional_dual_update_is_detached_from_critic_and_increases_on_violation():
+    critic = _ScalarCritic(2.0)
+    data = make_batch([-1.0, -1.0])
+    batch_info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(2, 2),
+        zy=torch.ones(2, 2),
+    )
+    loss = LocalConstraintLoss(
+        epsilon=0.25,
+        step_cost=1.0,
+        cost_source="negative_reward",
+        init_lagrange_multiplier=0.2,
+        mode="kkt_functional",
+        augmented_lagrangian_rho=1.0,
+        dual_hidden_sizes=(8,),
+        dual_max=10.0,
+        dual_steps=3,
+        observation_size=2,
+    )
+    optimizer = torch.optim.SGD(loss.parameters(), lr=0.1)
+
+    before = float(loss.dual_loss(data, batch_info).info["lagrange_mult_mean"])
+    optimizer.zero_grad()
+    dual_result = loss.dual_loss(data, batch_info)
+    dual_result.loss.backward()
+    optimizer.step()
+    after = float(loss.dual_loss(data, batch_info).info["lagrange_mult_mean"])
+
+    assert critic.quasimetric_model.value.grad is None
+    assert after > before
+
+
+def test_kkt_functional_runs_configured_dual_steps_per_critic_step():
+    class ZeroLoss(torch.nn.Module):
+        def forward(self, data, critic_batch_info):
+            return LossResult(
+                loss=critic_batch_info.critic.quasimetric_model.value * 0.0,
+                info={},
+            )
+
+    class ZeroTargetLoss(ZeroLoss):
+        def update_target(self, critic):
+            return None
+
+    critic = _ScalarCritic(2.0)
+    local = LocalConstraintLoss(
+        epsilon=0.25,
+        step_cost=1.0,
+        cost_source="negative_reward",
+        init_lagrange_multiplier=0.2,
+        mode="kkt_functional",
+        augmented_lagrangian_rho=1.0,
+        dual_hidden_sizes=(8,),
+        dual_max=10.0,
+        dual_steps=3,
+        observation_size=2,
+    )
+    zero = ZeroLoss()
+    zero_target = ZeroTargetLoss()
+    losses = QuasimetricCriticLosses(
+        critic,
+        total_optim_steps=2,
+        global_push=zero,
+        local_constraint=local,
+        latent_dynamics=zero,
+        abstract_goal_edge=zero,
+        temporal_path=zero,
+        goal_return=zero,
+        nstep_goal=zero_target,
+        mqe_waypoint=zero_target,
+        critic_optim_spec=AdamWSpec.Conf(lr=1e-3).make(),
+        lagrange_mult_optim_spec=AdamWSpec.Conf(lr=1e-2).make(),
+    )
+    data = make_batch([-1.0, -1.0])
+    batch_info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(2, 2),
+        zy=torch.ones(2, 2),
+    )
+
+    result = losses(data, batch_info, optimize=True)
+
+    optimizer_steps = {
+        int(state["step"].item())
+        for state in losses.lagrange_mult_optim.optim.state.values()
+    }
+    assert optimizer_steps == {3}
+    assert "dual_update" in result.info["local_constraint"]
+
+
 def test_global_push_prefers_explicit_free_state_pairs():
     class IdentityEncoder(torch.nn.Module):
         def forward(self, value):
@@ -118,6 +246,22 @@ def test_global_push_remains_bounded_softplus_objective():
     ).mean()
     assert torch.isclose(loss, expected)
     assert loss.item() > 0.0
+
+
+def test_global_push_linear_objective_has_constant_unsaturated_gradient():
+    distances = torch.tensor([2.0, 7.0], requires_grad=True)
+    loss = GlobalPushLoss(
+        objective="linear",
+        softplus_beta=0.1,
+        softplus_offset=15.0,
+        abstract_goal_ratio=1.0,
+        state_goal_ratio=0.0,
+    )._push_loss(distances)
+
+    loss.backward()
+
+    assert torch.isclose(loss, torch.tensor(-4.5))
+    assert torch.allclose(distances.grad, torch.tensor([-0.5, -0.5]))
 
 
 def test_temporal_path_uses_executed_multistep_cost_as_one_sided_bound():

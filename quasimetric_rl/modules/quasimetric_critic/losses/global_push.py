@@ -19,6 +19,11 @@ class GlobalPushLoss(CriticLossBase):
     class Conf:
         # config / argparse uses this to specify behavior
 
+        objective: Literal["softplus", "linear"] = attrs.field(
+            default="softplus",
+            validator=attrs.validators.in_(("softplus", "linear")),
+        )
+
         # smaller => smoother loss
         softplus_beta: float = attrs.field(default=0.1, validator=attrs.validators.gt(0))
 
@@ -29,12 +34,14 @@ class GlobalPushLoss(CriticLossBase):
 
         def make(self) -> 'GlobalPushLoss':
             return GlobalPushLoss(
+                objective=self.objective,
                 softplus_beta=self.softplus_beta,
                 softplus_offset=self.softplus_offset,
                 abstract_goal_ratio=self.abstract_goal_ratio,
                 state_goal_ratio=self.state_goal_ratio,
             )
 
+    objective: Literal["softplus", "linear"]
     softplus_beta: float
     softplus_offset: float
     abstract_goal_ratio: float
@@ -43,18 +50,24 @@ class GlobalPushLoss(CriticLossBase):
     def __init__(
         self,
         *,
+        objective: Literal["softplus", "linear"] = "softplus",
         softplus_beta: float,
         softplus_offset: float,
         abstract_goal_ratio: float,
         state_goal_ratio: float,
     ):
         super().__init__()
+        if objective not in ("softplus", "linear"):
+            raise ValueError(f"Unsupported Global Push objective: {objective}")
+        self.objective = objective
         self.softplus_beta = softplus_beta
         self.softplus_offset = softplus_offset
         self.abstract_goal_ratio = abstract_goal_ratio
         self.state_goal_ratio = state_goal_ratio
 
     def _push_loss(self, dists: torch.Tensor) -> torch.Tensor:
+        if self.objective == "linear":
+            return -dists.mean()
         return F.softplus(self.softplus_offset - dists, beta=self.softplus_beta).mean()
 
     def _same_context_state_goal_pairs(
@@ -190,6 +203,7 @@ class GlobalPushLoss(CriticLossBase):
 
     def extra_repr(self) -> str:
         return (
-            f"softplus_beta={self.softplus_beta:g}, softplus_offset={self.softplus_offset:g}, "
+            f"objective={self.objective}, softplus_beta={self.softplus_beta:g}, "
+            f"softplus_offset={self.softplus_offset:g}, "
             f"abstract_goal_ratio={self.abstract_goal_ratio:g}, state_goal_ratio={self.state_goal_ratio:g}"
         )
