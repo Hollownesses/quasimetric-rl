@@ -428,16 +428,35 @@ class LocalConstraintLoss(CriticLossBase):
                 detach_constraint=False,
             )
             positive_residual = residual.relu()
-            linear_lagrangian = (lagrange_mult.detach() * residual).mean()
-            augmented_penalty = (
-                0.5
-                * self.augmented_lagrangian_rho
-                * positive_residual.square().mean()
-            )
-            loss = linear_lagrangian + augmented_penalty
+            detached_lagrange_mult = lagrange_mult.detach()
+            rho = self.augmented_lagrangian_rho
+            if rho > 0.0:
+                effective_lagrange_mult = (
+                    detached_lagrange_mult + rho * residual
+                ).relu()
+                loss = (
+                    effective_lagrange_mult.square()
+                    - detached_lagrange_mult.square()
+                ).mean() / (2.0 * rho)
+            else:
+                # rho=0 is retained as the exact linear-Lagrangian ablation.
+                effective_lagrange_mult = detached_lagrange_mult
+                loss = (detached_lagrange_mult * residual).mean()
+
+            violation_mask = residual > 0
+            slack_mask = ~violation_mask
+
+            def masked_mean(
+                value: torch.Tensor,
+                mask: torch.Tensor,
+            ) -> torch.Tensor:
+                weights = mask.to(value.dtype)
+                return (value * weights).sum() / weights.sum().clamp_min(1)
+
+            inactive_primal_mask = effective_lagrange_mult == 0
             dual_objective = (lagrange_mult * residual.detach()).mean()
             complementarity_abs = (
-                lagrange_mult.detach() * residual.detach().abs()
+                detached_lagrange_mult * residual.detach().abs()
             ).mean()
             return LossResult(
                 loss=loss,
@@ -454,8 +473,22 @@ class LocalConstraintLoss(CriticLossBase):
                         residual.dtype
                     ).mean(),
                     sq_deviation=positive_residual.square().mean(),
-                    linear_lagrangian=linear_lagrangian,
-                    augmented_penalty=augmented_penalty,
+                    projected_inequality_augmented_lagrangian=loss,
+                    effective_lagrange_mult=effective_lagrange_mult.mean(),
+                    effective_lagrange_mult_min=effective_lagrange_mult.min(),
+                    effective_lagrange_mult_max=effective_lagrange_mult.max(),
+                    violation_effective_lagrange_mult=masked_mean(
+                        effective_lagrange_mult, violation_mask
+                    ),
+                    slack_effective_lagrange_mult=masked_mean(
+                        effective_lagrange_mult, slack_mask
+                    ),
+                    inactive_primal_fraction=inactive_primal_mask.to(
+                        residual.dtype
+                    ).mean(),
+                    slack_inactive_primal_fraction=masked_mean(
+                        inactive_primal_mask.to(residual.dtype), slack_mask
+                    ),
                     dual_objective=dual_objective,
                     complementarity_abs=complementarity_abs,
                     lagrange_mult=lagrange_mult.mean(),
@@ -506,6 +539,7 @@ class LocalConstraintLoss(CriticLossBase):
             )
         return (
             f"mode={self.mode}, rho={self.augmented_lagrangian_rho:g}, "
+            f"primal=projected_inequality_augmented_lagrangian, "
             f"dual_steps={self.dual_steps}, dual_max={self.dual_max:g}, "
             f"projected_step_size={self.dual_projected_step_size:g}, "
             f"dual_fit=lambda_space_mse_straight_through, "

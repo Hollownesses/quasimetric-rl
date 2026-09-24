@@ -102,6 +102,97 @@ def test_kkt_functional_has_nonzero_primal_gradient_at_active_boundary():
         torch.tensor(0.2),
         atol=1e-6,
     )
+    assert torch.isclose(
+        result.info["effective_lagrange_mult"],
+        torch.tensor(0.2),
+        atol=1e-6,
+    )
+    assert all(parameter.grad is None for parameter in loss.parameters())
+
+
+def test_kkt_projected_inequality_al_disables_stale_dual_on_deep_slack():
+    critic = _ScalarCritic(0.0)
+    data = make_batch([-1.0])
+    batch_info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(1, 2),
+        zy=torch.ones(1, 2),
+    )
+    loss = LocalConstraintLoss(
+        epsilon=0.25,
+        step_cost=1.0,
+        cost_source="negative_reward",
+        init_lagrange_multiplier=0.2,
+        mode="kkt_functional",
+        augmented_lagrangian_rho=1.0,
+        dual_hidden_sizes=(8,),
+        dual_max=10.0,
+        dual_steps=1,
+        observation_size=2,
+    )
+
+    result = loss(data, batch_info)
+    result.loss.backward()
+
+    # h=-1 and lambda=0.2 give [lambda + rho*h]_+=0.  The historical
+    # multiplier therefore exerts no primal force on this deep-slack edge.
+    assert torch.isclose(
+        critic.quasimetric_model.value.grad,
+        torch.tensor(0.0),
+        atol=1e-6,
+    )
+    assert torch.isclose(
+        result.info["projected_inequality_augmented_lagrangian"],
+        torch.tensor(-0.02),
+        atol=1e-6,
+    )
+    assert float(result.info["inactive_primal_fraction"]) == 1.0
+    assert float(result.info["slack_inactive_primal_fraction"]) == 1.0
+    assert all(parameter.grad is None for parameter in loss.parameters())
+
+
+def test_kkt_projected_inequality_al_strengthens_violated_edge_reaction():
+    critic = _ScalarCritic(2.0)
+    data = make_batch([-1.0])
+    batch_info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.zeros(1, 2),
+        zy=torch.ones(1, 2),
+    )
+    loss = LocalConstraintLoss(
+        epsilon=0.25,
+        step_cost=1.0,
+        cost_source="negative_reward",
+        init_lagrange_multiplier=0.2,
+        mode="kkt_functional",
+        augmented_lagrangian_rho=1.0,
+        dual_hidden_sizes=(8,),
+        dual_max=10.0,
+        dual_steps=1,
+        observation_size=2,
+    )
+
+    result = loss(data, batch_info)
+    result.loss.backward()
+
+    # h=1 gives effective multiplier lambda+rho*h=1.2 and
+    # ([1.2]^2-[0.2]^2)/(2*rho)=0.7.
+    assert torch.isclose(
+        critic.quasimetric_model.value.grad,
+        torch.tensor(1.2),
+        atol=1e-6,
+    )
+    assert torch.isclose(
+        result.info["projected_inequality_augmented_lagrangian"],
+        torch.tensor(0.7),
+        atol=1e-6,
+    )
+    assert torch.isclose(
+        result.info["violation_effective_lagrange_mult"],
+        torch.tensor(1.2),
+        atol=1e-6,
+    )
+    assert float(result.info["inactive_primal_fraction"]) == 0.0
     assert all(parameter.grad is None for parameter in loss.parameters())
 
 

@@ -188,14 +188,14 @@ train_qrl_nstep_upper_bound() {
     train_qrl
 }
 
-# KKT-aligned functional dual with violation-triggered wake-up, lambda-space
-# projected-target fitting, straight-through gradients, and a raw lower bound.
+# KKT-aligned functional dual with lambda-space projected-target fitting and a
+# projected inequality augmented Lagrangian on the primal side.
 # Optional temporal/MQE additions stay disabled to isolate the optimizer change.
 train_qrl_kkt_functional() {
   local kkt_train_dir="${KKT_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_kkt_functional}"
 
   echo "QRL topology-improvement ablation:"
-  echo "  variant=kkt_functional_lambda_space_projected_dual_v4"
+  echo "  variant=kkt_functional_projected_inequality_al_v5"
   echo "  global_push_objective=linear"
   echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
   echo "  augmented_rho=${QRL_KKT_AUGMENTED_LAGRANGIAN_RHO:-1.0}"
@@ -204,6 +204,7 @@ train_qrl_kkt_functional() {
   echo "  dual_start_violation_fraction=${QRL_KKT_DUAL_START_VIOLATION_FRACTION:-0.05}"
   echo "  dual_projected_step_size=${QRL_KKT_DUAL_PROJECTED_STEP_SIZE:-0.1}"
   echo "  dual_fit=lambda_space_mse_straight_through"
+  echo "  primal_constraint=projected_inequality_augmented_lagrangian"
   echo "  output_dir=$kkt_train_dir"
 
   QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \

@@ -1,4 +1,4 @@
-# KKT-aligned functional-dual QRL v4
+# KKT-aligned functional-dual QRL v5
 
 This branch exposes the first neural implementation of the KKT-aligned QRL
 ablation.  The legacy squared-hinge constraint remains the default so existing
@@ -12,12 +12,23 @@ For transition edge `e=(s,a,s')`, define
 h_e(theta) = d_theta(s, s') - c_e.
 ```
 
-The critic minimizes
+For `rho > 0`, the critic uses the projected inequality augmented Lagrangian
 
 ```text
--E[d] + E[stopgrad(lambda_psi(e)) h_e]
-      + 0.5 rho E[relu(h_e)^2].
+L_local = E[(relu(stopgrad(lambda_psi(e)) + rho h_e)^2
+             - stopgrad(lambda_psi(e))^2) / (2 rho)].
 ```
+
+Its primal derivative is
+
+```text
+relu(stopgrad(lambda_psi(e)) + rho h_e) grad(h_e).
+```
+
+It therefore retains the multiplier reaction at `h_e=0`, strengthens the
+reaction on violations, and removes the primal force once an edge is slack
+enough to deactivate the projection.  `rho=0` remains available as the exact
+linear-Lagrangian ablation.
 
 Once the observed violation fraction reaches a configured wake-up threshold,
 each sampled edge receives a projected dual target
@@ -47,7 +58,7 @@ negative excursion cannot remove the recovery gradient.  The multiplier-space
 regression also uses a unit-Jacobian straight-through path from lambda to the
 raw network output, avoiding the vanishing softplus derivative at small
 multipliers.  Every critic update is preceded by `dual_steps` dual updates.
-The default v4 ablation uses one dual step, dual learning rate `1e-4`, and
+The default v5 ablation uses one dual step, dual learning rate `1e-4`, and
 `rho=1`.
 
 ## Run the isolated diagnostic arm
@@ -66,7 +77,7 @@ change.
 Useful overrides include:
 
 ```bash
-QRL_KKT_AUGMENTED_LAGRANGIAN_RHO=0.3
+QRL_KKT_AUGMENTED_LAGRANGIAN_RHO=1.0
 QRL_KKT_DUAL_STEPS=1
 QRL_KKT_DUAL_LR=0.0001
 QRL_KKT_DUAL_START_VIOLATION_FRACTION=0.05
@@ -88,7 +99,7 @@ LOG_INTERVAL=10 \
 SAVE_INTERVAL=500 \
 EVAL_INTERVAL=500 \
 VIS_INTERVAL=500 \
-KKT_TRAIN_DIR=./results/diagnostic_u_shadow_corridors_topology_v2/qrl_training_kkt_functional_smoke_v4 \
+KKT_TRAIN_DIR=./results/diagnostic_u_shadow_corridors_topology_v2/qrl_training_kkt_functional_smoke_v5 \
 bash minimal_qrl/run_comm_inspection_diagnostic.sh
 ```
 
@@ -98,15 +109,16 @@ violation is followed by a dual response rather than lower-tail saturation.
 
 ## Logged diagnostics
 
-The local-constraint log contains the linear Lagrangian term, augmented
-penalty, residual min/mean/max, violation and near-active fractions, dual
-min/mean/max, raw dual min/mean/max, the lower-saturation fraction, the dual
-wake-up state, projected-target min/mean/max, and projected increase/decrease
-fractions.  V4 additionally records multiplier-space fit error and the
-softplus Jacobian that the straight-through estimator bypasses, plus separate
-current multiplier, target multiplier, and projected-delta means for violated
-and slack edges.  It also records the last inner dual update and an absolute
-complementarity diagnostic.  Training fails fast if violations are present
+The local-constraint log contains the projected inequality augmented
+Lagrangian, effective primal multiplier min/mean/max, inactive-primal
+fraction, residual min/mean/max, violation and near-active fractions, dual
+min/mean/max, raw dual min/mean/max, and lower-saturation fraction.  Separate
+effective multipliers are reported for violated and slack edges, including the
+fraction of slack edges whose stale primal force is fully disabled.  The dual
+update log records multiplier-space fit error, the bypassed softplus Jacobian,
+projected-target statistics, and separate current multiplier, target, and
+projected-delta means for violated and slack edges.  Training also records an
+absolute complementarity diagnostic and fails fast if violations are present
 while the maximum multiplier is numerically dead.
 
 This implementation establishes the neural functional-dual training path.  It

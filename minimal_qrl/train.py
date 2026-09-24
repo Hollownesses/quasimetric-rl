@@ -385,7 +385,7 @@ def _build_topology_improvement_metadata(
     mqe_diagnostic_device_names: Sequence[str],
 ) -> dict:
     if str(args.qrl_local_constraint_mode) == "kkt_functional":
-        variant = "kkt_functional_lambda_space_projected_dual_v4"
+        variant = "kkt_functional_projected_inequality_al_v5"
     elif mqe_waypoint_weight > 0.0:
         variant = (
             "mqe_separately_normalized_terminal_anchor_stop_loss"
@@ -417,6 +417,9 @@ def _build_topology_improvement_metadata(
         "kkt_dual_fit_space": "lambda",
         "kkt_dual_fit_loss": "mse",
         "kkt_dual_straight_through": True,
+        "kkt_primal_constraint_form": (
+            "projected_inequality_augmented_lagrangian"
+        ),
         "kkt_dual_feature_scale": float(args.qrl_kkt_dual_feature_scale),
         "kkt_dual_raw_min": float(args.qrl_kkt_dual_raw_min),
         "nstep_goal_constraint_weight": float(

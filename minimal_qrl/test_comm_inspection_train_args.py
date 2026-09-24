@@ -67,7 +67,7 @@ def test_kkt_metadata_records_actual_variant_and_global_push(monkeypatch):
         mqe_diagnostic_device_names=("u_trap_target", "easy_north"),
     )
 
-    assert metadata["variant"] == "kkt_functional_lambda_space_projected_dual_v4"
+    assert metadata["variant"] == "kkt_functional_projected_inequality_al_v5"
     assert metadata["local_constraint_mode"] == "kkt_functional"
     assert metadata["global_push_objective"] == "linear"
     assert metadata["kkt_dual_steps"] == 1
@@ -75,6 +75,10 @@ def test_kkt_metadata_records_actual_variant_and_global_push(monkeypatch):
     assert metadata["kkt_dual_fit_space"] == "lambda"
     assert metadata["kkt_dual_fit_loss"] == "mse"
     assert metadata["kkt_dual_straight_through"] is True
+    assert (
+        metadata["kkt_primal_constraint_form"]
+        == "projected_inequality_augmented_lagrangian"
+    )
 
 
 def test_comm_training_shell_forwards_global_push_environment_variables():
@@ -190,8 +194,9 @@ def test_diagnostic_shell_has_isolated_kkt_functional_ablation():
     )
 
     assert "train_qrl_kkt_functional()" in script
-    assert "variant=kkt_functional_lambda_space_projected_dual_v4" in script
+    assert "variant=kkt_functional_projected_inequality_al_v5" in script
     assert "dual_fit=lambda_space_mse_straight_through" in script
+    assert "primal_constraint=projected_inequality_augmented_lagrangian" in script
     assert "GLOBAL_PUSH_OBJECTIVE=linear" in script
     assert "QRL_LOCAL_CONSTRAINT_MODE=kkt_functional" in script
     assert "QRL_TEMPORAL_CONSTRAINT_WEIGHT=0.0" in script
