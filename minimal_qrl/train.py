@@ -385,7 +385,7 @@ def _build_topology_improvement_metadata(
     mqe_diagnostic_device_names: Sequence[str],
 ) -> dict:
     if str(args.qrl_local_constraint_mode) == "kkt_functional":
-        variant = "kkt_functional_projected_dual_v3"
+        variant = "kkt_functional_lambda_space_projected_dual_v4"
     elif mqe_waypoint_weight > 0.0:
         variant = (
             "mqe_separately_normalized_terminal_anchor_stop_loss"
@@ -414,7 +414,9 @@ def _build_topology_improvement_metadata(
         "kkt_dual_projected_step_size": float(
             args.qrl_kkt_dual_projected_step_size
         ),
-        "kkt_dual_huber_delta": float(args.qrl_kkt_dual_huber_delta),
+        "kkt_dual_fit_space": "lambda",
+        "kkt_dual_fit_loss": "mse",
+        "kkt_dual_straight_through": True,
         "kkt_dual_feature_scale": float(args.qrl_kkt_dual_feature_scale),
         "kkt_dual_raw_min": float(args.qrl_kkt_dual_raw_min),
         "nstep_goal_constraint_weight": float(
@@ -924,9 +926,6 @@ def train(args):
                         ),
                         dual_projected_step_size=float(
                             args.qrl_kkt_dual_projected_step_size
-                        ),
-                        dual_huber_delta=float(
-                            args.qrl_kkt_dual_huber_delta
                         ),
                         dual_feature_scale=float(
                             args.qrl_kkt_dual_feature_scale
@@ -1892,12 +1891,6 @@ def main():
         type=float,
         default=0.1,
         help='逐 edge projected dual target 中 lambda <- [lambda + eta*h]_+ 的 eta',
-    )
-    parser.add_argument(
-        '--qrl-kkt-dual-huber-delta',
-        type=float,
-        default=1.0,
-        help='functional dual 拟合 projected raw target 的 Huber delta',
     )
     parser.add_argument(
         '--qrl-kkt-dual-feature-scale',

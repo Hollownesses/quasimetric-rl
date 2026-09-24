@@ -62,10 +62,6 @@ class LocalConstraintLoss(CriticLossBase):
             default=0.1,
             validator=attrs.validators.gt(0),
         )
-        dual_huber_delta: float = attrs.field(
-            default=1.0,
-            validator=attrs.validators.gt(0),
-        )
         dual_feature_scale: float = attrs.field(
             default=5.0,
             validator=attrs.validators.gt(0),
@@ -94,7 +90,6 @@ class LocalConstraintLoss(CriticLossBase):
                 dual_steps=self.dual_steps,
                 dual_start_violation_fraction=self.dual_start_violation_fraction,
                 dual_projected_step_size=self.dual_projected_step_size,
-                dual_huber_delta=self.dual_huber_delta,
                 dual_feature_scale=self.dual_feature_scale,
                 dual_raw_min=self.dual_raw_min,
                 observation_size=observation_size,
@@ -111,7 +106,6 @@ class LocalConstraintLoss(CriticLossBase):
     dual_steps: int
     dual_start_violation_fraction: float
     dual_projected_step_size: float
-    dual_huber_delta: float
     dual_feature_scale: float
     dual_raw_min: float
 
@@ -132,7 +126,6 @@ class LocalConstraintLoss(CriticLossBase):
         dual_steps: int = 1,
         dual_start_violation_fraction: float = 0.05,
         dual_projected_step_size: float = 0.1,
-        dual_huber_delta: float = 1.0,
         dual_feature_scale: float = 5.0,
         dual_raw_min: float = -10.0,
         observation_size: Optional[int] = None,
@@ -154,8 +147,6 @@ class LocalConstraintLoss(CriticLossBase):
             raise ValueError("dual_start_violation_fraction must be in [0, 1]")
         if float(dual_projected_step_size) <= 0.0:
             raise ValueError("dual_projected_step_size must be positive")
-        if float(dual_huber_delta) <= 0.0:
-            raise ValueError("dual_huber_delta must be positive")
         if float(dual_feature_scale) <= 0.0:
             raise ValueError("dual_feature_scale must be positive")
         if float(dual_raw_min) >= 0.0:
@@ -173,7 +164,6 @@ class LocalConstraintLoss(CriticLossBase):
             dual_start_violation_fraction
         )
         self.dual_projected_step_size = float(dual_projected_step_size)
-        self.dual_huber_delta = float(dual_huber_delta)
         self.dual_feature_scale = float(dual_feature_scale)
         self.dual_raw_min = float(dual_raw_min)
 
@@ -342,31 +332,34 @@ class LocalConstraintLoss(CriticLossBase):
                 lagrange_mult.detach()
                 + self.dual_projected_step_size * residual
             ).clamp(min=0.0, max=self.dual_max)
-            lagrange_floor = F.softplus(
-                torch.as_tensor(
-                    self.dual_raw_min,
-                    device=residual.device,
-                    dtype=residual.dtype,
-                )
-            )
-            raw_target_input = target_lagrange_mult.clamp_min(lagrange_floor)
-            # Stable inverse softplus: x + log(1 - exp(-x)).
-            target_raw = raw_target_input + torch.log(
-                -torch.expm1(-raw_target_input)
-            )
             projected_delta = target_lagrange_mult - lagrange_mult.detach()
 
-        fitted_loss = F.huber_loss(
-            raw_effective,
-            target_raw,
-            reduction="mean",
-            delta=self.dual_huber_delta,
-        )
+        # Fit in multiplier space so projected updates retain their relative
+        # magnitudes.  The straight-through form keeps the positive softplus
+        # forward value while giving the raw network output a unit Jacobian;
+        # otherwise a small lambda would make recovery arbitrarily slow.
+        lagrange_mult_fit = raw_effective + (
+            lagrange_mult - raw_effective
+        ).detach()
+        fit_error = lagrange_mult_fit - target_lagrange_mult
+        fitted_loss = 0.5 * fit_error.square().mean()
+        softplus_jacobian = torch.sigmoid(raw_effective.detach())
+        slack_mask = ~violation_mask
+
+        def masked_mean(value: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+            weights = mask.to(value.dtype)
+            return (value * weights).sum() / weights.sum().clamp_min(1)
+
         loss = fitted_loss * update_enabled.to(residual.dtype)
         return LossResult(
             loss=loss,
             info=dict(
                 fitted_loss=fitted_loss,
+                fit_error_mean=fit_error.mean(),
+                fit_error_abs_mean=fit_error.abs().mean(),
+                softplus_jacobian_mean=softplus_jacobian.mean(),
+                softplus_jacobian_min=softplus_jacobian.min(),
+                softplus_jacobian_max=softplus_jacobian.max(),
                 update_enabled=update_enabled.to(residual.dtype),
                 updates_started=self.dual_updates_started.to(residual.dtype),
                 residual_mean=residual.mean(),
@@ -375,8 +368,26 @@ class LocalConstraintLoss(CriticLossBase):
                 target_lagrange_mult_mean=target_lagrange_mult.mean(),
                 target_lagrange_mult_min=target_lagrange_mult.min(),
                 target_lagrange_mult_max=target_lagrange_mult.max(),
+                violation_lagrange_mult_mean=masked_mean(
+                    lagrange_mult, violation_mask
+                ),
+                slack_lagrange_mult_mean=masked_mean(
+                    lagrange_mult, slack_mask
+                ),
+                violation_target_lagrange_mult_mean=masked_mean(
+                    target_lagrange_mult, violation_mask
+                ),
+                slack_target_lagrange_mult_mean=masked_mean(
+                    target_lagrange_mult, slack_mask
+                ),
                 projected_delta_mean=projected_delta.mean(),
                 projected_delta_abs_mean=projected_delta.abs().mean(),
+                violation_projected_delta_mean=masked_mean(
+                    projected_delta, violation_mask
+                ),
+                slack_projected_delta_mean=masked_mean(
+                    projected_delta, slack_mask
+                ),
                 projected_increase_fraction=(projected_delta > 0).to(
                     residual.dtype
                 ).mean(),
@@ -497,7 +508,7 @@ class LocalConstraintLoss(CriticLossBase):
             f"mode={self.mode}, rho={self.augmented_lagrangian_rho:g}, "
             f"dual_steps={self.dual_steps}, dual_max={self.dual_max:g}, "
             f"projected_step_size={self.dual_projected_step_size:g}, "
-            f"dual_huber_delta={self.dual_huber_delta:g}, "
+            f"dual_fit=lambda_space_mse_straight_through, "
             f"start_violation_fraction={self.dual_start_violation_fraction:g}, "
             f"raw_min={self.dual_raw_min:g}, "
             f"step_cost={self.step_cost:g}, cost_source={self.cost_source}"

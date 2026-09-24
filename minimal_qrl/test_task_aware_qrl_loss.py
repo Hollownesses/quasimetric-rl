@@ -131,6 +131,13 @@ def test_kkt_functional_dual_update_is_detached_from_critic_and_increases_on_vio
     optimizer.zero_grad()
     dual_result = loss.dual_loss(data, batch_info)
     dual_result.loss.backward()
+    assert loss.dual_network is not None
+    last_layer = loss.dual_network.module[-1]
+    assert torch.allclose(
+        last_layer.bias.grad,
+        torch.tensor([-0.1]),
+        atol=1e-6,
+    )
     optimizer.step()
     after = float(loss.dual_loss(data, batch_info).info["lagrange_mult_mean"])
 
@@ -182,6 +189,88 @@ def test_kkt_functional_projected_dual_decreases_on_deep_slack():
         atol=1e-6,
     )
     assert after < before
+
+
+def test_kkt_functional_projected_magnitude_outweighs_slack_edge_count():
+    class BatchValueQuasimetric(torch.nn.Module):
+        def forward(self, source, goal):
+            return source[:, 0]
+
+    class BatchValueCritic(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = torch.nn.Identity()
+            self.quasimetric_model = BatchValueQuasimetric()
+
+    # Four h=+10 edges request delta=+10, while six h=-1 edges request
+    # delta=-1.  The projected mean delta is positive even though most edges
+    # are slack.  Raw-space Huber fitting reduced this case to sign counts;
+    # lambda-space MSE must preserve the projected magnitudes.
+    critic = BatchValueCritic()
+    data = make_batch([-1.0] * 10)
+    batch_info = CriticBatchInfo(
+        critic=critic,
+        zx=torch.tensor([[11.0, 0.0]] * 4 + [[0.0, 0.0]] * 6),
+        zy=torch.zeros(10, 2),
+    )
+    loss = LocalConstraintLoss(
+        epsilon=0.25,
+        step_cost=1.0,
+        cost_source="negative_reward",
+        init_lagrange_multiplier=3.0,
+        mode="kkt_functional",
+        augmented_lagrangian_rho=1.0,
+        dual_hidden_sizes=(8,),
+        dual_max=100.0,
+        dual_steps=1,
+        dual_projected_step_size=1.0,
+        observation_size=2,
+    )
+    optimizer = torch.optim.SGD(loss.parameters(), lr=0.01)
+
+    before = float(loss.dual_loss(data, batch_info).info["lagrange_mult_mean"])
+    optimizer.zero_grad()
+    dual_result = loss.dual_loss(data, batch_info)
+    dual_result.loss.backward()
+    assert loss.dual_network is not None
+    last_layer = loss.dual_network.module[-1]
+    assert torch.isclose(
+        dual_result.info["projected_increase_fraction"],
+        torch.tensor(0.4),
+    )
+    assert torch.isclose(
+        dual_result.info["projected_decrease_fraction"],
+        torch.tensor(0.6),
+    )
+    assert torch.isclose(
+        dual_result.info["projected_delta_mean"],
+        torch.tensor(3.4),
+        atol=1e-6,
+    )
+    assert torch.isclose(
+        dual_result.info["violation_target_lagrange_mult_mean"],
+        torch.tensor(13.0),
+        atol=1e-6,
+    )
+    assert torch.isclose(
+        dual_result.info["slack_target_lagrange_mult_mean"],
+        torch.tensor(2.0),
+        atol=1e-6,
+    )
+    assert torch.isclose(
+        dual_result.info["fit_error_mean"],
+        torch.tensor(-3.4),
+        atol=1e-6,
+    )
+    assert torch.allclose(
+        last_layer.bias.grad,
+        torch.tensor([-3.4]),
+        atol=1e-6,
+    )
+    optimizer.step()
+    after = float(loss.dual_loss(data, batch_info).info["lagrange_mult_mean"])
+
+    assert after > before
 
 
 def test_kkt_functional_keeps_dual_frozen_until_violations_wake_it_up():

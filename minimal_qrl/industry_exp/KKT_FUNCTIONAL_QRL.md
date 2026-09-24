@@ -1,4 +1,4 @@
-# KKT-aligned functional-dual QRL v3
+# KKT-aligned functional-dual QRL v4
 
 This branch exposes the first neural implementation of the KKT-aligned QRL
 ablation.  The legacy squared-hinge constraint remains the default so existing
@@ -26,21 +26,29 @@ each sampled edge receives a projected dual target
 lambda_target(e) = clip(stopgrad(lambda_psi(e)) + eta h_e, 0, lambda_max).
 ```
 
-The functional dual minimizes a Huber regression loss from its effective raw
-output to the inverse-softplus form of this target.  This is a fitted version
-of tabular projected dual ascent: violated edges request a larger multiplier,
-while every slack edge, including deeply slack edges, requests a smaller one.
-It therefore preserves per-edge complementarity targets without separately
-normalizing positive and slack populations.  `lambda_psi(e)` is an
+The functional dual minimizes a multiplier-space regression loss
+
+```text
+L_dual = 0.5 E[(lambda_psi(e) - lambda_target(e))^2].
+```
+
+This is a fitted version of tabular projected dual ascent: violated edges
+request a larger multiplier, while every slack edge, including deeply slack
+edges, requests a smaller one.  Fitting in multiplier space preserves the
+relative magnitude of those projected updates instead of reducing the update
+to the number of positive and negative edges.  `lambda_psi(e)` is an
 edge-conditioned positive field with numerical safety bounds.  Its inputs are
 detached source observation, detached destination observation, and `c_e`,
 passed through a fixed signed-log transform.  It does not share a gradient
 path with the critic.
 
 The softplus raw output has a straight-through lower trust bound so a transient
-negative excursion cannot remove the recovery gradient.  Every critic update
-is preceded by `dual_steps` dual updates.  The default v3 ablation uses one
-dual step, dual learning rate `1e-4`, and `rho=1`.
+negative excursion cannot remove the recovery gradient.  The multiplier-space
+regression also uses a unit-Jacobian straight-through path from lambda to the
+raw network output, avoiding the vanishing softplus derivative at small
+multipliers.  Every critic update is preceded by `dual_steps` dual updates.
+The default v4 ablation uses one dual step, dual learning rate `1e-4`, and
+`rho=1`.
 
 ## Run the isolated diagnostic arm
 
@@ -63,7 +71,6 @@ QRL_KKT_DUAL_STEPS=1
 QRL_KKT_DUAL_LR=0.0001
 QRL_KKT_DUAL_START_VIOLATION_FRACTION=0.05
 QRL_KKT_DUAL_PROJECTED_STEP_SIZE=0.1
-QRL_KKT_DUAL_HUBER_DELTA=1.0
 QRL_KKT_DUAL_FEATURE_SCALE=5.0
 QRL_KKT_DUAL_RAW_MIN=-10.0
 QRL_KKT_DUAL_MAX=100000
@@ -81,7 +88,7 @@ LOG_INTERVAL=10 \
 SAVE_INTERVAL=500 \
 EVAL_INTERVAL=500 \
 VIS_INTERVAL=500 \
-KKT_TRAIN_DIR=./results/diagnostic_u_shadow_corridors_topology_v2/qrl_training_kkt_functional_smoke_v3 \
+KKT_TRAIN_DIR=./results/diagnostic_u_shadow_corridors_topology_v2/qrl_training_kkt_functional_smoke_v4 \
 bash minimal_qrl/run_comm_inspection_diagnostic.sh
 ```
 
@@ -95,7 +102,10 @@ The local-constraint log contains the linear Lagrangian term, augmented
 penalty, residual min/mean/max, violation and near-active fractions, dual
 min/mean/max, raw dual min/mean/max, the lower-saturation fraction, the dual
 wake-up state, projected-target min/mean/max, and projected increase/decrease
-fractions.  It also records the last inner dual update and an absolute
+fractions.  V4 additionally records multiplier-space fit error and the
+softplus Jacobian that the straight-through estimator bypasses, plus separate
+current multiplier, target multiplier, and projected-delta means for violated
+and slack edges.  It also records the last inner dual update and an absolute
 complementarity diagnostic.  Training fails fast if violations are present
 while the maximum multiplier is numerically dead.
 
