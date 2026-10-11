@@ -47,6 +47,7 @@ from quasimetric_rl.modules.quasimetric_critic.models.latent_dynamics import Lat
 from quasimetric_rl.modules.quasimetric_critic.models.quasimetric_model import QuasimetricModel
 from quasimetric_rl.modules.quasimetric_critic.losses import QuasimetricCriticLosses
 from quasimetric_rl.modules.quasimetric_critic.losses.feasible_direction import FeasibleDirectionConf
+from quasimetric_rl.modules.quasimetric_critic.losses.goal_set_barrier import GoalSetBarrierConf
 from quasimetric_rl.modules.quasimetric_critic.losses.local_constraint import LocalConstraintLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.global_push import GlobalPushLoss
 from quasimetric_rl.modules.quasimetric_critic.losses.latent_dynamics import LatentDynamicsLoss
@@ -388,7 +389,9 @@ def _build_topology_improvement_metadata(
     if str(args.qrl_local_constraint_mode) == "kkt_functional":
         variant = "kkt_functional_projected_inequality_al_v5"
     elif str(args.qrl_local_constraint_mode) == "feasible_direction":
-        variant = "one_step_feasible_direction_qp"
+        variant = "goal_set_quotient_feasible_direction_qp"
+    elif str(args.qrl_local_constraint_mode) == "goal_set_barrier":
+        variant = "goal_set_quotient_replay_margin_barrier"
     elif mqe_waypoint_weight > 0.0:
         variant = (
             "mqe_separately_normalized_terminal_anchor_stop_loss"
@@ -406,6 +409,7 @@ def _build_topology_improvement_metadata(
         "feasible_direction": (
             {"kappa": float(args.qrl_feasible_kappa),
              "step_size": float(args.qrl_feasible_step_size),
+             "restoration_step_size": float(args.qrl_feasible_restoration_step_size),
              "trust_radius": float(args.qrl_feasible_trust_radius),
              "backtracks": int(args.qrl_feasible_backtracks),
              "work_edges": int(args.qrl_feasible_work_edges),
@@ -414,9 +418,22 @@ def _build_topology_improvement_metadata(
              "feasibility_tolerance": float(args.qrl_feasible_tolerance),
              "anchor_tolerance": float(args.qrl_feasible_anchor_tolerance),
              "elastic_penalty": float(args.qrl_feasible_elastic_penalty),
+             "goal_set_quotient": "task_feasible and abstract_goal observations share one canonical task state",
              "constraint_set": "all replay one-step cost edges including zero-cost anchors",
              "objective": "Global Push only"}
             if str(args.qrl_local_constraint_mode) == "feasible_direction" else None
+        ),
+        "goal_set_barrier": (
+            {"weight": float(args.qrl_barrier_weight),
+             "learning_rate": float(args.qrl_barrier_lr),
+             "margin": float(args.qrl_barrier_margin),
+             "temperature": float(args.qrl_barrier_temperature),
+             "topk": int(args.qrl_barrier_topk),
+             "work_edges": int(args.qrl_barrier_work_edges),
+             "audit_interval": int(args.qrl_barrier_audit_interval),
+             "goal_set_quotient": True,
+             "hard_feasibility_guarantee": False}
+            if str(args.qrl_local_constraint_mode) == "goal_set_barrier" else None
         ),
         "global_push_objective": str(args.global_push_objective),
         "global_push_softplus_offset": float(args.global_push_softplus_offset),
@@ -589,9 +606,9 @@ def train(args):
         args._scenario_data = load_scenario_config(args.scenario_config)
         args.env_type = 'comm_inspection_dubins_uav'
         args.max_steps_per_episode = int(args._scenario_data['max_episode_steps'])
-    if (str(args.qrl_local_constraint_mode) == "feasible_direction" and
+    if (str(args.qrl_local_constraint_mode) in ("feasible_direction", "goal_set_barrier") and
         args.env_type != 'comm_inspection_dubins_uav'):
-        raise ValueError("feasible_direction is currently wired for comm_inspection_dubins_uav")
+        raise ValueError("goal-set constraint modes require comm_inspection_dubins_uav")
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         args.task_aware_teacher_ratio = 0.0
         args.target_env_transitions = None
@@ -924,12 +941,12 @@ def train(args):
         if qrl_cost_source != "negative_reward":
             raise ValueError("goal-set 通信巡检 QRL 必须使用 --qrl-cost-source negative_reward")
         logger.info(f"通信巡检 QRL local cost source: {qrl_cost_source}")
-        feasible_mode = str(args.qrl_local_constraint_mode) == "feasible_direction"
+        feasible_mode = str(args.qrl_local_constraint_mode) in ("feasible_direction", "goal_set_barrier")
         if feasible_mode:
             if (float(args.qrl_nstep_goal_constraint_weight) > 0 or
                 mqe_waypoint_weight > 0):
-                raise ValueError("feasible_direction only supports Global Push and replay one-step constraints")
-            logger.info("feasible_direction: auxiliary losses disabled; zero-cost abstract edges remain hard replay constraints")
+                raise ValueError("goal-set special modes only support Global Push and replay one-step constraints")
+            logger.info("goal-set special mode: terminal and abstract goal observations share a canonical task state; auxiliary losses disabled")
         agent_conf = QRLConf(
             actor=None,
             num_critics=args.num_critics,
@@ -986,11 +1003,15 @@ def train(args):
                             mqe_terminal_anchor_loss_weight),
                         diagnostic_device_names=mqe_diagnostic_device_names,
                     ),
-                    critic_optim=AdamWSpec.Conf(lr=5e-5),
+                    critic_optim=AdamWSpec.Conf(
+                        lr=(float(args.qrl_barrier_lr)
+                            if str(args.qrl_local_constraint_mode) == "goal_set_barrier"
+                            else 5e-5)),
                     latent_dynamics=LatentDynamicsLoss.Conf(weight=0.0 if feasible_mode else 0.1),
                     feasible_direction=FeasibleDirectionConf(
                         kappa=float(args.qrl_feasible_kappa),
                         step_size=float(args.qrl_feasible_step_size),
+                        restoration_step_size=float(args.qrl_feasible_restoration_step_size),
                         trust_radius=float(args.qrl_feasible_trust_radius),
                         backtracks=int(args.qrl_feasible_backtracks),
                         work_edges=int(args.qrl_feasible_work_edges),
@@ -999,6 +1020,17 @@ def train(args):
                         feasibility_tolerance=float(args.qrl_feasible_tolerance),
                         anchor_tolerance=float(args.qrl_feasible_anchor_tolerance),
                         elastic_penalty=float(args.qrl_feasible_elastic_penalty),
+                    ),
+                    goal_set_barrier=GoalSetBarrierConf(
+                        weight=float(args.qrl_barrier_weight),
+                        margin=float(args.qrl_barrier_margin),
+                        temperature=float(args.qrl_barrier_temperature),
+                        topk=int(args.qrl_barrier_topk),
+                        work_edges=int(args.qrl_barrier_work_edges),
+                        candidate_multiplier=int(args.qrl_feasible_candidate_multiplier),
+                        audit_interval=int(args.qrl_barrier_audit_interval),
+                        feasibility_tolerance=float(args.qrl_feasible_tolerance),
+                        anchor_tolerance=float(args.qrl_feasible_anchor_tolerance),
                     ),
                     lagrange_mult_optim=AdamWSpec.Conf(
                         lr=float(args.qrl_kkt_dual_lr)
@@ -1015,9 +1047,12 @@ def train(args):
         env_spec=dataset.env_spec,
         total_optim_steps=max(1, int(args.total_steps)),
     )
+    if str(args.qrl_local_constraint_mode) in ("feasible_direction", "goal_set_barrier"):
+        for critic in agent.critics:
+            critic.encoder.enable_comm_goal_set_quotient()
     agent.to(device)
     losses.to(device)
-    if str(args.qrl_local_constraint_mode) == "feasible_direction":
+    if str(args.qrl_local_constraint_mode) in ("feasible_direction", "goal_set_barrier"):
         losses.set_feasible_replay(dataset)
     logger.info(f"Agent: {agent}")
     logger.info(f"Losses: {losses}")
@@ -1511,11 +1546,14 @@ def train(args):
     
     pbar.close()
     optimization_elapsed = perf_counter() - optimization_start
-    if str(args.qrl_local_constraint_mode) == "feasible_direction":
+    if str(args.qrl_local_constraint_mode) in ("feasible_direction", "goal_set_barrier"):
         final_audit_row = {'step': int(optim_steps), 'phase': 'final_replay_audit'}
         for idx, (critic, critic_loss) in enumerate(zip(agent.critics, losses.critic_losses)):
-            audit_info = critic_loss.feasible_direction.audit(critic, critic_loss.local_constraint)
-            final_audit_row.update({f'critic_{idx:02d}/feasible_direction/{key}': value
+            mode = str(args.qrl_local_constraint_mode)
+            updater = (critic_loss.feasible_direction if mode == "feasible_direction"
+                       else critic_loss.goal_set_barrier)
+            audit_info = updater.audit(critic, critic_loss.local_constraint)
+            final_audit_row.update({f'critic_{idx:02d}/{mode}/{key}': value
                                     for key, value in audit_info.items()})
         train_metric_rows.append(final_audit_row)
     
@@ -1899,24 +1937,33 @@ def main():
                              'negative_reward 使用环境 task cost；fixed 使用原始固定 step_cost=1.0')
     parser.add_argument(
         '--qrl-local-constraint-mode',
-        choices=['legacy_squared_hinge', 'kkt_functional', 'feasible_direction'],
+        choices=['legacy_squared_hinge', 'kkt_functional', 'feasible_direction', 'goal_set_barrier'],
         default='legacy_squared_hinge',
         help=(
             'local constraint 优化方式；kkt_functional 使用 edge-conditioned '
             'linear Lagrangian、augmented penalty 和独立 dual 更新；'
-            'feasible_direction 在 replay 一步边上求 QP 并回溯真实残差'
+            'feasible_direction 在 replay 一步边上求 QP 并回溯真实残差；'
+            'goal_set_barrier 使用目标集规范映射和近边界平滑惩罚'
         ),
     )
     parser.add_argument('--qrl-feasible-kappa', type=float, default=1.0)
-    parser.add_argument('--qrl-feasible-step-size', type=float, default=5e-5)
+    parser.add_argument('--qrl-feasible-step-size', type=float, default=0.01)
+    parser.add_argument('--qrl-feasible-restoration-step-size', type=float, default=1.0)
     parser.add_argument('--qrl-feasible-trust-radius', type=float, default=0.05)
     parser.add_argument('--qrl-feasible-backtracks', type=int, default=10)
-    parser.add_argument('--qrl-feasible-work-edges', type=int, default=48)
+    parser.add_argument('--qrl-feasible-work-edges', type=int, default=32)
     parser.add_argument('--qrl-feasible-candidate-multiplier', type=int, default=4)
-    parser.add_argument('--qrl-feasible-audit-interval', type=int, default=100)
+    parser.add_argument('--qrl-feasible-audit-interval', type=int, default=250)
     parser.add_argument('--qrl-feasible-tolerance', type=float, default=1e-5)
     parser.add_argument('--qrl-feasible-anchor-tolerance', type=float, default=1e-6)
     parser.add_argument('--qrl-feasible-elastic-penalty', type=float, default=100.0)
+    parser.add_argument('--qrl-barrier-weight', type=float, default=500.0)
+    parser.add_argument('--qrl-barrier-lr', type=float, default=2e-5)
+    parser.add_argument('--qrl-barrier-margin', type=float, default=0.01)
+    parser.add_argument('--qrl-barrier-temperature', type=float, default=0.01)
+    parser.add_argument('--qrl-barrier-topk', type=int, default=8)
+    parser.add_argument('--qrl-barrier-work-edges', type=int, default=64)
+    parser.add_argument('--qrl-barrier-audit-interval', type=int, default=25)
     parser.add_argument(
         '--qrl-kkt-augmented-lagrangian-rho',
         type=float,

@@ -34,6 +34,7 @@ class CriticLossBase(LossBase):
 from .global_push import GlobalPushLoss
 from .local_constraint import LocalConstraintLoss
 from .feasible_direction import FeasibleDirectionConf, FeasibleDirectionUpdater
+from .goal_set_barrier import GoalSetBarrierConf, GoalSetBarrierUpdater
 from .latent_dynamics import LatentDynamicsLoss
 from .abstract_goal_edge import AbstractGoalEdgeLoss
 from .temporal_path import (
@@ -61,6 +62,7 @@ class QuasimetricCriticLosses(CriticLossBase):
         critic_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-4)
         lagrange_mult_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-2)
         feasible_direction: FeasibleDirectionConf = FeasibleDirectionConf()
+        goal_set_barrier: GoalSetBarrierConf = GoalSetBarrierConf()
 
         def make(self, critic: QuasimetricCritic, total_optim_steps: int) -> 'QuasimetricCriticLosses':
             return QuasimetricCriticLosses(
@@ -77,6 +79,7 @@ class QuasimetricCriticLosses(CriticLossBase):
                 critic_optim_spec=self.critic_optim.make(),
                 lagrange_mult_optim_spec=self.lagrange_mult_optim.make(),
                 feasible_direction_conf=self.feasible_direction,
+                goal_set_barrier_conf=self.goal_set_barrier,
             )
 
     global_push: GlobalPushLoss
@@ -99,7 +102,8 @@ class QuasimetricCriticLosses(CriticLossBase):
                  goal_return: GoalReturnConstraintLoss, nstep_goal: NstepGoalConsistencyLoss,
                  mqe_waypoint: MQEInspiredWaypointConsistencyLoss,
                  critic_optim_spec: AdamWSpec, lagrange_mult_optim_spec: AdamWSpec,
-                 feasible_direction_conf: Optional[FeasibleDirectionConf] = None):
+                 feasible_direction_conf: Optional[FeasibleDirectionConf] = None,
+                 goal_set_barrier_conf: Optional[GoalSetBarrierConf] = None):
         super().__init__()
         self.global_push = global_push
         self.local_constraint = local_constraint
@@ -113,12 +117,15 @@ class QuasimetricCriticLosses(CriticLossBase):
             FeasibleDirectionUpdater(feasible_direction_conf or FeasibleDirectionConf())
             if local_constraint.mode == "feasible_direction" else None
         )
-        if self.feasible_direction is not None and any(float(weight) != 0.0 for weight in (
+        self.goal_set_barrier = (
+            GoalSetBarrierUpdater(goal_set_barrier_conf or GoalSetBarrierConf())
+            if local_constraint.mode == "goal_set_barrier" else None
+        )
+        if (self.feasible_direction is not None or self.goal_set_barrier is not None) and any(float(weight) != 0.0 for weight in (
             latent_dynamics.weight, abstract_goal_edge.weight, temporal_path.weight,
             goal_return.weight, nstep_goal.weight, mqe_waypoint.weight,
         )):
-            raise ValueError("feasible_direction requires zero auxiliary loss weights; "
-                             "its complete critic update is the Global Push QP direction")
+            raise ValueError("goal-set special modes require zero auxiliary loss weights")
 
         self.critic_optim, self.critic_sched = critic_optim_spec.create_optim_scheduler(
             critic.parameters(), total_optim_steps)
@@ -127,7 +134,7 @@ class QuasimetricCriticLosses(CriticLossBase):
             dual_optim_steps *= int(local_constraint.dual_steps)
         self.lagrange_mult_optim, self.lagrange_mult_sched = lagrange_mult_optim_spec.create_optim_scheduler(
             local_constraint.parameters(), dual_optim_steps)
-        if self.feasible_direction is None:
+        if self.feasible_direction is None and self.goal_set_barrier is None:
             assert len(list(local_constraint.parameters())) > 0
 
     def _combined_result(
@@ -157,6 +164,14 @@ class QuasimetricCriticLosses(CriticLossBase):
                 data, critic_batch_info, self.global_push, self.local_constraint)
             self.nstep_goal.update_target(critic_batch_info.critic)
             self.mqe_waypoint.update_target(critic_batch_info.critic)
+            return result
+
+        if self.goal_set_barrier is not None:
+            with self.critic_optim.update_context(optimize=True):
+                result = self.goal_set_barrier.step(
+                    data, critic_batch_info, self.global_push, self.local_constraint)
+                result.loss.backward()
+            self.critic_sched.step()
             return result
 
         dual_update_info = None

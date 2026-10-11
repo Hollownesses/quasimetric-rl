@@ -35,6 +35,8 @@ class QRLLosses(Module):
         for critic_loss in self.critic_losses:
             if critic_loss.feasible_direction is not None:
                 critic_loss.feasible_direction.set_replay(dataset)
+            if critic_loss.goal_set_barrier is not None:
+                critic_loss.goal_set_barrier.set_replay(dataset)
 
     def forward(self, agent: QRLAgent, data: BatchData, *, optimize: bool = True) -> LossResult:
         # compute CriticBatchInfo

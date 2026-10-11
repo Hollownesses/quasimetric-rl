@@ -16,7 +16,8 @@ from . import CriticLossBase, CriticBatchInfo
 
 
 class LocalConstraintLoss(CriticLossBase):
-    MODES = ("legacy_squared_hinge", "kkt_functional", "feasible_direction")
+    MODES = ("legacy_squared_hinge", "kkt_functional", "feasible_direction",
+             "goal_set_barrier")
 
     @attrs.define(kw_only=True)
     class Conf:
@@ -35,10 +36,10 @@ class LocalConstraintLoss(CriticLossBase):
 
         init_lagrange_multiplier: float = attrs.field(default=0.01, validator=attrs.validators.gt(0))
 
-        mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction"] = attrs.field(
+        mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction", "goal_set_barrier"] = attrs.field(
             default="legacy_squared_hinge",
             validator=attrs.validators.in_(
-                ("legacy_squared_hinge", "kkt_functional", "feasible_direction")
+                ("legacy_squared_hinge", "kkt_functional", "feasible_direction", "goal_set_barrier")
             ),
         )
         augmented_lagrangian_rho: float = attrs.field(
@@ -99,7 +100,7 @@ class LocalConstraintLoss(CriticLossBase):
     step_cost: float
     cost_source: Literal["fixed", "negative_reward"]
     init_lagrange_multiplier: float
-    mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction"]
+    mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction", "goal_set_barrier"]
     augmented_lagrangian_rho: float
     dual_hidden_sizes: Tuple[int, ...]
     dual_max: float
@@ -119,7 +120,7 @@ class LocalConstraintLoss(CriticLossBase):
         step_cost: float,
         cost_source: Literal["fixed", "negative_reward"],
         init_lagrange_multiplier: float,
-        mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction"] = "legacy_squared_hinge",
+        mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction", "goal_set_barrier"] = "legacy_squared_hinge",
         augmented_lagrangian_rho: float = 1.0,
         dual_hidden_sizes: Tuple[int, ...] = (128, 128),
         dual_max: float = 100000.0,
@@ -420,7 +421,7 @@ class LocalConstraintLoss(CriticLossBase):
 
     def forward(self, data: BatchData, critic_batch_info: CriticBatchInfo) -> LossResult:
 
-        if self.mode == "feasible_direction":
+        if self.mode in ("feasible_direction", "goal_set_barrier"):
             dist = critic_batch_info.critic.quasimetric_model(
                 critic_batch_info.zx, critic_batch_info.zy)
             cost = self._target_cost(data, dist)
@@ -548,7 +549,7 @@ class LocalConstraintLoss(CriticLossBase):
         )
 
     def extra_repr(self) -> str:
-        if self.mode == "feasible_direction":
+        if self.mode in ("feasible_direction", "goal_set_barrier"):
             return f"mode={self.mode}, step_cost={self.step_cost:g}, cost_source={self.cost_source}"
         if self.mode == "legacy_squared_hinge":
             return (

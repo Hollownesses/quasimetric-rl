@@ -30,6 +30,9 @@
 #   PHASE=train_qrl_feasible_direction DEVICE=cpu \
 #     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_feasible_direction \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_goal_set_barrier DEVICE=cpu \
+#     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_goal_set_barrier \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -71,8 +74,12 @@ ORACLE_FINAL_TEST_BANK="${ORACLE_FINAL_TEST_BANK:-$SHARED_ORACLE_DIR/hybrid_asta
 train_qrl() {
   local oracle_bank_eval_flag=()
   local dataset_budget_args=()
+  local init_checkpoint_args=()
   local qrl_dataset_mode="${QRL_DATASET_MODE:-standard}"
   local teacher_ratio="${TASK_AWARE_TEACHER_RATIO:-1.0}"
+  if [[ -n "${QRL_INIT_CHECKPOINT:-}" ]]; then
+    init_checkpoint_args+=(--init-checkpoint "$QRL_INIT_CHECKPOINT")
+  fi
 
   if [[ "${ORACLE_BANK_EVAL:-1}" == "1" ]]; then
     oracle_bank_eval_flag+=(--oracle-bank-eval)
@@ -113,6 +120,7 @@ train_qrl() {
   "$PYTHON_BIN" minimal_qrl/train.py \
     --scenario-config "$SCENARIO_CONFIG" \
     --output-dir "$TRAIN_DIR" \
+    ${init_checkpoint_args[@]+"${init_checkpoint_args[@]}"} \
     --seed "${SEED:-42}" \
     --device "${DEVICE:-cpu}" \
     --num-episodes "${NUM_EPISODES:-500}" \
@@ -123,15 +131,23 @@ train_qrl() {
     --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
     --qrl-local-constraint-mode "${QRL_LOCAL_CONSTRAINT_MODE:-legacy_squared_hinge}" \
     --qrl-feasible-kappa "${QRL_FEASIBLE_KAPPA:-1.0}" \
-    --qrl-feasible-step-size "${QRL_FEASIBLE_STEP_SIZE:-0.00005}" \
+    --qrl-feasible-step-size "${QRL_FEASIBLE_STEP_SIZE:-0.01}" \
+    --qrl-feasible-restoration-step-size "${QRL_FEASIBLE_RESTORATION_STEP_SIZE:-1.0}" \
     --qrl-feasible-trust-radius "${QRL_FEASIBLE_TRUST_RADIUS:-0.05}" \
     --qrl-feasible-backtracks "${QRL_FEASIBLE_BACKTRACKS:-10}" \
-    --qrl-feasible-work-edges "${QRL_FEASIBLE_WORK_EDGES:-48}" \
+    --qrl-feasible-work-edges "${QRL_FEASIBLE_WORK_EDGES:-32}" \
     --qrl-feasible-candidate-multiplier "${QRL_FEASIBLE_CANDIDATE_MULTIPLIER:-4}" \
-    --qrl-feasible-audit-interval "${QRL_FEASIBLE_AUDIT_INTERVAL:-100}" \
+    --qrl-feasible-audit-interval "${QRL_FEASIBLE_AUDIT_INTERVAL:-250}" \
     --qrl-feasible-tolerance "${QRL_FEASIBLE_TOLERANCE:-0.00001}" \
     --qrl-feasible-anchor-tolerance "${QRL_FEASIBLE_ANCHOR_TOLERANCE:-0.000001}" \
     --qrl-feasible-elastic-penalty "${QRL_FEASIBLE_ELASTIC_PENALTY:-100.0}" \
+    --qrl-barrier-weight "${QRL_BARRIER_WEIGHT:-500.0}" \
+    --qrl-barrier-lr "${QRL_BARRIER_LR:-0.00002}" \
+    --qrl-barrier-margin "${QRL_BARRIER_MARGIN:-0.01}" \
+    --qrl-barrier-temperature "${QRL_BARRIER_TEMPERATURE:-0.01}" \
+    --qrl-barrier-topk "${QRL_BARRIER_TOPK:-8}" \
+    --qrl-barrier-work-edges "${QRL_BARRIER_WORK_EDGES:-64}" \
+    --qrl-barrier-audit-interval "${QRL_BARRIER_AUDIT_INTERVAL:-25}" \
     --qrl-kkt-augmented-lagrangian-rho "${QRL_KKT_AUGMENTED_LAGRANGIAN_RHO:-1.0}" \
     --qrl-kkt-dual-hidden-sizes ${QRL_KKT_DUAL_HIDDEN_SIZES:-128 128} \
     --qrl-kkt-dual-max "${QRL_KKT_DUAL_MAX:-100000.0}" \
@@ -233,19 +249,22 @@ train_qrl_kkt_functional() {
 
 # Current-Jacobian projection experiment on the same diagnostic replay protocol.
 # The critic's complete update uses Global Push and the replay one-step edges;
-# the zero-cost abstract edges remain in that constraint set.
+# terminal and abstract-goal inputs share a canonical task representation.
 train_qrl_feasible_direction() {
   local feasible_train_dir="${FEASIBLE_DIRECTION_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_feasible_direction}"
 
   echo "QRL topology-improvement ablation:"
-  echo "  variant=one_step_feasible_direction_qp"
+  echo "  variant=goal_set_quotient_feasible_direction_qp"
+  echo "  goal_set_quotient=enabled"
   echo "  global_push_objective=linear"
   echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
-  echo "  work_edges=${QRL_FEASIBLE_WORK_EDGES:-48}"
+  echo "  work_edges=${QRL_FEASIBLE_WORK_EDGES:-32}"
   echo "  kappa=${QRL_FEASIBLE_KAPPA:-1.0}"
-  echo "  step_size=${QRL_FEASIBLE_STEP_SIZE:-0.00005}"
+  echo "  step_size=${QRL_FEASIBLE_STEP_SIZE:-0.01}"
+  echo "  restoration_step_size=${QRL_FEASIBLE_RESTORATION_STEP_SIZE:-1.0}"
   echo "  trust_radius=${QRL_FEASIBLE_TRUST_RADIUS:-0.05}"
-  echo "  audit_interval=${QRL_FEASIBLE_AUDIT_INTERVAL:-100}"
+  echo "  audit_interval=${QRL_FEASIBLE_AUDIT_INTERVAL:-250}"
+  echo "  total_steps=${TOTAL_STEPS:-2000}"
   echo "  output_dir=$feasible_train_dir"
 
   QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
@@ -256,7 +275,36 @@ train_qrl_feasible_direction() {
   QRL_GOAL_RETURN_CONSTRAINT_WEIGHT=0.0 \
   QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
   QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
+  TOTAL_STEPS="${TOTAL_STEPS:-2000}" \
   TRAIN_DIR="$feasible_train_dir" \
+    train_qrl
+}
+
+# Goal-set quotient plus smooth near-boundary penalty. This is a soft
+# constraint experiment; full replay audits report actual violations.
+train_qrl_goal_set_barrier() {
+  local barrier_train_dir="${GOAL_SET_BARRIER_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_goal_set_barrier}"
+  echo "QRL topology-improvement ablation:"
+  echo "  variant=goal_set_quotient_replay_margin_barrier"
+  echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
+  echo "  work_edges=${QRL_BARRIER_WORK_EDGES:-64}"
+  echo "  barrier_weight=${QRL_BARRIER_WEIGHT:-500.0}"
+  echo "  barrier_lr=${QRL_BARRIER_LR:-0.00002}"
+  echo "  barrier_margin=${QRL_BARRIER_MARGIN:-0.01}"
+  echo "  audit_interval=${QRL_BARRIER_AUDIT_INTERVAL:-25}"
+  echo "  total_steps=${TOTAL_STEPS:-2000}"
+  echo "  output_dir=$barrier_train_dir"
+
+  QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
+  QRL_LOCAL_CONSTRAINT_MODE=goal_set_barrier \
+  GLOBAL_PUSH_OBJECTIVE=linear \
+  ABSTRACT_GOAL_EDGE_LOSS_WEIGHT=0.0 \
+  QRL_TEMPORAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_GOAL_RETURN_CONSTRAINT_WEIGHT=0.0 \
+  QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
+  TOTAL_STEPS="${TOTAL_STEPS:-2000}" \
+  TRAIN_DIR="$barrier_train_dir" \
     train_qrl
 }
 
@@ -512,6 +560,9 @@ case "$PHASE" in
   train_qrl_feasible_direction)
     train_qrl_feasible_direction
     ;;
+  train_qrl_goal_set_barrier)
+    train_qrl_goal_set_barrier
+    ;;
   train_qrl_mqe_waypoint_consistency)
     train_qrl_mqe_waypoint_consistency
     ;;
@@ -534,7 +585,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

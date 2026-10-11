@@ -315,23 +315,54 @@ PHASE=train_qrl_feasible_direction DEVICE=cpu \
 该阶段沿用 `train_qrl_kkt_functional` 的诊断场景与 replay 协议，
 默认将训练结果写入 `results/diagnostic_u_shadow_corridors/qrl_training_feasible_direction`。
 可以用 `OUTPUT_ROOT` 或 `FEASIBLE_DIRECTION_TRAIN_DIR` 指定独立输出目录。
-默认每个 critic 从 replay 取 48 条一步成本边组成工作集；可用
+该阶段默认只跑 `TOTAL_STEPS=2000` 的 smoke；需要更长实验时显式设置该变量。
+默认每个 critic 从 replay 取 32 条一步成本边组成工作集；可用
 `QRL_FEASIBLE_WORK_EDGES`、`QRL_FEASIBLE_KAPPA`、
-`QRL_FEASIBLE_STEP_SIZE`、`QRL_FEASIBLE_TRUST_RADIUS` 和
-`QRL_FEASIBLE_AUDIT_INTERVAL` 环境变量调整。零代价 terminal-to-goal 边属于同一个
-`d(s,s') - c <= 0` 集合，使用单列的绝对容差，不按成本归一化。
+`QRL_FEASIBLE_STEP_SIZE`、`QRL_FEASIBLE_RESTORATION_STEP_SIZE`、
+`QRL_FEASIBLE_TRUST_RADIUS` 和 `QRL_FEASIBLE_AUDIT_INTERVAL` 环境变量调整。
+恢复阶段默认尝试系数 1.0，由参数空间 trust radius 和真实残差回溯限幅；
+可行阶段的 Global Push 方向默认尝试系数 0.01。二者分开是因为不可行初始化
+需要快速消除约束违反，而普通学习率不足以完成恢复。恢复阶段的 QP 仍使用
+Global Push 梯度，但只接受工作集真实违反下降的有限更新；这阶段不保证目标单调。
+通信巡检任务中，编码器将
+`task_feasible=1` 的终态与同一任务的抽象目标映射到同一个规范输入，因而零代价
+terminal-to-goal 距离按构造等于零。IQE 仍在映射后的输入上定义准距离；所有零代价边
+仍留在 replay 约束和审计中，不按成本归一化。此映射依赖通信巡检环境的 42 维
+任务观测布局，checkpoint 保存开关以供评估时使用。
 
 此模式的完整 critic 更新是 Global Push 梯度的 QP 方向，并直接写入参数；
 不执行 AdamW、weight decay 或 functional dual 更新。为保持目标和约束定义清楚，
 训练配置关闭 latent dynamics、temporal、goal-return 和 abstract-edge 的辅助损失；
 抽象目标边仍在 replay 约束中。该模式拒绝非零 n-step/MQE 权重。
 `train_metrics.csv` 记录工作集真实残差、QP elastic slack、恢复阶段、方向范数、
-回溯拒绝率、边访问数和 wall time；每隔指定步数审计全 replay，并在训练结束时
+回溯拒绝率、边访问数和 wall time；全 replay 审计单列普通边与零代价边违反率，
+并在训练结束时
 追加 `final_replay_audit` 行。工作集之外的边只有审计时才检查，离散更新不具有
 连续时间可行性证明的保证。比较实验应同时对齐 replay、Global Push 抽样支持、
 访问边数和总 wall time。
 
 通信巡检环境由 `--device-catalog` 指定工业设备 JSON 目录。任务目标仅从目录设备产生；Global Push 的 state–state 项则使用同一设备上下文下独立采样的全自由空间状态对。
+
+### Goal-set quotient + replay margin barrier
+
+可行方向 QP 在严格可行边界附近可能长期拒绝有限参数更新。替代诊断阶段使用同一个
+终态规范映射，并在高残差和近边界 replay 边上优化平滑 margin 惩罚：
+
+```bash
+PHASE=train_qrl_goal_set_barrier DEVICE=cpu \
+  OUTPUT_ROOT=results/diagnostic_goal_set_barrier \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+默认 `TOTAL_STEPS=2000`，每 critic 工作集 64 条边，其中最多一半来自最近一次审计的
+高违反边；每 25 step 审计全 replay。可用 `QRL_BARRIER_WORK_EDGES` 和
+`QRL_BARRIER_AUDIT_INTERVAL` 调整覆盖与计算量。
+`QRL_BARRIER_WEIGHT`、`QRL_BARRIER_MARGIN`、`QRL_BARRIER_TEMPERATURE` 和
+`QRL_BARRIER_TOPK` 控制近边界惩罚；默认权重为 500，学习率为 2e-5，
+可通过 `QRL_BARRIER_LR` 调整。此模式使用 AdamW 优化
+Global Push 与惩罚之和；
+审计单列普通边和零成本 anchor 的违反数量、比例及最大残差。它是软约束实验，
+不提供硬可行保证。应根据完整 smoke 的约束尾部、价值尺度与执行成功决定是否继续。
 
 统一 benchmark 包含 Hybrid A*、no-terminal MPPI、model-only MPPI、goal-set SAC、QRL，以及三个目标上下文 GCRL 基线：
 
