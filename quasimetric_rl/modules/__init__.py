@@ -31,6 +31,11 @@ class QRLLosses(Module):
         self.add_module('actor_loss', actor_loss)
         self.critic_losses = torch.nn.ModuleList(critic_losses)
 
+    def set_feasible_replay(self, dataset) -> None:
+        for critic_loss in self.critic_losses:
+            if critic_loss.feasible_direction is not None:
+                critic_loss.feasible_direction.set_replay(dataset)
+
     def forward(self, agent: QRLAgent, data: BatchData, *, optimize: bool = True) -> LossResult:
         # compute CriticBatchInfo
         critic_batch_infos = []

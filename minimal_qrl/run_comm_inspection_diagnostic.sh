@@ -27,6 +27,9 @@
 #   PHASE=train_qrl_kkt_functional DEVICE=mps \
 #     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_topology_v2 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_feasible_direction DEVICE=cpu \
+#     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_feasible_direction \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -119,6 +122,16 @@ train_qrl() {
     --num-critics "${NUM_CRITICS:-2}" \
     --qrl-cost-source "${QRL_COST_SOURCE:-negative_reward}" \
     --qrl-local-constraint-mode "${QRL_LOCAL_CONSTRAINT_MODE:-legacy_squared_hinge}" \
+    --qrl-feasible-kappa "${QRL_FEASIBLE_KAPPA:-1.0}" \
+    --qrl-feasible-step-size "${QRL_FEASIBLE_STEP_SIZE:-0.00005}" \
+    --qrl-feasible-trust-radius "${QRL_FEASIBLE_TRUST_RADIUS:-0.05}" \
+    --qrl-feasible-backtracks "${QRL_FEASIBLE_BACKTRACKS:-10}" \
+    --qrl-feasible-work-edges "${QRL_FEASIBLE_WORK_EDGES:-48}" \
+    --qrl-feasible-candidate-multiplier "${QRL_FEASIBLE_CANDIDATE_MULTIPLIER:-4}" \
+    --qrl-feasible-audit-interval "${QRL_FEASIBLE_AUDIT_INTERVAL:-100}" \
+    --qrl-feasible-tolerance "${QRL_FEASIBLE_TOLERANCE:-0.00001}" \
+    --qrl-feasible-anchor-tolerance "${QRL_FEASIBLE_ANCHOR_TOLERANCE:-0.000001}" \
+    --qrl-feasible-elastic-penalty "${QRL_FEASIBLE_ELASTIC_PENALTY:-100.0}" \
     --qrl-kkt-augmented-lagrangian-rho "${QRL_KKT_AUGMENTED_LAGRANGIAN_RHO:-1.0}" \
     --qrl-kkt-dual-hidden-sizes ${QRL_KKT_DUAL_HIDDEN_SIZES:-128 128} \
     --qrl-kkt-dual-max "${QRL_KKT_DUAL_MAX:-100000.0}" \
@@ -215,6 +228,35 @@ train_qrl_kkt_functional() {
   QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
   QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
   TRAIN_DIR="$kkt_train_dir" \
+    train_qrl
+}
+
+# Current-Jacobian projection experiment on the same diagnostic replay protocol.
+# The critic's complete update uses Global Push and the replay one-step edges;
+# the zero-cost abstract edges remain in that constraint set.
+train_qrl_feasible_direction() {
+  local feasible_train_dir="${FEASIBLE_DIRECTION_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_feasible_direction}"
+
+  echo "QRL topology-improvement ablation:"
+  echo "  variant=one_step_feasible_direction_qp"
+  echo "  global_push_objective=linear"
+  echo "  dataset_mode=${QRL_DATASET_MODE:-qrl_explore}"
+  echo "  work_edges=${QRL_FEASIBLE_WORK_EDGES:-48}"
+  echo "  kappa=${QRL_FEASIBLE_KAPPA:-1.0}"
+  echo "  step_size=${QRL_FEASIBLE_STEP_SIZE:-0.00005}"
+  echo "  trust_radius=${QRL_FEASIBLE_TRUST_RADIUS:-0.05}"
+  echo "  audit_interval=${QRL_FEASIBLE_AUDIT_INTERVAL:-100}"
+  echo "  output_dir=$feasible_train_dir"
+
+  QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
+  QRL_LOCAL_CONSTRAINT_MODE=feasible_direction \
+  GLOBAL_PUSH_OBJECTIVE=linear \
+  ABSTRACT_GOAL_EDGE_LOSS_WEIGHT=0.0 \
+  QRL_TEMPORAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_GOAL_RETURN_CONSTRAINT_WEIGHT=0.0 \
+  QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
+  TRAIN_DIR="$feasible_train_dir" \
     train_qrl
 }
 
@@ -467,6 +509,9 @@ case "$PHASE" in
   train_qrl_kkt_functional)
     train_qrl_kkt_functional
     ;;
+  train_qrl_feasible_direction)
+    train_qrl_feasible_direction
+    ;;
   train_qrl_mqe_waypoint_consistency)
     train_qrl_mqe_waypoint_consistency
     ;;
@@ -489,7 +534,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

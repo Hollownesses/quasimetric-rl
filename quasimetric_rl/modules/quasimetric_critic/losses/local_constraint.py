@@ -16,7 +16,7 @@ from . import CriticLossBase, CriticBatchInfo
 
 
 class LocalConstraintLoss(CriticLossBase):
-    MODES = ("legacy_squared_hinge", "kkt_functional")
+    MODES = ("legacy_squared_hinge", "kkt_functional", "feasible_direction")
 
     @attrs.define(kw_only=True)
     class Conf:
@@ -35,10 +35,10 @@ class LocalConstraintLoss(CriticLossBase):
 
         init_lagrange_multiplier: float = attrs.field(default=0.01, validator=attrs.validators.gt(0))
 
-        mode: Literal["legacy_squared_hinge", "kkt_functional"] = attrs.field(
+        mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction"] = attrs.field(
             default="legacy_squared_hinge",
             validator=attrs.validators.in_(
-                ("legacy_squared_hinge", "kkt_functional")
+                ("legacy_squared_hinge", "kkt_functional", "feasible_direction")
             ),
         )
         augmented_lagrangian_rho: float = attrs.field(
@@ -99,7 +99,7 @@ class LocalConstraintLoss(CriticLossBase):
     step_cost: float
     cost_source: Literal["fixed", "negative_reward"]
     init_lagrange_multiplier: float
-    mode: Literal["legacy_squared_hinge", "kkt_functional"]
+    mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction"]
     augmented_lagrangian_rho: float
     dual_hidden_sizes: Tuple[int, ...]
     dual_max: float
@@ -119,7 +119,7 @@ class LocalConstraintLoss(CriticLossBase):
         step_cost: float,
         cost_source: Literal["fixed", "negative_reward"],
         init_lagrange_multiplier: float,
-        mode: Literal["legacy_squared_hinge", "kkt_functional"] = "legacy_squared_hinge",
+        mode: Literal["legacy_squared_hinge", "kkt_functional", "feasible_direction"] = "legacy_squared_hinge",
         augmented_lagrangian_rho: float = 1.0,
         dual_hidden_sizes: Tuple[int, ...] = (128, 128),
         dual_max: float = 100000.0,
@@ -177,7 +177,7 @@ class LocalConstraintLoss(CriticLossBase):
             self.dual_network = None
             self.register_buffer("dual_raw_offset", None)
             self.register_buffer("dual_updates_started", None)
-        else:
+        elif self.mode == "kkt_functional":
             if observation_size is None or int(observation_size) <= 0:
                 raise ValueError(
                     "kkt_functional mode requires a positive observation_size"
@@ -198,6 +198,11 @@ class LocalConstraintLoss(CriticLossBase):
                 "dual_updates_started",
                 torch.tensor(False, dtype=torch.bool),
             )
+        else:
+            self.register_parameter("raw_lagrange_multiplier", None)
+            self.dual_network = None
+            self.register_buffer("dual_raw_offset", None)
+            self.register_buffer("dual_updates_started", None)
 
     def _target_cost(self, data: BatchData, dist: torch.Tensor) -> torch.Tensor:
         if self.cost_source == "fixed":
@@ -415,6 +420,17 @@ class LocalConstraintLoss(CriticLossBase):
 
     def forward(self, data: BatchData, critic_batch_info: CriticBatchInfo) -> LossResult:
 
+        if self.mode == "feasible_direction":
+            dist = critic_batch_info.critic.quasimetric_model(
+                critic_batch_info.zx, critic_batch_info.zy)
+            cost = self._target_cost(data, dist)
+            residual = dist - cost
+            return LossResult(loss=dist.sum() * 0.0, info=dict(
+                dist=dist.mean(), target_cost_mean=cost.mean(),
+                residual_max=residual.max(),
+                violation_fraction=(residual > 0).float().mean(),
+            ))
+
         if self.uses_separate_dual_updates:
             (
                 residual,
@@ -532,6 +548,8 @@ class LocalConstraintLoss(CriticLossBase):
         )
 
     def extra_repr(self) -> str:
+        if self.mode == "feasible_direction":
+            return f"mode={self.mode}, step_cost={self.step_cost:g}, cost_source={self.cost_source}"
         if self.mode == "legacy_squared_hinge":
             return (
                 f"mode={self.mode}, epsilon={self.epsilon:g}, "

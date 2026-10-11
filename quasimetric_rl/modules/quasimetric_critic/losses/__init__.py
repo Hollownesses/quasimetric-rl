@@ -33,6 +33,7 @@ class CriticLossBase(LossBase):
 
 from .global_push import GlobalPushLoss
 from .local_constraint import LocalConstraintLoss
+from .feasible_direction import FeasibleDirectionConf, FeasibleDirectionUpdater
 from .latent_dynamics import LatentDynamicsLoss
 from .abstract_goal_edge import AbstractGoalEdgeLoss
 from .temporal_path import (
@@ -59,6 +60,7 @@ class QuasimetricCriticLosses(CriticLossBase):
 
         critic_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-4)
         lagrange_mult_optim: AdamWSpec.Conf = AdamWSpec.Conf(lr=1e-2)
+        feasible_direction: FeasibleDirectionConf = FeasibleDirectionConf()
 
         def make(self, critic: QuasimetricCritic, total_optim_steps: int) -> 'QuasimetricCriticLosses':
             return QuasimetricCriticLosses(
@@ -74,6 +76,7 @@ class QuasimetricCriticLosses(CriticLossBase):
                 mqe_waypoint=self.mqe_waypoint.make(critic),
                 critic_optim_spec=self.critic_optim.make(),
                 lagrange_mult_optim_spec=self.lagrange_mult_optim.make(),
+                feasible_direction_conf=self.feasible_direction,
             )
 
     global_push: GlobalPushLoss
@@ -95,7 +98,8 @@ class QuasimetricCriticLosses(CriticLossBase):
                  abstract_goal_edge: AbstractGoalEdgeLoss, temporal_path: TemporalPathConstraintLoss,
                  goal_return: GoalReturnConstraintLoss, nstep_goal: NstepGoalConsistencyLoss,
                  mqe_waypoint: MQEInspiredWaypointConsistencyLoss,
-                 critic_optim_spec: AdamWSpec, lagrange_mult_optim_spec: AdamWSpec):
+                 critic_optim_spec: AdamWSpec, lagrange_mult_optim_spec: AdamWSpec,
+                 feasible_direction_conf: Optional[FeasibleDirectionConf] = None):
         super().__init__()
         self.global_push = global_push
         self.local_constraint = local_constraint
@@ -105,6 +109,16 @@ class QuasimetricCriticLosses(CriticLossBase):
         self.goal_return = goal_return
         self.nstep_goal = nstep_goal
         self.mqe_waypoint = mqe_waypoint
+        self.feasible_direction = (
+            FeasibleDirectionUpdater(feasible_direction_conf or FeasibleDirectionConf())
+            if local_constraint.mode == "feasible_direction" else None
+        )
+        if self.feasible_direction is not None and any(float(weight) != 0.0 for weight in (
+            latent_dynamics.weight, abstract_goal_edge.weight, temporal_path.weight,
+            goal_return.weight, nstep_goal.weight, mqe_waypoint.weight,
+        )):
+            raise ValueError("feasible_direction requires zero auxiliary loss weights; "
+                             "its complete critic update is the Global Push QP direction")
 
         self.critic_optim, self.critic_sched = critic_optim_spec.create_optim_scheduler(
             critic.parameters(), total_optim_steps)
@@ -113,7 +127,8 @@ class QuasimetricCriticLosses(CriticLossBase):
             dual_optim_steps *= int(local_constraint.dual_steps)
         self.lagrange_mult_optim, self.lagrange_mult_sched = lagrange_mult_optim_spec.create_optim_scheduler(
             local_constraint.parameters(), dual_optim_steps)
-        assert len(list(local_constraint.parameters())) > 0
+        if self.feasible_direction is None:
+            assert len(list(local_constraint.parameters())) > 0
 
     def _combined_result(
         self,
@@ -136,6 +151,13 @@ class QuasimetricCriticLosses(CriticLossBase):
                 optimize: bool = True) -> LossResult:
         if not optimize:
             return self._combined_result(data, critic_batch_info)
+
+        if self.feasible_direction is not None:
+            result = self.feasible_direction.step(
+                data, critic_batch_info, self.global_push, self.local_constraint)
+            self.nstep_goal.update_target(critic_batch_info.critic)
+            self.mqe_waypoint.update_target(critic_batch_info.critic)
+            return result
 
         dual_update_info = None
         if self.local_constraint.uses_separate_dual_updates:

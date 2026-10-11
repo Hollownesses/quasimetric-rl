@@ -22,7 +22,7 @@ class LatentDynamicsLoss(CriticLossBase):
     class Conf:
         # config / argparse uses this to specify behavior
 
-        weight: float = attrs.field(default=0.1, validator=attrs.validators.gt(0))
+        weight: float = attrs.field(default=0.1, validator=attrs.validators.ge(0))
 
         def make(self) -> 'LatentDynamicsLoss':
             return LatentDynamicsLoss(
