@@ -37,6 +37,12 @@ class LatentDynamicsLoss(CriticLossBase):
 
     def forward(self, data: BatchData, critic_batch_info: CriticBatchInfo) -> LossResult:
         zx = critic_batch_info.zx
+        if self.weight == 0.0:
+            # Leave inactive parameters at grad=None so restored Adam moments
+            # cannot move the dynamics model when its objective is disabled.
+            zero = zx.sum() * 0.0
+            return LossResult(loss=zero, info=dict(
+                sq_dists=zero.detach(), dist_p2n=zero.detach(), dist_n2p=zero.detach()))
         zy = critic_batch_info.zy
         actions = data.actions
         abstract_mask = data.transition_infos.get("abstract_goal_edge") if data.transition_infos else None

@@ -50,6 +50,10 @@
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_constraint_only_recovery DEVICE=cpu \
+#     OUTPUT_ROOT=./results/diagnostic_push_support_5k RECOVERY_PASSES=2 \
+#     QRL_INIT_CHECKPOINT=./results/diagnostic_push_support_5k/qrl_training_push_support_b1/checkpoint_03000.pth \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=replay_constraint_audit DEVICE=cpu \
 #     OUTPUT_ROOT=./results/diagnostic_push_support_5k \
 #     QRL_CHECKPOINTS="checkpoint_2k.pth checkpoint_3k.pth checkpoint_5k.pth" \
@@ -87,7 +91,7 @@ ORACLE_VALIDATION_BANK="${ORACLE_VALIDATION_BANK:-$SHARED_ORACLE_DIR/hybrid_asta
 ORACLE_FINAL_TEST_BANK="${ORACLE_FINAL_TEST_BANK:-$SHARED_ORACLE_DIR/hybrid_astar_final_test_192.json}"
 
 # Offline audit uses the saved training scenario and must not regenerate it.
-if [[ "$PHASE" != "replay_constraint_audit" ]]; then
+if [[ "$PHASE" != "replay_constraint_audit" && "$PHASE" != "train_qrl_constraint_only_recovery" ]]; then
   "$PYTHON_BIN" -m minimal_qrl.industry_exp.diagnostic_scenario \
     --output-dir "$CONFIG_DIR"
 fi
@@ -248,6 +252,30 @@ train_qrl_push_support() {
   QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
   TRAIN_DIR="$push_train_dir" \
     train_qrl
+}
+
+# Diagnostic restoration: saved KKT/Adam state, no push or dynamics objective,
+# and complete uniform replay passes (no dropped tail or success oversampling).
+train_qrl_constraint_only_recovery() {
+  local init_checkpoint="${QRL_INIT_CHECKPOINT:-$OUTPUT_ROOT/qrl_training_push_support_b1/checkpoint_03000.pth}"
+  local recovery_dir="${RECOVERY_TRAIN_DIR:-$OUTPUT_ROOT/qrl_constraint_only_recovery}"
+  local batch_args=()
+  if [[ -n "${BATCH_SIZE:-}" ]]; then
+    batch_args+=(--batch-size "$BATCH_SIZE")
+  fi
+  echo "Constraint-only recovery: checkpoint=$init_checkpoint passes=${RECOVERY_PASSES:-2}"
+  "$PYTHON_BIN" -m minimal_qrl.constraint_only_recovery \
+    --init-checkpoint "$init_checkpoint" \
+    --output-dir "$recovery_dir" \
+    --replay-cache "${REPLAY_AUDIT_CACHE:-$OUTPUT_ROOT/replay_constraint_audit/verified_replay.pt}" \
+    --recovery-passes "${RECOVERY_PASSES:-2}" \
+    --device "${DEVICE:-cpu}" \
+    --cpu-threads "${REPLAY_AUDIT_CPU_THREADS:-4}" \
+    --audit-chunk-size "${REPLAY_AUDIT_CHUNK_SIZE:-1024}" \
+    --tolerance "${REPLAY_AUDIT_TOLERANCE:-0.00001}" \
+    --anchor-tolerance "${REPLAY_AUDIT_ANCHOR_TOLERANCE:-0.000001}" \
+    --log-interval "${LOG_INTERVAL:-100}" \
+    ${batch_args[@]+"${batch_args[@]}"}
 }
 
 # One-sided n-step sanity check.  It reuses train_qrl and changes only the
@@ -641,6 +669,9 @@ case "$PHASE" in
   train_qrl_push_support_witnessed)
     train_qrl_push_support witnessed trajectory witnessed
     ;;
+  train_qrl_constraint_only_recovery)
+    train_qrl_constraint_only_recovery
+    ;;
   train_qrl_nstep_upper_bound)
     train_qrl_nstep_upper_bound
     ;;
@@ -678,7 +709,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

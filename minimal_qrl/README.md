@@ -390,6 +390,53 @@ B0 与 control 没有路径跨度，报告空间和 heading 差，时间跨度�
 优化器变成硬可行求解器，也不保证有限网络的未覆盖状态泛化。若尺度改善伴随关键区域
 失去信号，应结合覆盖报告判断；覆盖基本保持而 topology 无改善则不支持支持错位是主因。
 
+### Constraint-only 恢复能力诊断
+
+从 B1 3k checkpoint 开始，严格恢复 critic、functional dual、两个 Adam 的动量与
+step counter，以及 scheduler；保留原 KKT functional / rho / dual 参数、学习率和
+anchor loss 权重。关闭 task/state Global Push、latent dynamics、temporal、goal-return、
+n-step、MQE。不会启用 goal-set quotient、切换优化器或加入路径成本 target。
+
+```bash
+PHASE=train_qrl_constraint_only_recovery DEVICE=cpu \
+  OUTPUT_ROOT=results/diagnostic_push_support_5k \
+  QRL_INIT_CHECKPOINT=results/diagnostic_push_support_5k/qrl_training_push_support_b1/checkpoint_03000.pth \
+  RECOVERY_PASSES=2 \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+默认写入 `$OUTPUT_ROOT/qrl_constraint_only_recovery`，可用 `RECOVERY_TRAIN_DIR` 指定
+新目录；已有实验不会覆盖。`REPLAY_AUDIT_CACHE` 默认复用全 replay 审计的
+`verified_replay.pt`，每次校验源训练 fingerprint；没有缓存时从保存的起点重建。
+不会重新生成训练 scenario。`BATCH_SIZE` 未设置时沿用源训练 batch size；
+`RECOVERY_PASSES` 默认 2，`TOTAL_STEPS` 不控制本实验预算。
+
+每轮对全部真实边和 anchor 做一次固定 seed 的随机排列、不放回遍历，保留末尾
+不足一个 batch 的所有转移，不做成功转移加权重采样。每轮保存逐边 visit count，
+并要求每个值严格等于 1。200,000 条真实边 + 1,102 条 anchor、batch size 256 时，
+每轮 786 次更新，3k 起点两轮结束在总 step 4572。
+这改变了原训练的重采样方式，是恢复能力诊断，不是单独改变 push 权重的严格消融。
+后续开关 push 的分支对照应保持相同的遍历方式。
+
+latent dynamics 关闭时直接跳过 forward，而非仅将 loss 乘零；否则旧 Adam 动量可能
+在零梯度下继续改变其参数。恢复实验逐轮检查 latent dynamics 参数完全不变，
+同时继续更新 critic 与 dual。所有状态必须完整加载，失败不会降级为 critic-only。
+
+恢复前和每轮结束自动审计全 replay，输出：
+
+- `recovery_audit.json` / `.csv`：每 critic 与逐边最坏 critic 的单步、anchor、成功
+  终止边、U 区域等统计，以及相同 1024 个固定 replay 状态的 task-goal 距离尺度。
+- `pass_XX_edges.npz` / `pass_XX_top_violations.csv`：逐边残差和最严重违反；
+  `pass_01_visits.npz` 等保存每轮覆盖计数。
+- `checkpoint_03000.pth`（未经恢复的起点）及每轮结束的 checkpoint，保留完整
+  optimizer 状态；这些 checkpoint 可再次交给 `PHASE=replay_constraint_audit`。
+- `recovery_manifest.json`、`recovery_train_metrics.csv` 和原起点的可复现元数据。
+
+`REPLAY_AUDIT_CPU_THREADS`、`REPLAY_AUDIT_CHUNK_SIZE`、普通边/anchor tolerance 和
+`LOG_INTERVAL` 可调整审计与日志。AL 总 loss 可为负值，不以它判断恢复成功；需要
+同时看全量比例、严重尾部、成功终止边与零成本 anchor。距离整体缩小甚至塌缩也能
+满足约束，本实验只检验可行性恢复能力，不能据此证明导航质量改善。
+
 ### 离线全 replay 单步约束审计
 
 `PHASE=replay_constraint_audit` 不训练模型，也不改写训练 scenario。对 control/B1
