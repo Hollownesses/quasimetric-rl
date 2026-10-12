@@ -524,6 +524,7 @@ def collect_goal_set_comm_episode_pair(
     seed: Optional[int] = None,
     context_id: int = 0,
     device_id: Optional[str] = None,
+    include_global_push_pairs: bool = True,
 ) -> Tuple[EpisodeData, Optional[EpisodeData]]:
     """
     Collect one communication-inspection goal-set episode plus one abstract
@@ -583,7 +584,7 @@ def collect_goal_set_comm_episode_pair(
             context_id=context_id,
             env=env,
             global_push_seed=None if seed is None else int(seed + 32452843),
-            include_global_push_pairs=True,
+            include_global_push_pairs=include_global_push_pairs,
             task_success_episode=success,
             goal_return_costs=(
                 _remaining_nonnegative_costs(rewards_array) if success else None
@@ -623,6 +624,7 @@ def collect_task_aware_comm_teacher_episode_pair(
     task_context=None,
     task_goal_obs: Optional[np.ndarray] = None,
     collection_stats: Optional[dict[str, Any]] = None,
+    include_global_push_pairs: bool = True,
 ) -> Tuple[Optional[EpisodeData], Optional[EpisodeData]]:
     """
     Collect a successful task-aware Dubins teacher trajectory:
@@ -726,7 +728,7 @@ def collect_task_aware_comm_teacher_episode_pair(
                     context_id=context_id,
                     env=env,
                     global_push_seed=None if seed is None else int(seed + 49979687 + attempt),
-                    include_global_push_pairs=True,
+                    include_global_push_pairs=include_global_push_pairs,
                     teacher_guided=True,
                     task_success_episode=True,
                     goal_return_costs=_remaining_nonnegative_costs(rewards_array),
@@ -785,6 +787,7 @@ def create_budgeted_comm_dataset(
     seed: Optional[int],
     task_aware_teacher_ratio: float,
     collection_stats: Optional[dict[str, Any]] = None,
+    include_global_push_pairs: bool = True,
 ) -> Iterator[EpisodeData]:
     """Collect an exact, task-balanced real-transition budget.
 
@@ -842,6 +845,7 @@ def create_budgeted_comm_dataset(
         episode_seed = None if seed is None else int(seed + context_id * 104729)
         episode, abstract_episode = collect_goal_set_comm_episode_pair(
             env,
+            include_global_push_pairs=include_global_push_pairs,
             max_steps=max_steps_per_episode,
             seed=episode_seed,
             context_id=context_id,
@@ -883,6 +887,7 @@ def create_budgeted_comm_dataset(
             attempted_before = int(stats["attempted_teacher_steps"])
             teacher_episode, teacher_abstract = collect_task_aware_comm_teacher_episode_pair(
                 env,
+                include_global_push_pairs=include_global_push_pairs,
                 max_steps=max_steps_per_episode,
                 seed=teacher_seed,
                 context_id=context_id,
@@ -930,6 +935,7 @@ def collect_qrl_explore_episode_pair(
     device_id: str,
     config: QRLExploreConfig,
     budget_cutoff: bool,
+    include_global_push_pairs: bool = True,
 ) -> tuple[EpisodeData, Optional[EpisodeData], dict[str, Any]]:
     """Collect one persistent-random, target-blind exploration trajectory."""
 
@@ -1063,7 +1069,7 @@ def collect_qrl_explore_episode_pair(
             context_id=context_id,
             env=env,
             global_push_seed=None if seed is None else int(seed + 49_979_687),
-            include_global_push_pairs=True,
+            include_global_push_pairs=include_global_push_pairs,
             exploration=True,
             exploration_start_index=int(start_index),
             exploration_episode_id=int(context_id),
@@ -1113,6 +1119,7 @@ def create_qrl_explore_comm_dataset(
     max_steps_per_episode: int,
     seed: Optional[int],
     collection_stats: Optional[dict[str, Any]] = None,
+    include_global_push_pairs: bool = True,
 ) -> Iterator[EpisodeData]:
     """Collect an exact attempted-step budget with no goal-directed controller.
 
@@ -1296,6 +1303,7 @@ def create_qrl_explore_comm_dataset(
         episode_seed = None if seed is None else int(seed + 1_000_003 + context_id * 104_729)
         episode, abstract_episode, diagnostics = collect_qrl_explore_episode_pair(
             env,
+            include_global_push_pairs=include_global_push_pairs,
             start_state=start_state,
             start_index=start_index,
             max_steps=episode_limit,
@@ -1413,6 +1421,7 @@ def create_dataset(
     target_env_transitions: Optional[int] = None,
     collection_stats: Optional[dict[str, Any]] = None,
     qrl_explore_config: Optional[QRLExploreConfig] = None,
+    include_global_push_pairs: bool = True,
 ) -> Iterator[EpisodeData]:
     """
     创建数据集，支持多种环境
@@ -1437,6 +1446,7 @@ def create_dataset(
             raise ValueError("QRL-explore is only supported for communication goal-set environments")
         yield from create_qrl_explore_comm_dataset(
             env,
+            include_global_push_pairs=include_global_push_pairs,
             config=qrl_explore_config,
             max_steps_per_episode=max_steps_per_episode,
             seed=seed,
@@ -1451,6 +1461,7 @@ def create_dataset(
     ):
         yield from create_budgeted_comm_dataset(
             env,
+            include_global_push_pairs=include_global_push_pairs,
             target_env_transitions=int(target_env_transitions),
             max_steps_per_episode=max_steps_per_episode,
             seed=seed,
@@ -1480,6 +1491,7 @@ def create_dataset(
             episode_seed = (seed + i) if seed is not None else None
             episode, abstract_episode = collect_goal_set_comm_episode_pair(
                 env,
+                include_global_push_pairs=include_global_push_pairs,
                 max_steps=max_steps_per_episode,
                 seed=episode_seed,
                 context_id=i,
@@ -1495,6 +1507,7 @@ def create_dataset(
                 teacher_seed = None if seed is None else int(seed + 1_000_003 + i * 9973 + teacher_idx)
                 teacher_episode, teacher_abstract_episode = collect_task_aware_comm_teacher_episode_pair(
                     env,
+                    include_global_push_pairs=include_global_push_pairs,
                     max_steps=max_steps_per_episode,
                     seed=teacher_seed,
                     context_id=i,

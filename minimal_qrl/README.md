@@ -343,6 +343,53 @@ terminal-to-goal 距离按构造等于零。IQE 仍在映射后的输入上定�
 
 通信巡检环境由 `--device-catalog` 指定工业设备 JSON 目录。任务目标仅从目录设备产生；Global Push 的 state–state 项则使用同一设备上下文下独立采样的全自由空间状态对。
 
+### Global Push 支持对照（主线 B）
+
+以下四个 `PHASE` 复用相同的 qrl_explore 数据、线性 push、task/state=.6/.4，
+默认采用 `kkt_functional` 单步约束配置；关闭 temporal、goal-return、n-step 和 MQE
+路径辅助 loss。可统一设置 `QRL_LOCAL_CONSTRAINT_MODE=goal_set_barrier` 等切换
+优化器，四组应使用相同值。其他训练参数、seed、budget、成功转移权重也应对齐。
+
+```bash
+for phase in train_qrl_push_support_control train_qrl_push_support_b0 \
+             train_qrl_push_support_b1 train_qrl_push_support_witnessed; do
+  PHASE="$phase" DEVICE=mps SEED=42 \
+    OUTPUT_ROOT=results/diagnostic_push_support \
+    bash minimal_qrl/run_comm_inspection_diagnostic.sh
+done
+```
+
+各组写入独立的 `qrl_training_push_support_{control,b0,b1,witnessed}` 目录。
+`PUSH_SUPPORT_TRAIN_DIR` 可覆盖单次实验目录。
+
+- control：保留环境合法状态的独立随机配对。
+- B0：两端独立抽自相同 `context_id` 和相同 task goal 的物理 replay 状态池，
+  包含末端状态、排除抽象伪边；允许跨 episode、逆时间与相同状态配对，不能保证有路径。
+- B1：每个物理转移源状态与同一连续片段的未来状态配对；均匀抽取
+  `k ∈ [1, 剩余片段步数]`，包含失败和成功轨迹，不跨终止、timeout、context 变化或伪边。
+  task 分支保持原样，因此本组只检验 state-state 支持错位。
+- witnessed：在 B1 基础上，只保留有完整成功后缀且确实连接到 replay 中同 context
+  合法零代价 anchor 的 task 源状态。预算截断的成功轨迹、失败轨迹和独立抽取的
+  anchor 不算成功见证。没有见证时 task push 为空并明确记录，不用 teacher 补齐。
+
+所有模式沿用每个 replay row 一个固定 pair 的 bank，使用独立 seed；配对改变不修改
+replay 转移或其采样权重。片段只决定 push 状态对，不使用累计成本 target、最优轨迹
+或最短路。`--global-push-state-sampling environment|replay|trajectory` 和
+`--global-push-task-sampling all|witnessed` 也可直接组合使用。默认值保留原训练行为。
+
+每组输出 `global_push_sampling_stats.json`（context/device/heading 覆盖、成功/失败
+pair 数、时间跨度直方图及分位数、位置/heading 差分位数、task 保留比例及成功加权后的
+采样质量比例）和 `global_push_pair_coverage.csv`（逐位置/heading/context 的 replay、
+pair 两端与 task 计数，包含零信号网格）。诊断区域计数可检查 U 内信号是否丢失。
+报告中的 `physical_replay_sha256` 可确认四组使用相同 replay 转移与任务上下文。
+`GLOBAL_PUSH_COVERAGE_POSITION_RESOLUTION` / `GLOBAL_PUSH_COVERAGE_HEADING_BINS`
+默认 1.0 / 12。覆盖率以物理 replay 网格为参照，不表示未访问环境状态也获得了约束。
+B0 与 control 没有路径跨度，报告空间和 heading 差，时间跨度明确为空。
+
+见证路径只有在对应单步约束及 anchor 被满足时才提供距离上界；此实验没有让软约束
+优化器变成硬可行求解器，也不保证有限网络的未覆盖状态泛化。若尺度改善伴随关键区域
+失去信号，应结合覆盖报告判断；覆盖基本保持而 topology 无改善则不支持支持错位是主因。
+
 ### Goal-set quotient + replay margin barrier
 
 可行方向 QP 在严格可行边界附近可能长期拒绝有限参数更新。替代诊断阶段使用同一个

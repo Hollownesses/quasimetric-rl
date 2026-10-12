@@ -73,6 +73,10 @@ from minimal_qrl.dataset import (
     build_qrl_exploration_start_bank,
     create_dataset,
 )
+from minimal_qrl.global_push_sampling import (
+    configure_global_push_sampling,
+    write_global_push_coverage,
+)
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
 from minimal_qrl.eval.comm_inspection_oracle_bank import (
     CommInspectionOracleBankConfig,
@@ -403,6 +407,9 @@ def _build_topology_improvement_metadata(
     else:
         variant = "qrl_control"
 
+    if str(args.global_push_state_sampling) != "environment" or str(args.global_push_task_sampling) != "all":
+        variant = "global_push_support_" + str(args.global_push_state_sampling) + "_task_" + str(args.global_push_task_sampling)
+
     return {
         "variant": variant,
         "local_constraint_mode": str(args.qrl_local_constraint_mode),
@@ -436,6 +443,10 @@ def _build_topology_improvement_metadata(
             if str(args.qrl_local_constraint_mode) == "goal_set_barrier" else None
         ),
         "global_push_objective": str(args.global_push_objective),
+        "global_push_state_sampling": str(args.global_push_state_sampling),
+        "global_push_task_sampling": str(args.global_push_task_sampling),
+        "global_push_abstract_goal_ratio": float(args.global_push_abstract_goal_ratio),
+        "global_push_state_goal_ratio": float(args.global_push_state_goal_ratio),
         "global_push_softplus_offset": float(args.global_push_softplus_offset),
         "global_push_softplus_beta": float(args.global_push_softplus_beta),
         "kkt_augmented_lagrangian_rho": float(
@@ -609,6 +620,9 @@ def train(args):
     if (str(args.qrl_local_constraint_mode) in ("feasible_direction", "goal_set_barrier") and
         args.env_type != 'comm_inspection_dubins_uav'):
         raise ValueError("goal-set constraint modes require comm_inspection_dubins_uav")
+    if ((args.global_push_state_sampling != 'environment' or args.global_push_task_sampling != 'all')
+            and args.env_type != 'comm_inspection_dubins_uav'):
+        raise ValueError('Global Push support experiments require comm_inspection_dubins_uav')
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         args.task_aware_teacher_ratio = 0.0
         args.target_env_transitions = None
@@ -798,6 +812,7 @@ def train(args):
                 target_env_transitions=getattr(args, 'target_env_transitions', None),
                 collection_stats=collection_stats,
                 qrl_explore_config=qrl_explore_config,
+                include_global_push_pairs=(args.global_push_state_sampling == "environment"),
             )
         
         register_offline_env(
@@ -816,6 +831,29 @@ def train(args):
         future_observation_discount=0.99,
     )
     dataset = dataset_conf.make(dummy=False)
+    if args.env_type == 'comm_inspection_dubins_uav':
+        push_sampling = configure_global_push_sampling(
+            dataset, state_mode=args.global_push_state_sampling,
+            task_mode=args.global_push_task_sampling, seed=args.seed,
+        )
+        push_coverage = write_global_push_coverage(
+            dataset, create_env_fn(), output_dir, sampling=push_sampling,
+            position_resolution=args.global_push_coverage_position_resolution,
+            heading_bins=args.global_push_coverage_heading_bins,
+            success_weight=args.qrl_success_transition_weight,
+            regions=_exploration_regions_from_scenario(args._scenario_data),
+        )
+        push_coverage_path = os.path.join(output_dir, 'global_push_sampling_stats.json')
+        with open(push_coverage_path, 'w', encoding='utf-8') as handle:
+            json.dump(push_coverage, handle, ensure_ascii=False, indent=2)
+        topology_improvement_metadata['global_push_sampling'] = push_sampling
+        topology_improvement_metadata['global_push_sampling_stats_path'] = os.path.abspath(push_coverage_path)
+        collection_stats['global_push_coverage'] = push_coverage['overall']
+        logger.info('Global Push sampling: %s; coverage=%s; task sampler retention=%.4f; stats=%s',
+                    push_sampling, push_coverage['overall'],
+                    push_coverage['task_retained_sampler_fraction'], push_coverage_path)
+        if args.global_push_task_sampling == 'witnessed' and not bool(dataset.raw_data.transition_infos['global_push_task_mask'].any()):
+            logger.warning('No task states have a complete replay path to a recorded legal anchor; task push is empty')
     if mqe_sampling_config is not None:
         dataset.configure_mqe_inspired_waypoint_sampling(mqe_sampling_config)
         logger.info(
@@ -2051,6 +2089,12 @@ def main():
                         help='goal-set GlobalPush 主项权重：普通状态到当前上下文抽象 G_task')
     parser.add_argument('--global-push-state-goal-ratio', type=float, default=0.4,
                         help='goal-set GlobalPush 辅助项权重：同上下文普通 state-state 几何结构')
+    parser.add_argument('--global-push-state-sampling', choices=['environment', 'replay', 'trajectory'],
+                        default='environment', help='Global Push state pair support: original / B0 / B1')
+    parser.add_argument('--global-push-task-sampling', choices=['all', 'witnessed'],
+                        default='all', help='Keep task branch unchanged or retain only successful replay suffixes connected to a recorded legal anchor')
+    parser.add_argument('--global-push-coverage-position-resolution', type=float, default=1.0)
+    parser.add_argument('--global-push-coverage-heading-bins', type=int, default=12)
     parser.add_argument('--abstract-goal-edge-loss-weight', type=float, default=1.0,
                         help='抽象零代价边 d(s_terminal, G_task)^2 的损失权重')
     parser.add_argument(

@@ -33,6 +33,20 @@
 #   PHASE=train_qrl_goal_set_barrier DEVICE=cpu \
 #     OUTPUT_ROOT=./results/diagnostic_u_shadow_corridors_goal_set_barrier \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   # Mainline B: identical linear .6/.4 push and replay one-step constraints.
+#   # Run all four with the same SEED, budget, optimizer and total steps.
+#   PHASE=train_qrl_push_support_control DEVICE=mps \
+#     OUTPUT_ROOT=./results/diagnostic_push_support \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_push_support_b0 DEVICE=mps \
+#     OUTPUT_ROOT=./results/diagnostic_push_support \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_push_support_b1 DEVICE=mps \
+#     OUTPUT_ROOT=./results/diagnostic_push_support \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_push_support_witnessed DEVICE=mps \
+#     OUTPUT_ROOT=./results/diagnostic_push_support \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -161,6 +175,10 @@ train_qrl() {
     --qrl-kkt-fail-violation-fraction "${QRL_KKT_FAIL_VIOLATION_FRACTION:-0.05}" \
     --qrl-kkt-fail-lagrange-max "${QRL_KKT_FAIL_LAGRANGE_MAX:-1e-8}" \
     --global-push-objective "${GLOBAL_PUSH_OBJECTIVE:-softplus}" \
+    --global-push-state-sampling "${GLOBAL_PUSH_STATE_SAMPLING:-environment}" \
+    --global-push-task-sampling "${GLOBAL_PUSH_TASK_SAMPLING:-all}" \
+    --global-push-coverage-position-resolution "${GLOBAL_PUSH_COVERAGE_POSITION_RESOLUTION:-1.0}" \
+    --global-push-coverage-heading-bins "${GLOBAL_PUSH_COVERAGE_HEADING_BINS:-12}" \
     --global-push-softplus-offset "${GLOBAL_PUSH_SOFTPLUS_OFFSET:-15.0}" \
     --global-push-softplus-beta "${GLOBAL_PUSH_SOFTPLUS_BETA:-0.1}" \
     --global-push-abstract-goal-ratio "${GLOBAL_PUSH_ABSTRACT_GOAL_RATIO:-0.6}" \
@@ -195,6 +213,34 @@ train_qrl() {
     --oracle-final-bootstrap-samples "${ORACLE_FINAL_BOOTSTRAP_SAMPLES:-2000}" \
     --visualization-interval "${VIS_INTERVAL:-1000}" \
     --planning-eval-interval 0
+}
+
+# Sampling-only ablations; no cumulative path-cost targets or optimal paths.
+# B1 leaves task push unchanged. Only the separate witnessed run restricts it.
+train_qrl_push_support() {
+  local variant="$1"
+  local state_sampling="$2"
+  local task_sampling="$3"
+  local push_train_dir="${PUSH_SUPPORT_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_push_support_$variant}"
+  echo "QRL Global Push support ablation: $variant"
+  echo "  state_sampling=$state_sampling task_sampling=$task_sampling"
+  echo "  objective=linear task/state=0.6/0.4"
+  echo "  local_constraint_mode=${QRL_LOCAL_CONSTRAINT_MODE:-kkt_functional}"
+  echo "  output_dir=$push_train_dir"
+
+  QRL_DATASET_MODE="${QRL_DATASET_MODE:-qrl_explore}" \
+  QRL_LOCAL_CONSTRAINT_MODE="${QRL_LOCAL_CONSTRAINT_MODE:-kkt_functional}" \
+  GLOBAL_PUSH_OBJECTIVE=linear \
+  GLOBAL_PUSH_ABSTRACT_GOAL_RATIO=0.6 \
+  GLOBAL_PUSH_STATE_GOAL_RATIO=0.4 \
+  GLOBAL_PUSH_STATE_SAMPLING="$state_sampling" \
+  GLOBAL_PUSH_TASK_SAMPLING="$task_sampling" \
+  QRL_TEMPORAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_GOAL_RETURN_CONSTRAINT_WEIGHT=0.0 \
+  QRL_NSTEP_GOAL_CONSTRAINT_WEIGHT=0.0 \
+  QRL_MQE_WAYPOINT_CONSISTENCY_WEIGHT=0.0 \
+  TRAIN_DIR="$push_train_dir" \
+    train_qrl
 }
 
 # One-sided n-step sanity check.  It reuses train_qrl and changes only the
@@ -551,6 +597,18 @@ case "$PHASE" in
   train_qrl)
     train_qrl
     ;;
+  train_qrl_push_support_control)
+    train_qrl_push_support control environment all
+    ;;
+  train_qrl_push_support_b0)
+    train_qrl_push_support b0 replay all
+    ;;
+  train_qrl_push_support_b1)
+    train_qrl_push_support b1 trajectory all
+    ;;
+  train_qrl_push_support_witnessed)
+    train_qrl_push_support witnessed trajectory witnessed
+    ;;
   train_qrl_nstep_upper_bound)
     train_qrl_nstep_upper_bound
     ;;
@@ -585,7 +643,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

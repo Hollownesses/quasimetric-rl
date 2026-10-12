@@ -130,10 +130,23 @@ class GlobalPushLoss(CriticLossBase):
                 normal_edge = ~abstract_edge.to(device=device, dtype=torch.bool)
                 valid_task &= normal_edge
                 valid_state &= normal_edge
+            task_candidates = valid_task.clone()
+            task_mask = data.transition_infos.get("global_push_task_mask")
+            if task_mask is not None:
+                valid_task &= task_mask.to(device=device, dtype=torch.bool)
 
             zero = critic_batch_info.zx.sum() * 0.0
             total_loss = zero
             info: Dict[str, torch.Tensor] = {}
+            info["global_push_task_set/retained_fraction"] = (
+                valid_task.float().sum() / task_candidates.float().sum().clamp_min(1)
+            )
+            task_witness = data.transition_infos.get("global_push_task_witness_mask")
+            if task_witness is not None:
+                info["global_push_task_set/witness_fraction"] = (
+                    (task_candidates & task_witness.to(device=device, dtype=torch.bool)).float().sum()
+                    / task_candidates.float().sum().clamp_min(1)
+                )
 
             if bool(valid_task.any()) and float(self.abstract_goal_ratio) > 0.0:
                 task_goals = data.transition_infos["task_goal_observations"].to(
