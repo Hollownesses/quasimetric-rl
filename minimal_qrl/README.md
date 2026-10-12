@@ -390,6 +390,61 @@ B0 与 control 没有路径跨度，报告空间和 heading 差，时间跨度�
 优化器变成硬可行求解器，也不保证有限网络的未覆盖状态泛化。若尺度改善伴随关键区域
 失去信号，应结合覆盖报告判断；覆盖基本保持而 topology 无改善则不支持支持错位是主因。
 
+### 离线全 replay 单步约束审计
+
+`PHASE=replay_constraint_audit` 不训练模型，也不改写训练 scenario。对 control/B1
+的 2k、3k、5k 可使用：
+
+```bash
+smoke=results/diagnostic_push_support_smoke
+extended=results/diagnostic_push_support_5k
+checkpoints=()
+for variant in control b1; do
+  checkpoints+=(
+    "$smoke/qrl_training_push_support_$variant/checkpoint_02000.pth"
+    "$extended/qrl_training_push_support_$variant/checkpoint_03000.pth"
+    "$extended/qrl_training_push_support_$variant/checkpoint_05000.pth"
+  )
+done
+PHASE=replay_constraint_audit DEVICE=cpu OUTPUT_ROOT="$extended" \
+  QRL_CHECKPOINTS="${checkpoints[*]}" \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+审计器从各 checkpoint 所在目录的 `train.log`、`exploration_start_bank.json` 和
+`global_push_sampling_stats.json` 恢复 qrl_explore replay。只解析日志字面值，不执行
+日志内容；复用已保存的起点顺序，跳过环境随机 push pair 生成。只有重建 replay 的
+SHA256 与所有训练记录完全一致才进行审计；不同 replay 的 checkpoint 应分开运行。
+首次保存 `verified_replay.pt`，之后仍逐次校验缓存的 fingerprint。当前重建入口只支持
+qrl_explore；训练目录需保留这些元数据文件。
+
+每条 replay 转移恰好评估一次真实 `d(s,s')`，用 `c=max(-reward,0)` 和残差
+`r=d-c`，不使用 dataloader 的随机 future、latent dynamics 预测或 Global Push pair。
+两个 critic 分开报告，另提供 `worst_per_edge`（逐边取 critic 的最大距离），不以
+critic 平均值抵消违反。统计按原始 replay 均匀计数；成功转移重采样的加权违反率
+单列。默认普通边容差 1e-5，anchor 容差 1e-6；同时报告严格 `r>0` 的比例。
+零成本 anchor 不按成本除法归一化。空分组报告 null，非有限值显式标为无效审计。
+
+默认写入 `$OUTPUT_ROOT/replay_constraint_audit`：
+
+- `replay_constraint_audit.json` / `.csv`：全部边、普通边、anchor、零成本边、成功/
+  失败轨迹、各 device、诊断区域与 outcome 的违反率、p95/p99/p99.9、最大残差；
+  KKT 模式还恢复对应 checkpoint 的 functional dual，报告违反边上的低 dual 比例
+  和互补残差，完全不执行 dual/critic 更新。
+- 每个 checkpoint 的 `*_edges.npz`：每 critic 的逐边距离、成本、残差及可用的 dual；
+  第一维是 critic，第二维对应缓存 replay 的原始 transition index。
+- `top_violations.csv`：每 critic 普通边和 anchor 各最多 100 条最严重违反的索引、
+  context、位置/heading、成功/终止标记和 task_feasible 特征，方便定位稀疏严重违反。
+
+可设置 `REPLAY_AUDIT_DIR`、`REPLAY_AUDIT_CACHE`、`REPLAY_AUDIT_CHUNK_SIZE`（1024）、
+`REPLAY_AUDIT_CPU_THREADS`（4）、`REPLAY_AUDIT_TOLERANCE`、
+`REPLAY_AUDIT_ANCHOR_TOLERANCE` 和 `REPLAY_AUDIT_TOP_K`。
+直接 CLI 为 `python -m minimal_qrl.eval.replay_constraint_audit --checkpoints ... --output-dir ...`。
+
+这里审计的是现有单步约束与 anchor 的满足情况，不把观察到的路径成本加入训练。
+有见证的 push pair 仍然依赖这些约束得到满足才能获得路径上界；即使总体违反比例
+下降，也需同时检查严重尾部、成功路径、U 区域和零成本 anchor。
+
 ### Goal-set quotient + replay margin barrier
 
 可行方向 QP 在严格可行边界附近可能长期拒绝有限参数更新。替代诊断阶段使用同一个

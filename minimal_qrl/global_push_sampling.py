@@ -13,6 +13,17 @@ import numpy as np
 import torch
 
 
+def replay_fingerprint(raw):
+    """Hash the complete replay constraints and task contexts, excluding push pairs."""
+    digest = hashlib.sha256()
+    for tensor in (raw.episode_lengths, raw.all_observations, raw.actions,
+                   raw.rewards, raw.terminals, raw.timeouts,
+                   raw.transition_infos["context_id"],
+                   raw.transition_infos["task_goal_observations"]):
+        digest.update(tensor.cpu().numpy().tobytes())
+    return digest.hexdigest()
+
+
 def configure_global_push_sampling(dataset, *, state_mode="environment",
                                   task_mode="all", seed=42):
     if state_mode not in ("environment", "replay", "trajectory"):
@@ -219,15 +230,10 @@ def write_global_push_coverage(dataset, env, output_dir, *, sampling,
     physical_targets = np.asarray([env.observation_to_state(infos["global_push_goal_observations"][i].numpy()) for i in pair_rows]).reshape(-1, 3)
     spatial_spans = np.linalg.norm(physical_targets[:, :2] - physical_sources[:, :2], axis=1)
     heading_spans = np.abs((physical_targets[:, 2] - physical_sources[:, 2] + np.pi) % (2 * np.pi) - np.pi)
-    replay_digest = hashlib.sha256()
-    for tensor in (raw.episode_lengths, raw.all_observations, raw.actions,
-                   raw.rewards, raw.terminals, raw.timeouts,
-                   infos["context_id"], infos["task_goal_observations"]):
-        replay_digest.update(tensor.numpy().tobytes())
     return {
         **sampling, "coverage_reference": "physical_replay_position_heading_context_bins",
         "position_resolution": float(position_resolution), "heading_bins": int(heading_bins),
-        "physical_replay_sha256": replay_digest.hexdigest(),
+        "physical_replay_sha256": replay_fingerprint(raw),
         "coverage_csv": str(csv_path.resolve()),
         "overall": summarize(counts.values()),
         "per_device": {k: summarize(v) for k, v in per_device.items()},

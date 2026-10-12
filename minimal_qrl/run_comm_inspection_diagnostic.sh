@@ -50,6 +50,10 @@
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=replay_constraint_audit DEVICE=cpu \
+#     OUTPUT_ROOT=./results/diagnostic_push_support_5k \
+#     QRL_CHECKPOINTS="checkpoint_2k.pth checkpoint_3k.pth checkpoint_5k.pth" \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -82,8 +86,11 @@ SHARED_ORACLE_DIR="${SHARED_ORACLE_DIR:-$DEFAULT_SHARED_ORACLE_DIR}"
 ORACLE_VALIDATION_BANK="${ORACLE_VALIDATION_BANK:-$SHARED_ORACLE_DIR/hybrid_astar_validation_192.json}"
 ORACLE_FINAL_TEST_BANK="${ORACLE_FINAL_TEST_BANK:-$SHARED_ORACLE_DIR/hybrid_astar_final_test_192.json}"
 
-"$PYTHON_BIN" -m minimal_qrl.industry_exp.diagnostic_scenario \
-  --output-dir "$CONFIG_DIR"
+# Offline audit uses the saved training scenario and must not regenerate it.
+if [[ "$PHASE" != "replay_constraint_audit" ]]; then
+  "$PYTHON_BIN" -m minimal_qrl.industry_exp.diagnostic_scenario \
+    --output-dir "$CONFIG_DIR"
+fi
 
 train_qrl() {
   local oracle_bank_eval_flag=()
@@ -406,6 +413,31 @@ train_qrl_mqe_separate_anchor_stop_loss() {
     train_qrl
 }
 
+replay_constraint_audit() {
+  local qrl_checkpoints="${QRL_CHECKPOINTS:-${QRL_CHECKPOINT:-}}"
+  local checkpoint_array=()
+  local cache_args=()
+  qrl_checkpoints="${qrl_checkpoints//$'\n'/ }"
+  read -r -a checkpoint_array <<< "$qrl_checkpoints"
+  if (( ${#checkpoint_array[@]} == 0 )); then
+    echo "Set QRL_CHECKPOINTS to the saved checkpoints to audit" >&2
+    exit 2
+  fi
+  if [[ -n "${REPLAY_AUDIT_CACHE:-}" ]]; then
+    cache_args+=(--replay-cache "$REPLAY_AUDIT_CACHE")
+  fi
+  "$PYTHON_BIN" -m minimal_qrl.eval.replay_constraint_audit \
+    --checkpoints "${checkpoint_array[@]}" \
+    --output-dir "${REPLAY_AUDIT_DIR:-$OUTPUT_ROOT/replay_constraint_audit}" \
+    --device "${DEVICE:-cpu}" \
+    --chunk-size "${REPLAY_AUDIT_CHUNK_SIZE:-1024}" \
+    --cpu-threads "${REPLAY_AUDIT_CPU_THREADS:-4}" \
+    --tolerance "${REPLAY_AUDIT_TOLERANCE:-0.00001}" \
+    --anchor-tolerance "${REPLAY_AUDIT_ANCHOR_TOLERANCE:-0.000001}" \
+    --top-k "${REPLAY_AUDIT_TOP_K:-100}" \
+    ${cache_args[@]+"${cache_args[@]}"}
+}
+
 local_nav_eval() {
   local qrl_checkpoints="${QRL_CHECKPOINTS:-${QRL_CHECKPOINT:-$TRAIN_DIR/checkpoint_final.pth}}"
   local checkpoint_array=()
@@ -630,6 +662,9 @@ case "$PHASE" in
   eval_qrl)
     eval_qrl
     ;;
+  replay_constraint_audit)
+    replay_constraint_audit
+    ;;
   local_nav_eval)
     local_nav_eval
     ;;
@@ -643,7 +678,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac
