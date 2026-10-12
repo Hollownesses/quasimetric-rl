@@ -407,11 +407,16 @@ def _build_topology_improvement_metadata(
     else:
         variant = "qrl_control"
 
+    optimizer_variant = variant
     if str(args.global_push_state_sampling) != "environment" or str(args.global_push_task_sampling) != "all":
-        variant = "global_push_support_" + str(args.global_push_state_sampling) + "_task_" + str(args.global_push_task_sampling)
+        sampling_variant = "global_push_support_" + str(args.global_push_state_sampling) + "_task_" + str(args.global_push_task_sampling)
+        variant = (optimizer_variant + "_" + sampling_variant
+                   if str(args.qrl_local_constraint_mode) == "goal_set_barrier"
+                   else sampling_variant)
 
     return {
         "variant": variant,
+        "optimizer_variant": optimizer_variant,
         "local_constraint_mode": str(args.qrl_local_constraint_mode),
         "feasible_direction": (
             {"kappa": float(args.qrl_feasible_kappa),

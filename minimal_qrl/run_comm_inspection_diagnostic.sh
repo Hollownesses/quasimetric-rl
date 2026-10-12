@@ -50,6 +50,12 @@
 #   PHASE=eval_qrl QRL_CHECKPOINT=... bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=local_nav_eval QRL_CHECKPOINTS="checkpoint_a.pth checkpoint_b.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_goal_set_barrier_push_support_control DEVICE=cpu TOTAL_STEPS=2000 \
+#     OUTPUT_ROOT=./results/diagnostic_goal_set_barrier_push_support_smoke \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=train_qrl_goal_set_barrier_push_support_b1 DEVICE=cpu TOTAL_STEPS=2000 \
+#     OUTPUT_ROOT=./results/diagnostic_goal_set_barrier_push_support_smoke \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=train_qrl_constraint_only_recovery DEVICE=cpu \
 #     OUTPUT_ROOT=./results/diagnostic_push_support_5k RECOVERY_PASSES=2 \
 #     QRL_INIT_CHECKPOINT=./results/diagnostic_push_support_5k/qrl_training_push_support_b1/checkpoint_03000.pth \
@@ -389,6 +395,29 @@ train_qrl_goal_set_barrier() {
     train_qrl
 }
 
+# Paired sampling experiment under the same goal-set quotient and soft barrier.
+# Both runs start from the seed, retain task push, and differ only in state pairs.
+train_qrl_goal_set_barrier_push_support() {
+  local variant="$1"
+  local state_sampling="$2"
+  local pair_train_dir="${BARRIER_PUSH_TRAIN_DIR:-$OUTPUT_ROOT/qrl_training_goal_set_barrier_push_support_$variant}"
+  if [[ -n "${QRL_INIT_CHECKPOINT:-}" ]]; then
+    echo "Barrier push-support pairs require fresh initialization; unset QRL_INIT_CHECKPOINT" >&2
+    exit 2
+  fi
+  echo "Goal-set barrier x Global Push support: variant=$variant state_sampling=$state_sampling"
+  echo "  task_sampling=all objective=linear task/state=0.6/0.4"
+  echo "  seed=${SEED:-42} attempted_env_steps=${EXPLORE_ATTEMPTED_ENV_STEPS:-200000}"
+  QRL_DATASET_MODE=qrl_explore \
+  GLOBAL_PUSH_ABSTRACT_GOAL_RATIO=0.6 \
+  GLOBAL_PUSH_STATE_GOAL_RATIO=0.4 \
+  GLOBAL_PUSH_STATE_SAMPLING="$state_sampling" \
+  GLOBAL_PUSH_TASK_SAMPLING=all \
+  GOAL_SET_BARRIER_TRAIN_DIR="$pair_train_dir" \
+  TOTAL_STEPS="${TOTAL_STEPS:-2000}" \
+    train_qrl_goal_set_barrier
+}
+
 # MQE-inspired two-sided consistency.  A fixed fraction of MQE-only slots is
 # drawn from complete natural successes, so abstract-goal anchors do not depend
 # on their prevalence in the main replay batch.
@@ -684,6 +713,12 @@ case "$PHASE" in
   train_qrl_goal_set_barrier)
     train_qrl_goal_set_barrier
     ;;
+  train_qrl_goal_set_barrier_push_support_control)
+    train_qrl_goal_set_barrier_push_support control environment
+    ;;
+  train_qrl_goal_set_barrier_push_support_b1)
+    train_qrl_goal_set_barrier_push_support b1 trajectory
+    ;;
   train_qrl_mqe_waypoint_consistency)
     train_qrl_mqe_waypoint_consistency
     ;;
@@ -709,7 +744,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_goal_set_barrier_push_support_control, train_qrl_goal_set_barrier_push_support_b1, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

@@ -390,6 +390,72 @@ B0 与 control 没有路径跨度，报告空间和 heading 差，时间跨度�
 优化器变成硬可行求解器，也不保证有限网络的未覆盖状态泛化。若尺度改善伴随关键区域
 失去信号，应结合覆盖报告判断；覆盖基本保持而 topology 无改善则不支持支持错位是主因。
 
+### goal_set_barrier × {control, B1} 配对 smoke
+
+将同一个 goal-set quotient + replay barrier 与两种 state-state push 支持交叉，
+检验局部约束得到更好执行时，B1 是否改善 U-trap 拓扑：
+
+```bash
+for variant in control b1; do
+  PHASE=train_qrl_goal_set_barrier_push_support_$variant \
+    DEVICE=cpu SEED=42 TOTAL_STEPS=2000 \
+    OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
+    OUTPUT_ROOT=results/diagnostic_goal_set_barrier_push_support_smoke \
+    bash minimal_qrl/run_comm_inspection_diagnostic.sh || break
+done
+```
+
+默认 2000 steps，分别写入
+`qrl_training_goal_set_barrier_push_support_control` 和
+`qrl_training_goal_set_barrier_push_support_b1`；`BARRIER_PUSH_TRAIN_DIR` 可覆盖单次目录。
+两组都从 seed 重新初始化；如果设置了 `QRL_INIT_CHECKPOINT`，脚本会拒绝，防止继承
+KKT/recovery 参数或错误恢复 quotient 开关。不要改变一组的模型/data seed 或 barrier
+参数后仍将它与另一组称为纯采样对照。
+
+两组强制 qrl_explore、teacher=0、线性 push、task/state=.6/.4、task sampling=all。
+control 的 state pair 来自环境合法状态，B1 来自同一连续 replay 片段的正向状态对，
+均不加入路径成本 target。其余复用 `train_qrl_goal_set_barrier`：相同的终态规范映射，
+无 latent/temporal/goal-return/n-step/MQE/独立 anchor 辅助 loss，零成本 anchor 仍在
+replay 中。默认 barrier weight=500、lr=2e-5、margin/temperature=.01、work_edges=64、
+topk=8，每 25 steps 全 replay 审计。可共同覆盖 `QRL_BARRIER_*` 参数；相同 seed、
+200k 交互预算、batch size、成功重采样权重和训练更新数也应对齐。
+
+比较之前检查 `global_push_sampling_stats.json` 的 replay SHA256，以及
+`checkpoint_00000.pth` 的初始 agent 参数是否完全一致。实验元数据保留
+`optimizer_variant=goal_set_quotient_replay_margin_barrier`，B1 的 variant 同时记录
+采样变化，避免误写成普通 KKT 支持实验。
+
+两组的 `train_metrics.csv` 均包含 periodic 和最终 `final_replay_audit`，比较普通边
+和 anchor 的违反率/最大残差。先确认本次 smoke 的全量约束情况，再比较固定 oracle
+距离误差/排序、U-trap 局部排序与首动作；不能只看总体 Spearman 或尺度收缩。
+可在训练后运行独立审计：
+
+```bash
+root=results/diagnostic_goal_set_barrier_push_support_smoke
+PHASE=replay_constraint_audit DEVICE=cpu OUTPUT_ROOT="$root" \
+  REPLAY_AUDIT_CACHE=results/diagnostic_push_support_5k/replay_constraint_audit/verified_replay.pt \
+  QRL_CHECKPOINTS="$root/qrl_training_goal_set_barrier_push_support_control/checkpoint_final.pth $root/qrl_training_goal_set_barrier_push_support_b1/checkpoint_final.pth" \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+该缓存只在 fingerprint 匹配时使用；没有旧缓存时可省略 `REPLAY_AUDIT_CACHE` 重建。
+固定 U-trap 探针分别评估，复用已有 oracle，避免两个同名 checkpoint 的局部诊断
+标签相互覆盖：
+
+```bash
+root=results/diagnostic_goal_set_barrier_push_support_smoke
+for variant in control b1; do
+  PHASE=local_nav_eval DEVICE=cpu OUTPUT_ROOT="$root" \
+    QRL_CHECKPOINTS="$root/qrl_training_goal_set_barrier_push_support_$variant/checkpoint_final.pth" \
+    LOCAL_NAV_EVAL_DIR="$root/u_local_$variant" \
+    LOCAL_NAV_REUSE_ORACLE_JSON=results/diagnostic_u_shadow_corridors_topology_v2/u_trap_local_navigability_v5_rho10/u_trap_local_navigability.json \
+    bash minimal_qrl/run_comm_inspection_diagnostic.sh || break
+done
+```
+
+以前 barrier 的零违反是一个已观察结果，不是软 barrier 的硬保证；B1 的新 push
+分布也可能使约束再次违反。只把两组在目标约束标准下的结果作为这次对照的证据。
+
 ### Constraint-only 恢复能力诊断
 
 从 B1 3k checkpoint 开始，严格恢复 critic、functional dual、两个 Adam 的动量与
