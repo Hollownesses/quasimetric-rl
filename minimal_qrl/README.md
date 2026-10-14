@@ -503,6 +503,40 @@ latent dynamics 关闭时直接跳过 forward，而非仅将 loss 乘零；否�
 同时看全量比例、严重尾部、成功终止边与零成本 anchor。距离整体缩小甚至塌缩也能
 满足约束，本实验只检验可行性恢复能力，不能据此证明导航质量改善。
 
+### U 到 task anchor 的记录链审计
+
+审计访问 U 的目标任务轨迹在哪一环结束：出西口、绕过墙、到闭墙东侧、接近目标、
+同时满足位置/LOS、满足朝向和观测、满足通信、连接合法零成本 anchor。
+它复用并校验训练 replay SHA256，检查真实状态/action 的动力学连续性；不训练，
+不加入路径成本 target，不使用 oracle 路径代替 replay 见证。
+
+```bash
+root=results/diagnostic_goal_set_barrier_push_support_5k_resume
+PHASE=task_path_support_audit DEVICE=cpu OUTPUT_ROOT="$root" \
+  QRL_CHECKPOINTS="$root/qrl_training_goal_set_barrier_push_support_control/checkpoint_final.pth $root/qrl_training_goal_set_barrier_push_support_b1/checkpoint_final.pth" \
+  REPLAY_AUDIT_CACHE=results/diagnostic_push_support_5k/replay_constraint_audit/verified_replay.pt \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+输出在 `$root/task_path_support_audit`，可用 `TASK_PATH_AUDIT_DIR` 覆盖。`TASK_PATH_DEVICE_ID`
+默认 `u_trap_target`。不指定缓存时，会从保存的 starts/训练参数重建并校验 replay。
+
+`episodes.csv` 和 `u_sources.csv` 列出逐轨迹失败前沿、逐 U 状态的连续成功见证；
+`anchors.csv` 独立核验合法性和关联。失败轨迹另外采样的 anchor 不能冒充其终点。
+`strict_context` 图禁止跨采集 context；`same_task_goal` 图允许不同采集编号的记录片段
+连接，但必须是同一设备、相同完整 goal、逐字节相同的完整 observation。
+两者均不进行位置/heading 取整，也不创建近邻转移。
+
+`probe_support.csv` 报告固定 U 探针到相同任务 replay、成功后缀和 anchor 的距离；
+`near_suffix_attachments.csv` 报告 U 后缀到成功片段的近邻缺口，并列 0.05/0.1/0.25/0.5/1.0
+位置阈值的敏感性。`TASK_PATH_HEADING_TOLERANCE_DEG` 默认 15 度。这些近邻仅供诊断，
+不能作为经验路径见证，近似拼接的连通性也不在这里冒充真实连通性。
+
+模型检查区分成功路径的绝对上界 `C(P)` 和失败片段的相对上界
+`C(s→end)+d(end,g)`，分别报告两个 critic 的局部违反和 task 距离。
+片段末尾未到合法终止时，不把片段成本当作到 goal 的距离上界；无见证组的绝对
+上界检查计数为零，表示没有覆盖，不表示已经通过了这项检查。
+
 ### 离线全 replay 单步约束审计
 
 `PHASE=replay_constraint_audit` 不训练模型，也不改写训练 scenario。对 control/B1

@@ -64,6 +64,11 @@
 #     OUTPUT_ROOT=./results/diagnostic_push_support_5k \
 #     QRL_CHECKPOINTS="checkpoint_2k.pth checkpoint_3k.pth checkpoint_5k.pth" \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
+#   PHASE=task_path_support_audit DEVICE=cpu \
+#     OUTPUT_ROOT=./results/diagnostic_goal_set_barrier_push_support_5k_resume \
+#     QRL_CHECKPOINTS="control_checkpoint.pth b1_checkpoint.pth" \
+#     REPLAY_AUDIT_CACHE=./results/diagnostic_push_support_5k/replay_constraint_audit/verified_replay.pt \
+#     bash minimal_qrl/run_comm_inspection_diagnostic.sh
 #   PHASE=benchmark QRL_CHECKPOINTS="..." \
 #     TRAIN_SAC=1 TRAIN_CONTEXT_AGENTS=1 \
 #     bash minimal_qrl/run_comm_inspection_diagnostic.sh
@@ -97,7 +102,7 @@ ORACLE_VALIDATION_BANK="${ORACLE_VALIDATION_BANK:-$SHARED_ORACLE_DIR/hybrid_asta
 ORACLE_FINAL_TEST_BANK="${ORACLE_FINAL_TEST_BANK:-$SHARED_ORACLE_DIR/hybrid_astar_final_test_192.json}"
 
 # Offline audit uses the saved training scenario and must not regenerate it.
-if [[ "$PHASE" != "replay_constraint_audit" && "$PHASE" != "train_qrl_constraint_only_recovery" ]]; then
+if [[ "$PHASE" != "replay_constraint_audit" && "$PHASE" != "task_path_support_audit" && "$PHASE" != "train_qrl_constraint_only_recovery" ]]; then
   "$PYTHON_BIN" -m minimal_qrl.industry_exp.diagnostic_scenario \
     --output-dir "$CONFIG_DIR"
 fi
@@ -495,6 +500,31 @@ replay_constraint_audit() {
     ${cache_args[@]+"${cache_args[@]}"}
 }
 
+task_path_support_audit() {
+  local qrl_checkpoints="${QRL_CHECKPOINTS:-${QRL_CHECKPOINT:-}}"
+  local checkpoint_array=()
+  local cache_args=()
+  qrl_checkpoints="${qrl_checkpoints//$'\n'/ }"
+  read -r -a checkpoint_array <<< "$qrl_checkpoints"
+  if (( ${#checkpoint_array[@]} == 0 )); then
+    echo "Set QRL_CHECKPOINTS to the saved checkpoints for task-path support audit" >&2
+    exit 2
+  fi
+  if [[ -n "${REPLAY_AUDIT_CACHE:-}" ]]; then
+    cache_args+=(--replay-cache "$REPLAY_AUDIT_CACHE")
+  fi
+  "$PYTHON_BIN" -m minimal_qrl.eval.task_path_support_audit \
+    --checkpoints "${checkpoint_array[@]}" \
+    --output-dir "${TASK_PATH_AUDIT_DIR:-$OUTPUT_ROOT/task_path_support_audit}" \
+    --task-device-id "${TASK_PATH_DEVICE_ID:-u_trap_target}" \
+    --device "${DEVICE:-cpu}" \
+    --cpu-threads "${REPLAY_AUDIT_CPU_THREADS:-4}" \
+    --chunk-size "${REPLAY_AUDIT_CHUNK_SIZE:-1024}" \
+    --tolerance "${REPLAY_AUDIT_TOLERANCE:-0.00001}" \
+    --heading-tolerance-deg "${TASK_PATH_HEADING_TOLERANCE_DEG:-15}" \
+    ${cache_args[@]+"${cache_args[@]}"}
+}
+
 local_nav_eval() {
   local qrl_checkpoints="${QRL_CHECKPOINTS:-${QRL_CHECKPOINT:-$TRAIN_DIR/checkpoint_final.pth}}"
   local checkpoint_array=()
@@ -731,6 +761,9 @@ case "$PHASE" in
   replay_constraint_audit)
     replay_constraint_audit
     ;;
+  task_path_support_audit)
+    task_path_support_audit
+    ;;
   local_nav_eval)
     local_nav_eval
     ;;
@@ -744,7 +777,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_goal_set_barrier_push_support_control, train_qrl_goal_set_barrier_push_support_b1, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_goal_set_barrier_push_support_control, train_qrl_goal_set_barrier_push_support_b1, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, task_path_support_audit, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac
