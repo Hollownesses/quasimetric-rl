@@ -143,6 +143,7 @@ train_qrl() {
       --explore-straight-action-probability "${EXPLORE_STRAIGHT_ACTION_PROBABILITY:-0.5}"
       --explore-start-boundary-margin "${EXPLORE_START_BOUNDARY_MARGIN:-0.5}"
       --explore-local-safety-lookahead-steps "${EXPLORE_LOCAL_SAFETY_LOOKAHEAD_STEPS:-10}"
+      --explore-safety-lookahead-mode "${EXPLORE_SAFETY_LOOKAHEAD_MODE:-full_horizon}"
       --explore-exclusion-task-bank "${EXPLORE_EXCLUSION_TASK_BANK:-$TASK_BANK}"
       --explore-exclusion-radius "${EXPLORE_EXCLUSION_RADIUS:-0.25}"
     )

@@ -54,6 +54,12 @@ class QRLExploreConfig:
     ] = ()
     start_boundary_margin: float = 0.5
     local_safety_lookahead_steps: int = 10
+    # Keep the old policy available only for reproducing historical replay.
+    safety_lookahead_mode: str = "full_horizon"
+
+    def __post_init__(self) -> None:
+        if self.safety_lookahead_mode not in ("full_horizon", "legacy_action_hold"):
+            raise ValueError("unknown QRL-explore safety_lookahead_mode")
 
 
 def _actions_to_array(actions: List) -> np.ndarray:
@@ -984,7 +990,14 @@ def collect_qrl_explore_episode_pair(
         scale = float(rng.choice(action_scales, p=action_probabilities))
         omega = scale * float(env.omega_max)
         if safety_lookahead > 0:
-            requested_safety = min(hold_steps, safety_lookahead)
+            if config.safety_lookahead_mode == "legacy_action_hold":
+                requested_safety = min(hold_steps, safety_lookahead)
+            else:
+                # A short safe segment can leave a Dubins vehicle too close to
+                # a wall to turn. Inspect the full configured horizon even when
+                # executing only three steps; never execute an unchecked tail.
+                requested_safety = safety_lookahead
+                hold_steps = min(hold_steps, safety_lookahead)
             proposed_safe_steps = _locally_safe_steps(
                 env, env.state, omega, requested_safety
             )
@@ -1170,6 +1183,8 @@ def create_qrl_explore_comm_dataset(
     stats.update(
         {
             "collection_mode": "qrl_explore",
+            "safety_lookahead_mode": config.safety_lookahead_mode,
+            "local_safety_lookahead_steps": int(config.local_safety_lookahead_steps),
             "attempted_env_step_budget": budget,
             "attempted_env_steps": 0,
             "stored_real_transitions": 0,

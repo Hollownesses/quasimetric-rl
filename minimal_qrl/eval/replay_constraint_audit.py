@@ -87,6 +87,9 @@ def load_run_spec(checkpoint):
                            for r in scenario["metadata"]["exploration_start_strata"]),
         start_boundary_margin=float(args.explore_start_boundary_margin),
         local_safety_lookahead_steps=int(args.explore_local_safety_lookahead_steps),
+        # Logs predating the fix used the hold-capped policy. Reconstruct that
+        # exact replay instead of silently changing the data behind a checkpoint.
+        safety_lookahead_mode=getattr(args, "explore_safety_lookahead_mode", "legacy_action_hold"),
     )
     return {"checkpoint": str(Path(checkpoint).resolve()), "args": args,
             "config": config, "expected_sha256": stats["physical_replay_sha256"],

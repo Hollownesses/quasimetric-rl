@@ -304,3 +304,19 @@ def test_oracle_bank_heatmap_uses_exact_oracle_costs_and_marks_failures(tmp_path
     )
     assert output_path.endswith("oracle_bank_heatmap_step50000.png")
     assert (tmp_path / "oracle_bank_heatmap" / "oracle_bank_heatmap_step50000.png").is_file()
+
+
+@pytest.mark.parametrize('version', [None, 1])
+def test_bank_rejects_old_planner_even_when_numeric_config_matches(tmp_path, monkeypatch, version):
+    config = CommInspectionOracleBankConfig(sample_count=2, candidate_multiplier=2)
+    monkeypatch.setattr(oracle_bank, '_plan_record',
+                        lambda env, record, cfg: record.update(status='failed'))
+    path = tmp_path / 'bank.json'
+    bank = ensure_comm_inspection_oracle_bank(make_env(), path, split='validation', config=config)
+    if version is None:
+        bank.pop('planner_algorithm_version')
+    else:
+        bank['planner_algorithm_version'] = version
+    path.write_text(json.dumps(bank))
+    with pytest.raises(ValueError, match='planner_algorithm_version'):
+        ensure_comm_inspection_oracle_bank(make_env(), path, split='validation', config=config)

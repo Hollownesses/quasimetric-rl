@@ -637,3 +637,61 @@ bash minimal_qrl/run_comm_inspection_baselines.sh
 可以通过 `TRAIN_CONTEXT_AGENTS=0` 禁用现场训练，并用空格分隔的 `CONTEXT_CHECKPOINTS` 加载已有 checkpoint。`CONTEXT_TOTAL_ENV_STEPS`、`CONTEXT_SEEDS`、`CONTEXT_HER_K` 和 `CONTEXT_TEACHER_RATIO` 分别控制训练预算、seed、future relabel 比例和 teacher episode 比例。每个训练目录包含 `train_metrics.csv`、`validation_metrics.csv`、TensorBoard 日志及每 50k 步 checkpoint。
 
 结果写入 `baseline_results.json` 和 `baseline_results.csv`，包含逐 episode 指标、训练/teacher 步数、HER 有效率、参数量、bootstrap 95% 区间，以及原生策略对 QRL greedy、统一 MPPI 对 QRL-MPPI、MRN 对普通 DDPG critic 的配对比较。所有 MPPI 变体使用相同 rollout 预算；Context GCRL 价值在训练分布的固定校准集上按 5%/95% 分位映射到 `[0,1]`。
+
+### 安全前瞻与 Hybrid A* 搜索修正（2026-10-14）
+
+QRL-explore 默认 `--explore-safety-lookahead-mode full_horizon`：安全检查使用完整
+`--explore-local-safety-lookahead-steps 10`，不再被随机动作保持长度 3–10 步截短。
+执行长度不超过已检查范围。10 步仍然只是恒定候选动作的几何前瞻，不保证末端永远
+存在安全后续控制，也不提供到任务目标的路径规划。
+诊断脚本默认 `EXPLORE_SAFETY_LOOKAHEAD_MODE=full_horizon`；前瞻仍为 10，场景的
+300 步 episode 上限不变。这两个参数含义不同，也都不同于 A* 的墙钟搜索超时。
+
+新数据的策略名和前瞻长度写入采集统计，CLI 参数写入训练日志。复现历史训练可显式
+设置 `EXPLORE_SAFETY_LOOKAHEAD_MODE=legacy_action_hold`。replay 审计读取旧日志时，
+缺少策略字段自动按旧实现重建，并继续要求原 SHA256 完全一致；新日志则使用记录的
+策略。新旧采集数据应使用不同训练目录，不应作为同一 replay 的续训对照。
+
+此前 104 条访问 U 的目标任务轨迹，在相同起点和 seed 下使用完整 10 步前瞻后，
+300 步上限得到 collision/越界/timeout=22/11/71、U 后成功 0；延长为 600 步后为
+30/18/56、成功仍为 0，物理交互从 25,765 增至 44,794 步。前 300 步状态逐元素
+一致。这个按旧轨迹筛选的固定起点诊断不是等预算正式实验，只说明该组数据尚无
+延长默认 episode 上限的收益证据；后续应先改善探索/路径覆盖，再做多 seed、
+相同总交互预算的上限消融。
+
+Hybrid A* 的新行为：
+
+- 不再在生成第一个成功后继时清空 open queue。保留当前最佳成功路径，继续比较
+  其他动作及队列节点；正常在目标出队时结束。
+- 搜索预算耗尽时仍可返回已找到的最佳可行路径；`planner_search_stop_reason`
+  区分 `goal_popped`、`timeout`、`max_expansions` 和 `open_set_exhausted`。
+  `planner_success` 表示找到可执行路径，不表示已证明最优。
+- 启发式改为到目标距离环带的平移时间下界，要求非负有限成本权重。有限采样终态
+  的平移时间加转向时间不再作为启发式，因为可能漏掉最近合法终态并重复计算同时
+  进行的运动。`terminal_samples` 保留为诊断采样，样本不影响搜索优先级。
+- 去重键增加 episode 已用步数和 terminal 标志，避免更晚的低成本到达挤掉仍能在
+  时限内完成的路径，或同位姿 bin 的非终态挤掉真实成功节点。
+  同一位姿/terminal bin 保留时间与成本均不被支配的候选，剪掉到达更晚且成本
+  不低的绕圈路径，避免逐时间层重复扩展。
+
+**最优性范围：**精确有限图上的 A* 在非负边成本、可采纳启发式（权重不超过 1）、
+正确节点去重及充分搜索等条件下可求图最短路。但这里仍把不同连续位姿合并到 bin，
+且只枚举有限控制 primitive，因此修正后也不保证连续环境全局最优，甚至不能把动态
+代表节点合并后的结果直接称为某个固定精确图的最优值。`heuristic_weight > 1`
+也不具有普通 A* 的最优性条件。输出显式记录 `planner_optimality_guaranteed=false`
+和 `planner_cost_kind=feasible_path_upper_bound`；距离小于此参考成本不能单独证明
+低估真实最优值。标准 Hybrid A* 的近似性质也见
+[Dolgov 等人的原始论文](https://ai.stanford.edu/~ddolgov/papers/dolgov_gpp_stair08.pdf)。
+
+固定 oracle bank 与 U 局部诊断都记录 `planner_algorithm_version=2`；固定 bank
+schema 升为 2，旧版本或缺失版本的 oracle 缓存会被拒绝。保留旧结果用于历史对照，
+使用新路径重新生成，不要手动修改旧 JSON 的版本号。局部诊断首次生成时省略
+`--reuse-oracle-json`，之后只复用 v2 的同配置结果；训练若使用固定 oracle bank，
+需先重新生成并通过 `ORACLE_VALIDATION_BANK` / `ORACLE_FINAL_TEST_BANK` 指定新文件。
+旧 checkpoint 的纯 replay 审计仍可使用原 verified replay，无需重新规划 oracle。
+
+回归测试覆盖提前成功退出、有限搜索预算下的 incumbent、时间/终态去重、几何安全
+前瞻、历史采集策略重建和两类 oracle 缓存失效；另用真实环境回放验证计划成本。
+修正后的 U deep/west 单点 smoke（起点 `(4.8, 3.65, pi)`，120 秒/200,000 次扩展
+预算）在约 44 秒、9,704 次扩展后得到 97 步成功路径，计划与实际回放成本均为
+279.21514495。这仅验证规划/回放一致，不能据单点结果宣称所有 U 探针改善或最优。

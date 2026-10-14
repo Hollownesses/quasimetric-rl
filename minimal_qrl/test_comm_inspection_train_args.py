@@ -123,6 +123,7 @@ def test_qrl_explore_cli_defaults_to_fixed_200k_attempted_steps(monkeypatch):
     assert np.isclose(args.explore_straight_action_probability, 0.5)
     assert np.isclose(args.explore_start_boundary_margin, 0.5)
     assert args.explore_local_safety_lookahead_steps == 10
+    assert args.explore_safety_lookahead_mode == 'full_horizon'
     assert np.isclose(args.qrl_temporal_constraint_weight, 1.0)
     assert args.qrl_temporal_min_future_steps == 2
     assert np.isclose(args.qrl_goal_return_constraint_weight, 1.0)

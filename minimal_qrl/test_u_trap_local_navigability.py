@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from minimal_qrl.baselines.hybrid_astar import HybridAStarConfig
+from minimal_qrl.baselines.hybrid_astar import HybridAStarConfig, HYBRID_ASTAR_ALGORITHM_VERSION
 from minimal_qrl.eval.u_trap_local_navigability import (
     build_probe_records,
     load_reusable_oracle_records,
@@ -76,6 +76,7 @@ def _cached_oracle_payload(scenario, probes, *, seed=20260802):
             }
         )
     return {
+        "planner_algorithm_version": HYBRID_ASTAR_ALGORITHM_VERSION,
         "scenario_fingerprint": hashlib.sha256(canonical).hexdigest(),
         "oracle_config": {
             "seed": seed,
@@ -127,3 +128,19 @@ def test_reused_oracle_records_reject_incompatible_config(tmp_path):
             HybridAStarConfig(max_expansions=200_000, timeout_sec=120.0),
             seed=20260802,
         )
+
+
+@pytest.mark.parametrize('version', [None, 1])
+def test_reused_oracle_rejects_old_search_algorithm(tmp_path, version):
+    scenario = build_diagnostic_scenario()
+    probes = build_probe_records(scenario)
+    payload = _cached_oracle_payload(scenario, probes)
+    if version is None:
+        payload.pop('planner_algorithm_version')
+    else:
+        payload['planner_algorithm_version'] = version
+    path = tmp_path / 'oracle.json'
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match='planner_algorithm_version'):
+        load_reusable_oracle_records(path, scenario, probes,
+            HybridAStarConfig(max_expansions=200_000, timeout_sec=120.), seed=20260802)

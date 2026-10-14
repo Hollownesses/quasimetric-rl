@@ -755,6 +755,7 @@ def train(args):
             start_strata=_exploration_start_strata_from_scenario(args._scenario_data),
             start_boundary_margin=float(args.explore_start_boundary_margin),
             local_safety_lookahead_steps=int(args.explore_local_safety_lookahead_steps),
+            safety_lookahead_mode=args.explore_safety_lookahead_mode,
         )
         if not base_explore_config.start_strata:
             raise ValueError(
@@ -780,6 +781,7 @@ def train(args):
             start_strata=base_explore_config.start_strata,
             start_boundary_margin=base_explore_config.start_boundary_margin,
             local_safety_lookahead_steps=base_explore_config.local_safety_lookahead_steps,
+            safety_lookahead_mode=base_explore_config.safety_lookahead_mode,
         )
         exploration_start_bank_path = _write_exploration_start_bank(
             output_dir,
@@ -2264,6 +2266,12 @@ def main():
         type=int,
         default=10,
         help='QRL-explore 目标无关局部碰撞重采样的前视步数',
+    )
+    parser.add_argument(
+        '--explore-safety-lookahead-mode',
+        choices=['full_horizon', 'legacy_action_hold'],
+        default='full_horizon',
+        help='默认检查完整前视范围；legacy_action_hold 仅用于复现历史 replay',
     )
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')

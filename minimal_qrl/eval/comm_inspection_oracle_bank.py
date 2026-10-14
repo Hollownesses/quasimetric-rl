@@ -22,11 +22,12 @@ from tqdm import tqdm
 from minimal_qrl.baselines.hybrid_astar import (
     HybridAStarConfig,
     HybridAStarController,
+    HYBRID_ASTAR_ALGORITHM_VERSION,
 )
 from minimal_qrl.envs import CommInspectionDubinsUAV2D
 
 
-ORACLE_BANK_SCHEMA_VERSION = 1
+ORACLE_BANK_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -348,6 +349,8 @@ def _validate_bank(
     errors = []
     if int(bank.get("schema_version", -1)) != ORACLE_BANK_SCHEMA_VERSION:
         errors.append("schema_version")
+    if bank.get("planner_algorithm_version") != HYBRID_ASTAR_ALGORITHM_VERSION:
+        errors.append("planner_algorithm_version")
     if str(bank.get("split")) != split:
         errors.append("split")
     if int(bank.get("sample_count", -1)) != int(config.sample_count):
@@ -369,6 +372,8 @@ def _verify_planned_path(
     controller: HybridAStarController,
     env: CommInspectionDubinsUAV2D,
 ) -> tuple[bool, Optional[float], str]:
+    if env.is_task_feasible(env.state):
+        return True, 0.0, ""
     total_cost = 0.0
     final_info: Dict[str, Any] = {}
     for _ in range(int(env.max_episode_steps) + 1):
@@ -413,6 +418,9 @@ def _plan_record(
             "expanded_nodes": int(diagnostics["expanded_nodes"]),
             "generated_nodes": int(diagnostics["generated_nodes"]),
             "planned_action_count": int(diagnostics["planned_action_count"]),
+            "planner_search_stop_reason": diagnostics["planner_search_stop_reason"],
+            "planner_optimality_guaranteed": diagnostics["planner_optimality_guaranteed"],
+            "planner_cost_kind": diagnostics["planner_cost_kind"],
         }
     )
     if not bool(diagnostics["planner_success"]):
@@ -466,6 +474,9 @@ def ensure_comm_inspection_oracle_bank(
         bank = {
             "schema_version": ORACLE_BANK_SCHEMA_VERSION,
             "oracle_kind": "high_budget_hybrid_astar_reference_cost",
+            "planner_algorithm_version": HYBRID_ASTAR_ALGORITHM_VERSION,
+            "optimality_guaranteed": False,
+            "reference_cost_kind": "feasible_path_upper_bound",
             "cost_semantics": "undiscounted_environment_cost_total_to_goal_set",
             "split": split,
             "sample_count": int(config.sample_count),

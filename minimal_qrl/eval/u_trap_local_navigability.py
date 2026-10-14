@@ -21,7 +21,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from minimal_qrl.baselines.hybrid_astar import HybridAStarConfig, HybridAStarController
+from minimal_qrl.baselines.hybrid_astar import (
+    HybridAStarConfig, HybridAStarController, HYBRID_ASTAR_ALGORITHM_VERSION,
+)
 from minimal_qrl.envs import CommInspectionDubinsUAV2D
 from minimal_qrl.eval.comm_inspection_execution_eval import build_qrl_adapter
 from minimal_qrl.eval.utils import auto_device
@@ -202,6 +204,9 @@ def compute_oracle_records(
                 "oracle_planning_time_sec": float(diagnostics["initial_planning_time_sec"]),
                 "oracle_expanded_nodes": int(diagnostics["expanded_nodes"]),
                 "oracle_failure_reason": str(diagnostics.get("planner_failure_reason", "")),
+                "oracle_search_stop_reason": diagnostics["planner_search_stop_reason"],
+                "oracle_optimality_guaranteed": diagnostics["planner_optimality_guaranteed"],
+                "oracle_cost_kind": diagnostics["planner_cost_kind"],
             }
         )
     return records
@@ -222,6 +227,11 @@ def load_reusable_oracle_records(
         payload = json.load(handle)
     if not isinstance(payload, Mapping):
         raise ValueError(f"reused oracle JSON must contain an object: {source_path}")
+    if payload.get("planner_algorithm_version") != HYBRID_ASTAR_ALGORITHM_VERSION:
+        raise ValueError(
+            "reused oracle planner_algorithm_version is stale or missing; "
+            "regenerate in a new output directory"
+        )
 
     current_fingerprint = _scenario_fingerprint(scenario)
     source_fingerprint = payload.get("scenario_fingerprint")
@@ -557,7 +567,10 @@ def main() -> None:
         checkpoint_records[checkpoint_id] = records
         summaries[checkpoint_id] = summary
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "planner_algorithm_version": HYBRID_ASTAR_ALGORITHM_VERSION,
+        "oracle_cost_kind": "feasible_path_upper_bound",
+        "oracle_optimality_guaranteed": False,
         "scenario_config": str(Path(args.scenario_config).resolve()),
         "scenario_fingerprint": _scenario_fingerprint(scenario),
         "probe_definition": scenario["metadata"]["u_trap_local_navigability_probes"],

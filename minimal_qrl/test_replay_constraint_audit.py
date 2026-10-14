@@ -177,3 +177,28 @@ def test_audit_phase_forwards_checkpoints_and_does_not_regenerate_training_confi
     assert calls[0][:2] == ['-m', 'minimal_qrl.eval.replay_constraint_audit']
     assert calls[0][3:6] == ['two.pth', 'three.pth', 'five.pth']
     assert calls[0][calls[0].index('--chunk-size') + 1] == '32'
+
+
+@pytest.mark.parametrize('mode', [None, 'legacy_action_hold', 'full_horizon'])
+def test_replay_reconstruction_preserves_logged_safety_policy(tmp_path, monkeypatch, mode):
+    import hashlib
+    args = argparse.Namespace(
+        comm_dataset_mode='qrl_explore', qrl_cost_source='negative_reward', seed=42,
+        explore_attempted_env_steps=10, explore_start_position_resolution=1.,
+        explore_start_heading_bins=12, explore_action_hold_min_steps=3,
+        explore_action_hold_max_steps=10, explore_straight_action_probability=.5,
+        explore_exclusion_radius=.25, explore_start_boundary_margin=.5,
+        explore_local_safety_lookahead_steps=10,
+        _scenario_data={'metadata': {'exploration_start_strata': [
+            {'name': 'all', 'weight': 1., 'bounds': [0., 0., 10., 10.]}]}})
+    if mode is not None:
+        args.explore_safety_lookahead_mode = mode
+    monkeypatch.setattr(audit, 'load_training_args', lambda path: args)
+    bank = {'seed': 42, 'records': [{'start_index': 0, 'state': [1., 1., 0.]}]}
+    bank['content_digest'] = hashlib.sha256(json.dumps(
+        bank, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    (tmp_path / 'exploration_start_bank.json').write_text(json.dumps(bank))
+    (tmp_path / 'global_push_sampling_stats.json').write_text(json.dumps({'physical_replay_sha256': 'expected'}))
+    spec = audit.load_run_spec(tmp_path / 'checkpoint.pth')
+    assert spec['config'].safety_lookahead_mode == (mode or 'legacy_action_hold')
+    assert spec['config'].local_safety_lookahead_steps == 10

@@ -11,6 +11,11 @@ from minimal_qrl.baselines.base import BaselineController
 from minimal_qrl.envs import CommInspectionDubinsUAV2D
 
 
+# Included in oracle cache provenance: old first-generated-goal costs must not
+# be silently reused after changing search termination, keys or heuristics.
+HYBRID_ASTAR_ALGORITHM_VERSION = 2
+
+
 @dataclass
 class HybridAStarConfig:
     position_resolution: float = 0.25
@@ -22,6 +27,16 @@ class HybridAStarConfig:
     timeout_sec: float = 30.0
     terminal_samples: int = 128
 
+    def __post_init__(self) -> None:
+        if (not np.isfinite(self.heuristic_weight) or self.heuristic_weight < 0
+                or not np.isfinite(self.position_resolution) or self.position_resolution <= 0
+                or not np.isfinite(self.timeout_sec) or self.timeout_sec <= 0
+                or min(self.heading_bins, self.primitive_steps, self.max_expansions) <= 0
+                or self.terminal_samples < 0
+                or not self.primitive_scales
+                or not all(np.isfinite(s) for s in self.primitive_scales)):
+            raise ValueError("invalid Hybrid A* search configuration")
+
 
 @dataclass
 class _Node:
@@ -30,9 +45,17 @@ class _Node:
     cost: float
     parent: Optional[int]
     actions: tuple[float, ...]
+    terminal: bool = False
 
 
 class HybridAStarController(BaselineController):
+    """Feasible reference paths, not certified continuous-state optima.
+
+    Pose-bin pruning merges distinct physical states with different successors.
+    Correct A* termination cannot remove that approximation, nor the restriction
+    to a finite set of motion primitives. Budget-limited incumbents are retained
+    and explicitly distinguished from goals selected from the open queue.
+    """
     name = "hybrid_astar"
 
     def __init__(self, cfg: HybridAStarConfig) -> None:
@@ -50,20 +73,21 @@ class HybridAStarController(BaselineController):
         return x_bin, y_bin, theta_bin
 
     def _heuristic(self, env: CommInspectionDubinsUAV2D, state: np.ndarray) -> float:
-        if self._terminal_states.size > 0:
-            state = np.asarray(state, dtype=np.float32).reshape(3)
-            delta = self._terminal_states[:, :2] - state[None, :2]
-            position_time = np.linalg.norm(delta, axis=1) / max(float(env.v), 1e-8)
-            angle_diff = np.abs(
-                (self._terminal_states[:, 2] - float(state[2]) + np.pi) % (2.0 * np.pi) - np.pi
-            )
-            angle_time = angle_diff / max(float(env.omega_max), 1e-8)
-            return float(np.min(position_time + angle_time))
-
+        # Every feasible terminal lies in this annulus. Distance to this
+        # superset / speed lower-bounds travel time, and cost_total >= time.
+        # Finite terminal samples need not include the closest terminal; adding
+        # turning time also double-counts simultaneous translation and turning.
+        # Neither is a valid lower bound. Samples remain diagnostic only.
         target = np.asarray(env.inspection_target, dtype=np.float32)
         distance = float(np.linalg.norm(np.asarray(state[:2]) - target))
-        remaining_distance = max(0.0, distance - float(env.observation_max_distance))
+        remaining_distance = max(0.0, distance - float(env.observation_max_distance),
+                                 float(env.observation_min_distance) - distance)
         return remaining_distance / max(float(env.v), 1e-8)
+
+    def _search_key(self, env: CommInspectionDubinsUAV2D, node: _Node) -> tuple:
+        # A cheaper but later arrival can have too little episode budget left.
+        # A nearby nonterminal must not suppress a genuine terminal in its bin.
+        return (self._key(env, node.state), int(node.env_state["t"]), node.terminal)
 
     def _sample_terminal_states(self, env: CommInspectionDubinsUAV2D, seed: int) -> np.ndarray:
         n = max(0, int(self.cfg.terminal_samples))
@@ -85,6 +109,8 @@ class HybridAStarController(BaselineController):
         node: _Node,
         omega: float,
     ) -> Optional[tuple[dict, np.ndarray, float, tuple[float, ...], bool]]:
+        if int(node.env_state["t"]) >= int(env.max_episode_steps):
+            return None
         env.set_state(node.env_state)
         total_cost = 0.0
         actions = []
@@ -118,35 +144,46 @@ class HybridAStarController(BaselineController):
         return result
 
     def _plan(self, env: CommInspectionDubinsUAV2D) -> Dict[str, Any]:
+        if any(not np.isfinite(w) or w < 0 for w in (
+            env.observation_violation_cost_weight, env.communication_violation_cost_weight
+        )):
+            raise ValueError("Hybrid A* requires nonnegative finite cost weights")
         base_state = env.get_state()
         start_time = perf_counter()
-        root = _Node(env.state.copy(), base_state, 0.0, None, ())
+        root = _Node(env.state.copy(), base_state, 0.0, None, (),
+                     terminal=env.is_task_feasible(env.state))
         nodes = [root]
-        best_cost = {self._key(env, root.state): 0.0}
+        best_cost = {self._search_key(env, root): 0.0}
+        # Within each approximate pose/terminal bin keep a time-cost Pareto
+        # frontier. Keeping every time layer would needlessly expand later,
+        # more expensive loops; keeping only cheapest would lose early arrivals.
+        root_key = self._search_key(env, root)
+        arrival_costs = {(root_key[0], root_key[2]): {root_key[1]: 0.0}}
         queue: list[tuple[float, int, int]] = []
         counter = 0
         heapq.heappush(queue, (self.cfg.heuristic_weight * self._heuristic(env, root.state), counter, 0))
         expansions = 0
         generated = 1
-        goal_index: Optional[int] = None
-        failure_reason = "open_set_exhausted"
+        goal_index: Optional[int] = 0 if root.terminal else None
+        search_stop_reason = "open_set_exhausted"
 
         try:
             while queue:
                 if perf_counter() - start_time >= float(self.cfg.timeout_sec):
-                    failure_reason = "timeout"
+                    search_stop_reason = "timeout"
                     break
                 if expansions >= int(self.cfg.max_expansions):
-                    failure_reason = "max_expansions"
+                    search_stop_reason = "max_expansions"
                     break
                 _priority, _order, node_index = heapq.heappop(queue)
                 node = nodes[node_index]
-                key = self._key(env, node.state)
-                if node.cost > best_cost.get(key, float("inf")) + 1e-9:
+                key = self._search_key(env, node)
+                if key not in best_cost or node.cost > best_cost[key] + 1e-9:
                     continue
-                if env.is_task_feasible(node.state):
-                    goal_index = node_index
-                    failure_reason = ""
+                if node.terminal:
+                    if goal_index is None or node.cost < nodes[goal_index].cost:
+                        goal_index = node_index
+                    search_stop_reason = "goal_popped"
                     break
 
                 expansions += 1
@@ -156,23 +193,35 @@ class HybridAStarController(BaselineController):
                     if simulated is None:
                         continue
                     child_env_state, child_state, edge_cost, actions, success = simulated
+                    if not np.isfinite(edge_cost) or edge_cost < 0:
+                        raise ValueError("Hybrid A* requires nonnegative finite edge costs")
                     child_cost = node.cost + edge_cost
-                    child_key = self._key(env, child_state)
-                    if child_cost >= best_cost.get(child_key, float("inf")) - 1e-9:
+                    child = _Node(child_state, child_env_state, child_cost, node_index, actions,
+                                  terminal=bool(success))
+                    child_key = self._search_key(env, child)
+                    pose_key, arrival_time, terminal = child_key
+                    frontier = arrival_costs.setdefault((pose_key, terminal), {})
+                    if any(t <= arrival_time and c <= child_cost + 1e-9
+                           for t, c in frontier.items()):
                         continue
+                    for t in [t for t, c in frontier.items()
+                              if t >= arrival_time and c >= child_cost - 1e-9]:
+                        del frontier[t]
+                        best_cost.pop((pose_key, t, terminal), None)
+                    frontier[arrival_time] = child_cost
                     best_cost[child_key] = child_cost
-                    child = _Node(child_state, child_env_state, child_cost, node_index, actions)
                     nodes.append(child)
                     child_index = len(nodes) - 1
                     generated += 1
                     counter += 1
-                    priority = child_cost + self.cfg.heuristic_weight * self._heuristic(env, child_state)
+                    heuristic = 0.0 if success else self._heuristic(env, child_state)
+                    priority = child_cost + self.cfg.heuristic_weight * heuristic
                     heapq.heappush(queue, (priority, counter, child_index))
                     if success:
-                        goal_index = child_index
-                        failure_reason = ""
-                        queue.clear()
-                        break
+                        # Keep the best feasible incumbent if a budget expires,
+                        # but still compare other actions and queued paths.
+                        if goal_index is None or child_cost < nodes[goal_index].cost:
+                            goal_index = child_index
         finally:
             env.set_state(base_state)
 
@@ -182,7 +231,11 @@ class HybridAStarController(BaselineController):
         path_cost = float(nodes[goal_index].cost) if goal_index is not None else float("inf")
         return {
             "planner_success": bool(goal_index is not None),
-            "planner_failure_reason": failure_reason,
+            "planner_failure_reason": "" if goal_index is not None else search_stop_reason,
+            "planner_search_stop_reason": search_stop_reason,
+            "planner_algorithm_version": HYBRID_ASTAR_ALGORITHM_VERSION,
+            "planner_cost_kind": "feasible_path_upper_bound",
+            "planner_optimality_guaranteed": False,
             "initial_planning_time_sec": float(elapsed),
             "expanded_nodes": int(expansions),
             "generated_nodes": int(generated),
