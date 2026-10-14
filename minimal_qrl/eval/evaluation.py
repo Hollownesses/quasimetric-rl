@@ -1,6 +1,6 @@
 """
 QRL 评估模块：计算真实距离、评估指标和可视化
-支持多种环境，使用环境的真实最短路径距离
+支持多种环境；通信目标集的默认参考是几何时间 proxy，不是完整路径代价。
 """
 import os
 from typing import Tuple, Dict, Optional
@@ -37,6 +37,32 @@ def _resolve_distance_scale(
     return scale
 
 
+def evaluation_reference(env: gym.Env, *, oracle_bank: bool = False) -> dict:
+    """Describe references separately from numeric metrics/TensorBoard scalars.
+
+    Keep the historical metric keys, but never label a geometry proxy error as
+    an environment-cost error or a feasible planner path as a certified optimum.
+    """
+    if oracle_bank:
+        return {
+            'kind': 'feasible_path_cost_reference', 'tensorboard_prefix': 'eval_oracle',
+            'label': '可行路径完整代价参考（非严格最优值）',
+            'target': 'replayed Hybrid A* path cumulative environment cost',
+            'full_environment_cost': True, 'optimality_guaranteed': False,
+            'prediction_unit': 'environment_cost', 'target_unit': 'environment_cost',
+        }
+    if hasattr(env, 'abstract_goal_observation') and hasattr(env, 'sample_task_terminal_state'):
+        return {
+            'kind': 'geometry_time_proxy', 'tensorboard_prefix': 'eval_geometry_proxy',
+            'label': '几何时间 proxy（非完整代价误差）',
+            'target': 'minimum geometric/heading time estimate over sampled feasible terminals; no obstacle path or accumulated penalties',
+            'full_environment_cost': False, 'optimality_guaranteed': False,
+            'prediction_unit': 'environment_cost', 'target_unit': 'estimated_time',
+        }
+    return {'kind': 'environment_distance_reference', 'tensorboard_prefix': 'eval',
+            'label': '环境距离参考', 'target': 'environment-specific distance reference'}
+
+
 def evaluate_quasimetric(
     agent: nn.Module,
     env: gym.Env,
@@ -48,7 +74,8 @@ def evaluate_quasimetric(
     """
     评估 QRL 学习到的 quasimetric
     
-    使用环境的真实最短路径距离作为 ground truth
+    通信目标集使用采样终态的几何时间 proxy；其误差不代表完整环境代价误差。
+    其他环境使用各自的距离参考。参考语义见 evaluation_reference。
     
     Args:
         agent: QRL Agent（包含 critics）
@@ -63,15 +90,18 @@ def evaluate_quasimetric(
     """
     if hasattr(env, "abstract_goal_observation") and hasattr(env, "sample_task_terminal_state"):
         rng = np.random.default_rng(seed)
-        states_raw = []
+        source_observations = []
         goal_obs = []
         gt_dists = []
         u = getattr(env, "unwrapped", env)
         for i in range(n_pairs):
             u.reset(seed=None if seed is None else int(seed + i))
             s = u.sample_nonterminal_valid_state(seed=int(rng.integers(0, 1_000_000_000)))
-            states_raw.append(s)
-            goal_obs.append(u.abstract_goal_observation())
+            # Observation features depend on the active task, which reset changes.
+            # Snapshot both ends now; encoding raw states after the loop would
+            # silently pair the last task's source features with earlier goals.
+            source_observations.append(np.array(u.state_to_observation(s), dtype=np.float32, copy=True))
+            goal_obs.append(np.array(u.abstract_goal_observation(), dtype=np.float32, copy=True))
             terminal_candidates = []
             for _ in range(64):
                 try:
@@ -87,7 +117,7 @@ def evaluate_quasimetric(
             gt_dists.append(
                 min(float(u.compute_goal_reaching_cost_estimate(s, g)) for g in terminal_candidates)
             )
-        states = np.asarray([u.state_to_observation(s) for s in states_raw], dtype=np.float32)
+        states = np.asarray(source_observations, dtype=np.float32)
         goals = np.asarray(goal_obs, dtype=np.float32)
         states_t = torch.tensor(states, device=device, dtype=torch.float32)
         goals_t = torch.tensor(goals, device=device, dtype=torch.float32)

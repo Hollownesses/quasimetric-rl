@@ -78,6 +78,7 @@ from minimal_qrl.global_push_sampling import (
     write_global_push_coverage,
 )
 from minimal_qrl.eval import evaluate_quasimetric, visualize_distance_field_heatmap, evaluate_planning, LookaheadConfig
+from minimal_qrl.eval.evaluation import evaluation_reference
 from minimal_qrl.eval.comm_inspection_oracle_bank import (
     CommInspectionOracleBankConfig,
     ensure_comm_inspection_oracle_bank,
@@ -1177,6 +1178,11 @@ def train(args):
     oracle_bank_enabled = bool(getattr(args, 'oracle_bank_eval', False))
     if oracle_bank_enabled and args.env_type != 'comm_inspection_dubins_uav':
         raise ValueError("--oracle-bank-eval 仅支持 comm_inspection_dubins_uav")
+    eval_reference = evaluation_reference(eval_env, oracle_bank=oracle_bank_enabled)
+    topology_improvement_metadata['evaluation_reference'] = eval_reference
+    with open(os.path.join(output_dir, 'evaluation_reference.json'), 'w', encoding='utf-8') as handle:
+        json.dump(eval_reference, handle, ensure_ascii=False, indent=2)
+    logger.info('评估参考: %s; TensorBoard=%s', eval_reference['label'], eval_reference['tensorboard_prefix'])
 
     validation_oracle_bank = None
     validation_oracle_path: Optional[Path] = None
@@ -1427,7 +1433,6 @@ def train(args):
                             device=eval_device,
                             distance_scale=1.0,
                         )
-                        eval_tag_prefix = 'eval_oracle'
                         oracle_row = {
                             'optim_steps': int(optim_steps),
                             **eval_metrics,
@@ -1454,7 +1459,7 @@ def train(args):
                             seed=args.seed + optim_steps,
                             distance_scale=evaluation_distance_scale,
                         )
-                        eval_tag_prefix = 'eval'
+                    eval_tag_prefix = eval_reference['tensorboard_prefix']
                     
                     # 记录到 TensorBoard
                     for key, value in eval_metrics.items():
@@ -1465,7 +1470,7 @@ def train(args):
                         )
                     
                     # 打印评估结果
-                    eval_str = f"评估结果: MSE={eval_metrics['mse']:.4f}, "
+                    eval_str = f"评估结果 [{eval_reference['label']}]: MSE={eval_metrics['mse']:.4f}, "
                     if 'rmse' in eval_metrics:
                         eval_str += f"RMSE={eval_metrics['rmse']:.4f}, "
                     eval_str += f"MAE={eval_metrics['mae']:.4f}, "
