@@ -31,7 +31,7 @@ from minimal_qrl.eval.utils import auto_device
 
 REPLAY_INFO_KEYS = ("abstract_goal_edge", "source_terminal_goal_state",
                     "task_goal_observations", "context_id", "task_success_episode",
-                    "device_index", "exploration_outcome")
+                    "device_index", "exploration_outcome", "planner_path_support")
 
 
 def load_training_args(path):
@@ -91,6 +91,12 @@ def load_run_spec(checkpoint):
         # exact replay instead of silently changing the data behind a checkpoint.
         safety_lookahead_mode=getattr(args, "explore_safety_lookahead_mode", "legacy_action_hold"),
     )
+    if getattr(args, 'path_support_bank', None):
+        from minimal_qrl.path_support import load_bank
+        bank = load_bank(directory / 'path_support_bank.json')
+        if bank['content_digest'] != args.path_support_bank_sha256:
+            raise ValueError('path-support snapshot disagrees with training log')
+        args.path_support_bank = str(directory / 'path_support_bank.json')
     return {"checkpoint": str(Path(checkpoint).resolve()), "args": args,
             "config": config, "expected_sha256": stats["physical_replay_sha256"],
             "scenario": scenario}
@@ -117,6 +123,7 @@ def load_replay(spec, cache_path):
     for episode in create_dataset(
             env, max_steps_per_episode=spec["args"].max_steps_per_episode,
             seed=spec["args"].seed, qrl_explore_config=spec["config"],
+            path_support_bank=getattr(spec['args'], 'path_support_bank', None),
             include_global_push_pairs=False):
         # Drop the large push-only tensors; the constraint replay remains exact.
         episode.transition_infos = {k: episode.transition_infos[k] for k in REPLAY_INFO_KEYS}

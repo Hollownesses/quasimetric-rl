@@ -63,6 +63,7 @@ class HybridAStarController(BaselineController):
         self.cfg = cfg
         self._actions: list[np.ndarray] = []
         self._cursor = 0
+        self._simulated_env_steps = 0
         self._terminal_states = np.zeros((0, 3), dtype=np.float32)
 
     def _key(self, env: CommInspectionDubinsUAV2D, state: np.ndarray) -> tuple[int, int, int]:
@@ -119,6 +120,7 @@ class HybridAStarController(BaselineController):
             _obs, _reward, terminated, truncated, info = env.step(
                 np.array([omega], dtype=np.float32)
             )
+            self._simulated_env_steps += 1
             total_cost += float(info.get("cost_total", -float(_reward)))
             actions.append(float(omega))
             if bool(info.get("collision", False)) or bool(info.get("out_of_bounds", False)):
@@ -144,6 +146,7 @@ class HybridAStarController(BaselineController):
         return result
 
     def _plan(self, env: CommInspectionDubinsUAV2D) -> Dict[str, Any]:
+        self._simulated_env_steps = 0
         if any(not np.isfinite(w) or w < 0 for w in (
             env.observation_violation_cost_weight, env.communication_violation_cost_weight
         )):
@@ -239,6 +242,7 @@ class HybridAStarController(BaselineController):
             "initial_planning_time_sec": float(elapsed),
             "expanded_nodes": int(expansions),
             "generated_nodes": int(generated),
+            "simulated_env_steps": self._simulated_env_steps,
             "planned_action_count": int(len(self._actions)),
             "planned_cost": path_cost,
             "terminal_sample_count": int(len(self._terminal_states)),

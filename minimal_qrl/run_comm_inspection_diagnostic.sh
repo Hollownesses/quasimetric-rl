@@ -111,6 +111,10 @@ train_qrl() {
   local oracle_bank_eval_flag=()
   local dataset_budget_args=()
   local init_checkpoint_args=()
+  local path_support_args=()
+  if [[ -n "${PATH_SUPPORT_BANK:-}" ]]; then
+    path_support_args+=(--path-support-bank "$PATH_SUPPORT_BANK")
+  fi
   local qrl_dataset_mode="${QRL_DATASET_MODE:-standard}"
   local teacher_ratio="${TASK_AWARE_TEACHER_RATIO:-1.0}"
   if [[ -n "${QRL_INIT_CHECKPOINT:-}" ]]; then
@@ -130,8 +134,8 @@ train_qrl() {
   fi
 
   if [[ "$qrl_dataset_mode" == "qrl_explore" ]]; then
-    # QRL-explore is deliberately expert-free.  Keep this invariant even if a
-    # caller has TASK_AWARE_TEACHER_RATIO set in the surrounding shell.
+    # The base QRL-explore collector is expert-free. Planner positive-control
+    # data, when requested, are separately marked and appended after this base.
     teacher_ratio="0.0"
     dataset_budget_args+=(
       --comm-dataset-mode "$qrl_dataset_mode"
@@ -158,6 +162,7 @@ train_qrl() {
     --scenario-config "$SCENARIO_CONFIG" \
     --output-dir "$TRAIN_DIR" \
     ${init_checkpoint_args[@]+"${init_checkpoint_args[@]}"} \
+    ${path_support_args[@]+"${path_support_args[@]}"} \
     --seed "${SEED:-42}" \
     --device "${DEVICE:-cpu}" \
     --num-episodes "${NUM_EPISODES:-500}" \
@@ -422,6 +427,34 @@ train_qrl_goal_set_barrier_push_support() {
   GOAL_SET_BARRIER_TRAIN_DIR="$pair_train_dir" \
   TOTAL_STEPS="${TOTAL_STEPS:-2000}" \
     train_qrl_goal_set_barrier
+}
+
+# Freeze planner data once; all positive-control arms consume the same bank.
+prepare_path_support() {
+  "$PYTHON_BIN" -m minimal_qrl.path_support \
+    --scenario-config "$SCENARIO_CONFIG" --task-bank "$TASK_BANK" \
+    --output "${PATH_SUPPORT_BANK:-$OUTPUT_ROOT/path_support/bank.json}" \
+    --paths "${PATH_SUPPORT_PATHS:-4}" --max-attempts "${PATH_SUPPORT_MAX_ATTEMPTS:-12}" \
+    --seed "${PATH_SUPPORT_SEED:-20261014}" \
+    --timeout-sec "${PATH_SUPPORT_TIMEOUT_SEC:-120}" \
+    --max-expansions "${PATH_SUPPORT_MAX_EXPANSIONS:-200000}"
+}
+
+train_qrl_path_support() {
+  local data_variant="$1" pair_variant="$2" state_sampling="$3" bank=""
+  if [[ "$data_variant" == "positive" ]]; then
+    bank="${PATH_SUPPORT_BANK:-$OUTPUT_ROOT/path_support/bank.json}"
+    if [[ ! -f "$bank" ]]; then
+      echo "Missing frozen path-support bank: $bank; run PHASE=prepare_path_support first" >&2
+      exit 2
+    fi
+  fi
+  # The baseline explicitly clears any inherited bank. Both arms use the same
+  # learner and base exploration policy; only appended physical data differ.
+  PATH_SUPPORT_BANK="$bank" \
+  BARRIER_PUSH_TRAIN_DIR="$OUTPUT_ROOT/qrl_path_support_${data_variant}_${pair_variant}" \
+  ORACLE_BANK_EVAL="${ORACLE_BANK_EVAL:-0}" \
+    train_qrl_goal_set_barrier_push_support "$pair_variant" "$state_sampling"
 }
 
 # MQE-inspired two-sided consistency.  A fixed fraction of MQE-only slots is
@@ -750,6 +783,21 @@ case "$PHASE" in
   train_qrl_goal_set_barrier_push_support_b1)
     train_qrl_goal_set_barrier_push_support b1 trajectory
     ;;
+  prepare_path_support)
+    prepare_path_support
+    ;;
+  train_qrl_path_support_baseline_control)
+    train_qrl_path_support baseline control environment
+    ;;
+  train_qrl_path_support_baseline_b1)
+    train_qrl_path_support baseline b1 trajectory
+    ;;
+  train_qrl_path_support_positive_control)
+    train_qrl_path_support positive control environment
+    ;;
+  train_qrl_path_support_positive_b1)
+    train_qrl_path_support positive b1 trajectory
+    ;;
   train_qrl_mqe_waypoint_consistency)
     train_qrl_mqe_waypoint_consistency
     ;;
@@ -778,7 +826,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_goal_set_barrier_push_support_control, train_qrl_goal_set_barrier_push_support_b1, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, task_path_support_audit, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, prepare_path_support, train_qrl_path_support_baseline_control, train_qrl_path_support_baseline_b1, train_qrl_path_support_positive_control, train_qrl_path_support_positive_b1, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_goal_set_barrier_push_support_control, train_qrl_goal_set_barrier_push_support_b1, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, task_path_support_audit, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

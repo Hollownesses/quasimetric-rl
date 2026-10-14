@@ -304,7 +304,14 @@ def build_support(raw, env, scenario, device_id):
         frontier.append({'phase': phase, 'episodes': len(group),
                          'outcomes': dict(Counter(r['outcome'] for r in group)),
                          'last_stages': dict(Counter(r['last_ordered_stage'] for r in group))})
+    planner_rows = infos.get('planner_path_support', torch.zeros(raw.num_transitions, dtype=torch.bool)).numpy().astype(bool)
     summary = {'device_id': device_id, 'physical_dynamics': dynamics,
+               'source_support_by_origin': {
+                   origin: {name: {'rows': int((mask & origin_mask).sum()),
+                                  'continuous_witness_rows': int((mask & origin_mask & witnessed).sum()),
+                                  'same_task_goal_exact_graph_reachable_rows': int((mask & origin_mask & shared).sum())}
+                            for name, mask in [('U_interior', interior), ('U_west_exit', west_exit)]}
+                   for origin, origin_mask in [('base_replay', ~planner_rows), ('planner_added', planner_rows)]},
                'physical_episodes_all_tasks': len(episodes), 'abstract_edges_all_tasks': len(anchor_rows),
                'valid_anchors_all_tasks': len(valid), 'invalid_anchor_rows': [r for r in anchor_records if not r['valid_zero_cost_anchor']],
                'groups': counts, 'ordered_funnel_origin': 'first_U_visit; non_U_episodes_not_in_funnel',
@@ -323,7 +330,7 @@ def build_support(raw, env, scenario, device_id):
             'anchor_records': anchor_records, 'valid_anchors': selected_anchors,
             'sources': sources, 'target_rows': target_rows, 'interior': interior,
             'west_exit': west_exit, 'witnessed': witnessed, 'tail_costs': tail_costs,
-            'strict': strict, 'shared': shared}
+            'strict': strict, 'shared': shared, 'planner_rows': planner_rows}
 
 
 def write_trajectory_plot(output, raw, support, scenario):
@@ -515,6 +522,9 @@ def write_report(output, payload):
               '文件：`episodes.csv`（逐轨迹前沿）、`u_sources.csv`（逐 U 状态支持）、',
               '`anchors.csv`（anchor 合法性）、`probe_support.csv`（固定探针覆盖）、',
               '`near_suffix_attachments.csv`（近邻敏感性，非见证）、`task_path_support_audit.json`（完整统计）。']
+    lines += ['', '## 按数据来源区分路径支持', '',
+              '新增规划器轨迹有见证不意味着原 replay 的 U 状态已经连通；模型泛化需单独评估。',
+              '', '```json', json.dumps(summary['source_support_by_origin'], ensure_ascii=False, indent=2), '```']
     (output / 'report.md').write_text('\n'.join(lines) + '\n')
 
 
@@ -556,6 +566,7 @@ def main():
             if support['interior'][row] or support['west_exit'][row]:
                 records.append({'transition_index': int(row), 'episode_id': e['episode_id'],
                                 'context_id': e['context'], 'timestep': t,
+                                'planner_path_support': bool(support['planner_rows'][row]),
                                 'device_id': args.task_device_id,
                                 'x': float(observation_rows[t, 0]), 'y': float(observation_rows[t, 1]),
                                 'heading_rad': float(np.arctan2(observation_rows[t, 3], observation_rows[t, 2])),

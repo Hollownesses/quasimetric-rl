@@ -631,6 +631,8 @@ def train(args):
     if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
         args.task_aware_teacher_ratio = 0.0
         args.target_env_transitions = None
+    from minimal_qrl.path_support import validate_training_protocol
+    validate_training_protocol(args)
     mqe_diagnostic_device_names = ()
     if args._scenario_data is not None:
         raw_devices = args._scenario_data.get('device_catalog', {}).get('devices', ())
@@ -679,6 +681,19 @@ def train(args):
     # 设置输出目录
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
+    if getattr(args, 'path_support_bank', None):
+        from minimal_qrl.path_support import load_bank, save_bank
+        bank = load_bank(args.path_support_bank)
+        snapshot = os.path.abspath(os.path.join(output_dir, 'path_support_bank.json'))
+        if os.path.exists(snapshot) and load_bank(snapshot)['content_digest'] != bank['content_digest']:
+            raise ValueError('output directory contains a different path-support bank')
+        save_bank(snapshot, bank)
+        args.path_support_bank = snapshot
+        args.path_support_bank_sha256 = bank['content_digest']
+        topology_improvement_metadata['path_support'] = {
+            'purpose': bank['purpose'], 'expert_free': False,
+            'bank_sha256': bank['content_digest'], 'path_cost_targets_added': False,
+        }
     timing_progress_path = os.path.join(output_dir, 'timing_progress.json')
     prior_timing: Dict[str, Any] = {}
     if getattr(args, 'init_checkpoint', None) and os.path.exists(timing_progress_path):
@@ -820,6 +835,7 @@ def train(args):
                 collection_stats=collection_stats,
                 qrl_explore_config=qrl_explore_config,
                 include_global_push_pairs=(args.global_push_state_sampling == "environment"),
+                path_support_bank=getattr(args, 'path_support_bank', None),
             )
         
         register_offline_env(
@@ -856,6 +872,12 @@ def train(args):
         topology_improvement_metadata['global_push_sampling'] = push_sampling
         topology_improvement_metadata['global_push_sampling_stats_path'] = os.path.abspath(push_coverage_path)
         collection_stats['global_push_coverage'] = push_coverage['overall']
+        if 'path_support' in collection_stats:
+            from minimal_qrl.path_support import base_fingerprint
+            support = collection_stats['path_support']
+            support['base_replay_sha256'] = base_fingerprint(dataset.raw_data, support['base_episode_count'])
+            support['augmented_replay_sha256'] = push_coverage['physical_replay_sha256']
+            topology_improvement_metadata['path_support'].update(support)
         logger.info('Global Push sampling: %s; coverage=%s; task sampler retention=%.4f; stats=%s',
                     push_sampling, push_coverage['overall'],
                     push_coverage['task_retained_sampler_fraction'], push_coverage_path)
@@ -888,13 +910,16 @@ def train(args):
         expected_success_sample_ratio = float(
             weighted_success / max(weighted_total, 1.0)
         )
+        planner_mask = dataset.raw_data.transition_infos.get('planner_path_support', torch.zeros_like(success_transition_mask))
+        planner_success_count = int((success_transition_mask.bool() & planner_mask.bool()).sum())
         collection_stats.update({
-            'natural_success_transition_count': success_transition_count,
+            'natural_success_transition_count': success_transition_count - planner_success_count,
+            'planner_success_transition_count': planner_success_count,
             'success_transition_sample_weight': success_weight,
             'expected_success_transition_sample_ratio': expected_success_sample_ratio,
         })
         logger.info(
-            '自然成功轨迹转移: %d/%d; 采样权重=%.3f; 预期 batch 占比=%.4f',
+            '成功轨迹转移（含标记的规划器补充数据）: %d/%d; 采样权重=%.3f; 预期 batch 占比=%.4f',
             success_transition_count,
             len(dataset),
             success_weight,
@@ -2273,6 +2298,8 @@ def main():
         default='full_horizon',
         help='默认检查完整前视范围；legacy_action_hold 仅用于复现历史 replay',
     )
+    parser.add_argument('--path-support-bank', default=None,
+                        help='冻结的规划器成功路径正对照 bank；仅追加一步转移与 anchor，禁止额外回报监督')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--target-env-transitions', type=int, default=None,

@@ -312,6 +312,7 @@ def _goal_set_transition_infos(
     abstract_goal_edge: bool = False,
     source_terminal_goal_state: bool = False,
     teacher_guided: bool = False,
+    planner_path_support: bool = False,
     exploration: bool = False,
     exploration_start_index: int = -1,
     exploration_episode_id: int = -1,
@@ -326,6 +327,7 @@ def _goal_set_transition_infos(
         "task_goal_observations": np.repeat(task_goal_obs[None, :], n, axis=0).astype(np.float32),
         "context_id": np.full((n,), int(context_id), dtype=np.int64),
         "teacher_guided": np.full((n,), bool(teacher_guided), dtype=np.bool_),
+        "planner_path_support": np.full((n,), bool(planner_path_support), dtype=np.bool_),
         "exploration": np.full((n,), bool(exploration), dtype=np.bool_),
         "exploration_start_index": np.full((n,), int(exploration_start_index), dtype=np.int64),
         "exploration_episode_id": np.full((n,), int(exploration_episode_id), dtype=np.int64),
@@ -1437,6 +1439,7 @@ def create_dataset(
     collection_stats: Optional[dict[str, Any]] = None,
     qrl_explore_config: Optional[QRLExploreConfig] = None,
     include_global_push_pairs: bool = True,
+    path_support_bank: Optional[str] = None,
 ) -> Iterator[EpisodeData]:
     """
     创建数据集，支持多种环境
@@ -1453,20 +1456,40 @@ def create_dataset(
     Yields:
         EpisodeData
     """
+    if path_support_bank and qrl_explore_config is None:
+        raise ValueError('path-support positive control requires qrl_explore base replay')
     if qrl_explore_config is not None:
         if not (
             hasattr(env, "abstract_goal_observation")
             and hasattr(env, "device_ids")
         ):
             raise ValueError("QRL-explore is only supported for communication goal-set environments")
-        yield from create_qrl_explore_comm_dataset(
+        base_episode_count, next_context = 0, 0
+        for episode in create_qrl_explore_comm_dataset(
             env,
             include_global_push_pairs=include_global_push_pairs,
             config=qrl_explore_config,
             max_steps_per_episode=max_steps_per_episode,
             seed=seed,
             collection_stats=collection_stats,
-        )
+        ):
+            base_episode_count += 1
+            next_context = max(next_context, int(episode.transition_infos['context_id'].max()) + 1)
+            yield episode
+        if path_support_bank:
+            from minimal_qrl.path_support import bank_episodes, load_bank
+            bank = load_bank(path_support_bank)
+            # Append after consuming the entire original generator. No old edge,
+            # seed, start, or failure is replaced by planner data.
+            yield from bank_episodes(env, path_support_bank, context_start=next_context,
+                                     include_global_push_pairs=include_global_push_pairs)
+            if collection_stats is not None:
+                collection_stats['path_support'] = {
+                    'purpose': bank['purpose'], 'expert_free': False,
+                    'bank_sha256': bank['content_digest'],
+                    'base_episode_count': base_episode_count,
+                    **bank['summary'], 'path_cost_targets_added': False,
+                }
         return
 
     if (

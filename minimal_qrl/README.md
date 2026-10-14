@@ -390,6 +390,71 @@ B0 与 control 没有路径跨度，报告空间和 heading 差，时间跨度�
 优化器变成硬可行求解器，也不保证有限网络的未覆盖状态泛化。若尺度改善伴随关键区域
 失去信号，应结合覆盖报告判断；覆盖基本保持而 topology 无改善则不支持支持错位是主因。
 
+### 路径支持正对照：{原数据, 补充成功路径} × {control, B1}
+
+该实验检验缺少 U→任务目标的连续路径见证是否限制了学习。它**使用规划器数据，是机制诊断**，
+不属于 expert-free 探索结果。先冻结少量成功轨迹，再在完整原 replay 后追加真实一步转移和
+实际终态的零成本 anchor；不替换失败轨迹，不增加规划总成本/回报 target，不改 learner。
+
+```bash
+root=results/diagnostic_path_support_positive
+PHASE=prepare_path_support OUTPUT_ROOT="$root" \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+for variant in baseline_control baseline_b1 positive_control positive_b1; do
+  PHASE=train_qrl_path_support_$variant OUTPUT_ROOT="$root" \
+    DEVICE=cpu SEED=42 TOTAL_STEPS=2000 \
+    OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
+    bash minimal_qrl/run_comm_inspection_diagnostic.sh || break
+done
+```
+
+默认采集 4 条路径，最多尝试 12 个独立 U 内起点；起点位置距全部固定 task-bank 起点与
+局部探针位置超过 0.25，按上下区域交替选择。默认采集 seed=20261014，与训练 seed 分开。
+逐动作回放必须连续、无碰撞/越界/超时并真正到达任务终态；不拼接不同轨迹。
+bank 记录上/下绕墙路线和最终朝向，实际覆盖应检查 `summary.routes` 和 `terminal_headings`。
+采集参数可用 `PATH_SUPPORT_PATHS`、`PATH_SUPPORT_MAX_ATTEMPTS`、`PATH_SUPPORT_SEED`、
+`PATH_SUPPORT_TIMEOUT_SEC`（默认每条规划 120 秒）、`PATH_SUPPORT_MAX_EXPANSIONS`（默认 200000）
+覆盖。此处规划时间预算不改变环境 episode 上限，也不改变探索安全 horizon=10。
+
+bank 默认保存为 `$OUTPUT_ROOT/path_support/bank.json`；可用 `PATH_SUPPORT_BANK` 指定。
+内容 SHA256、环境/场景、排除起点、规划版本与采集参数一起冻结。相同参数重跑会从已完成
+尝试继续；参数变化须用新 bank，不足目标数量的 bank 拒绝用于训练。规划成本仅保存为
+`diagnostic_path_cost_only`，训练回报监督 mask 为 false，return target 为零。
+
+四组目录为 `qrl_path_support_{baseline,positive}_{control,b1}`。baseline 明确清除外部
+`PATH_SUPPORT_BANK`，positive 复制 bank 快照到训练目录，后续审计从该快照重建。
+四组都从 seed 初始化并拒绝 checkpoint 恢复；沿用 goal_set_barrier、线性 push、task/state=.6/.4、
+task sampling=all，禁用额外 temporal/goal-return/n-step/MQE/anchor 辅助 loss。
+新增真实边沿用成功转移采样权重，不添加新的采样器。相同更新数下，由于 replay 大小变化，
+旧边的采样频率会变化；这属于本正对照的数据干预。默认不自动运行 oracle-bank 评估；
+显式开启 `ORACLE_BANK_EVAL=1` 时需要当前搜索版本生成的 oracle bank。
+
+检查 positive 的 `exploration_collection_stats.json` 中 `path_support.base_replay_sha256`
+等于 baseline 的 `global_push_sampling_stats.json` 中 `physical_replay_sha256`；同一数据组
+control/B1 的完整 replay 指纹应相同，四组 `checkpoint_00000.pth` 的 agent 参数应相同。
+补充数据量、规划模拟步、真实执行步、规划耗时分开记录，不能称为相同总交互预算的对照。
+
+```bash
+for data in baseline positive; do
+  PHASE=task_path_support_audit OUTPUT_ROOT="$root" DEVICE=cpu \
+    QRL_CHECKPOINTS="$root/qrl_path_support_${data}_control/checkpoint_final.pth $root/qrl_path_support_${data}_b1/checkpoint_final.pth" \
+    TASK_PATH_AUDIT_DIR="$root/audit_$data" \
+    bash minimal_qrl/run_comm_inspection_diagnostic.sh || break
+done
+for variant in baseline_control baseline_b1 positive_control positive_b1; do
+  PHASE=local_nav_eval OUTPUT_ROOT="$root" DEVICE=cpu \
+    QRL_CHECKPOINTS="$root/qrl_path_support_$variant/checkpoint_final.pth" \
+    LOCAL_NAV_EVAL_DIR="$root/u_local_$variant" \
+    bash minimal_qrl/run_comm_inspection_diagnostic.sh || break
+done
+```
+
+baseline 和 positive 的 replay 不同，必须分开审计、使用各自缓存。路径审计按
+`base_replay` / `planner_added` 分组，避免将新增路径的成功见证误报为原有 U 状态已连通。
+先确认新增路径有连续见证和合法 anchor、两组全量局部残差，再比较保留探针的排序、
+首动作与真实闭环成功率。少量路径改善排序只支持该机制；不证明恢复连续环境的最优值函数，
+Hybrid A* 的可行路径成本也不是严格最优值标签。
+
 ### goal_set_barrier × {control, B1} 配对 smoke
 
 将同一个 goal-set quotient + replay barrier 与两种 state-state push 支持交叉，
