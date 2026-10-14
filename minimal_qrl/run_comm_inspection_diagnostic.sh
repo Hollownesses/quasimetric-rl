@@ -151,10 +151,14 @@ train_qrl() {
       --explore-exclusion-task-bank "${EXPLORE_EXCLUSION_TASK_BANK:-$TASK_BANK}"
       --explore-exclusion-radius "${EXPLORE_EXCLUSION_RADIUS:-0.25}"
     )
+  elif [[ "$qrl_dataset_mode" == "path_support_only" ]]; then
+    teacher_ratio="0.0"
+    dataset_budget_args+=(--comm-dataset-mode path_support_only)
+    path_support_args+=(--path-support-probe-interval "${PATH_SUPPORT_PROBE_INTERVAL:-100}")
   elif [[ "$qrl_dataset_mode" == "standard" ]]; then
     dataset_budget_args+=(--target-env-transitions "${TARGET_ENV_TRANSITIONS:-120000}")
   else
-    echo "Unknown QRL_DATASET_MODE=$qrl_dataset_mode (expected standard or qrl_explore)" >&2
+    echo "Unknown QRL_DATASET_MODE=$qrl_dataset_mode (expected standard, qrl_explore, or path_support_only)" >&2
     exit 2
   fi
 
@@ -455,6 +459,29 @@ train_qrl_path_support() {
   BARRIER_PUSH_TRAIN_DIR="$OUTPUT_ROOT/qrl_path_support_${data_variant}_${pair_variant}" \
   ORACLE_BANK_EVAL="${ORACLE_BANK_EVAL:-0}" \
     train_qrl_goal_set_barrier_push_support "$pair_variant" "$state_sampling"
+}
+
+# Small mechanism diagnostic: same learner, exclusively the frozen successful
+# paths. No exploration collector, planner invocation, or total-cost targets.
+train_qrl_path_support_only_b1() {
+  local bank="${PATH_SUPPORT_BANK:-$OUTPUT_ROOT/path_support/bank.json}"
+  if [[ ! -f "$bank" ]]; then
+    echo "Set PATH_SUPPORT_BANK to the existing frozen successful-path bank: $bank" >&2
+    exit 2
+  fi
+  if [[ -n "${QRL_INIT_CHECKPOINT:-}" ]]; then
+    echo "Path-only B1 requires fresh initialization; unset QRL_INIT_CHECKPOINT" >&2
+    exit 2
+  fi
+  PATH_SUPPORT_BANK="$bank" \
+  QRL_DATASET_MODE=path_support_only \
+  GLOBAL_PUSH_ABSTRACT_GOAL_RATIO=0.6 \
+  GLOBAL_PUSH_STATE_GOAL_RATIO=0.4 \
+  GLOBAL_PUSH_STATE_SAMPLING=trajectory \
+  GLOBAL_PUSH_TASK_SAMPLING=all \
+  GOAL_SET_BARRIER_TRAIN_DIR="$OUTPUT_ROOT/qrl_path_support_only_b1" \
+  ORACLE_BANK_EVAL="${ORACLE_BANK_EVAL:-0}" \
+    train_qrl_goal_set_barrier
 }
 
 # MQE-inspired two-sided consistency.  A fixed fraction of MQE-only slots is
@@ -786,6 +813,9 @@ case "$PHASE" in
   prepare_path_support)
     prepare_path_support
     ;;
+  train_qrl_path_support_only_b1)
+    train_qrl_path_support_only_b1
+    ;;
   train_qrl_path_support_baseline_control)
     train_qrl_path_support baseline control environment
     ;;
@@ -826,7 +856,7 @@ case "$PHASE" in
     benchmark
     ;;
   *)
-    echo "Unknown PHASE=$PHASE (expected prepare, prepare_path_support, train_qrl_path_support_baseline_control, train_qrl_path_support_baseline_b1, train_qrl_path_support_positive_control, train_qrl_path_support_positive_b1, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_goal_set_barrier_push_support_control, train_qrl_goal_set_barrier_push_support_b1, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, task_path_support_audit, local_nav_eval, benchmark, or all)" >&2
+    echo "Unknown PHASE=$PHASE (expected prepare, prepare_path_support, train_qrl_path_support_only_b1, train_qrl_path_support_baseline_control, train_qrl_path_support_baseline_b1, train_qrl_path_support_positive_control, train_qrl_path_support_positive_b1, visualize, train_qrl, train_qrl_push_support_control, train_qrl_push_support_b0, train_qrl_push_support_b1, train_qrl_push_support_witnessed, train_qrl_constraint_only_recovery, train_qrl_nstep_upper_bound, train_qrl_kkt_functional, train_qrl_feasible_direction, train_qrl_goal_set_barrier, train_qrl_goal_set_barrier_push_support_control, train_qrl_goal_set_barrier_push_support_b1, train_qrl_mqe_waypoint_consistency, train_qrl_mqe_separate_anchor_stop_loss, eval_qrl, replay_constraint_audit, task_path_support_audit, local_nav_eval, benchmark, or all)" >&2
     exit 2
     ;;
 esac

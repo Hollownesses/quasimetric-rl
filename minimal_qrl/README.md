@@ -406,6 +406,61 @@ B0 与 control 没有路径跨度，报告空间和 heading 差，时间跨度�
 历史日志的通用 `eval/*` 不会自动变成正确评估；上下文修复后的模型比较应重新评估。
 该修复只影响评估，不改变已有 checkpoint 的参数。
 
+### 只用冻结成功路径的 B1 小规模机制诊断
+
+在完整 replay 正对照之后，进一步检查同一个 learner 能否利用已具备完整路径支持的小子图。
+`path_support_only` 数据模式只回放 bank 中的真实成功转移及实际终态 anchor，不生成探索
+起点库、不采集 random/teacher 轨迹，也不再次调用规划器。它使用规划器采集的数据，属于
+机制诊断，不是 expert-free 或保留起点泛化实验。
+
+复用已有的 4 条成功路径：
+
+```bash
+root=results/diagnostic_path_support_only
+PHASE=train_qrl_path_support_only_b1 OUTPUT_ROOT="$root" \
+  PATH_SUPPORT_BANK=results/diagnostic_path_support_positive/path_support/bank.json \
+  DEVICE=cpu SEED=42 TOTAL_STEPS=2000 \
+  OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 \
+  EVAL_INTERVAL=0 VIS_INTERVAL=0 PATH_SUPPORT_PROBE_INTERVAL=100 \
+  bash minimal_qrl/run_comm_inspection_diagnostic.sh
+```
+
+该 bank 对应 335 条物理转移和 4 个 anchor。默认 batch=256；batch 不能大于 replay 长度，
+否则会拒绝启动，避免小数据集在 `drop_last=True` 下没有 batch。默认训练 2k，拒绝从
+checkpoint 恢复。bank 缺失或不完整时直接报错，不自动补数据。
+
+learner 沿用 goal_set_barrier，固定 B1 正向轨迹配对、线性 push、task/state=.6/.4、
+task sampling=all，成功转移权重仍为 4。局部约束和其他辅助 loss 配置与完整 replay 的
+positive_B1 相同；由于每个物理源都有成功后缀，此处 task sampling=all 本身就有完整见证。
+启动时核验该不变量、所有数据的 planner 来源，以及 goal-return mask/target 全部关闭。
+记录的 suffix cost 仅在只读诊断中计算，不添加到数据集，不参与训练目标。
+
+输出位于 `$root/qrl_path_support_only_b1`：
+
+- `path_support_bank.json`：本次冻结快照；后续审计使用它，校验内容与 replay SHA256。
+- `exploration_collection_stats.json`：沿用统计文件名，`collection_mode=path_support_only`，
+  `data_scope=bank_only`，基础 episode 数为 0、基础指纹为 null；探索采集步数为 0。
+  bank 的原始规划/执行成本另行保留，加载时逐动作复核不代表重新采集探索数据。
+- `path_support_diagnostic/values.csv`：step=0、每个 probe interval、最后一步的逐状态 V、
+  ΔV、真实一步 cost、one-step distance、局部残差、goal 不等式残差和记录 suffix-cost 上界。
+- `path_support_diagnostic/summary.csv`、`report.md`、`values.png`：每条路径、每个 critic 的
+  初始/最终值、值上升步数和残差；诊断保存/恢复模型模式，不消耗训练随机数。
+- `train_metrics.csv`：原有 push、barrier 及最终全 replay 审计；`LOG_INTERVAL` 控制记录间隔。
+
+仍可运行独立全量约束审计和路径审计，无需探索起点文件：
+
+```bash
+for phase in replay_constraint_audit task_path_support_audit; do
+  PHASE="$phase" OUTPUT_ROOT="$root" DEVICE=cpu \
+    QRL_CHECKPOINTS="$root/qrl_path_support_only_b1/checkpoint_final.pth" \
+    bash minimal_qrl/run_comm_inspection_diagnostic.sh || break
+done
+```
+
+记录成本是可行路径上界；即使单路径上没有违反，低估值或某些 V 上升步骤仍可能存在。
+先观察这个有支持子图能否学出合理形状，再决定回到全 replay 提高成功路径 push 配额，
+或继续定位表示/优化问题。该诊断本身不证明连续环境最优性，也不替代保留探针和闭环评估。
+
 ### 路径支持正对照：{原数据, 补充成功路径} × {control, B1}
 
 该实验检验缺少 U→任务目标的连续路径见证是否限制了学习。它**使用规划器数据，是机制诊断**，

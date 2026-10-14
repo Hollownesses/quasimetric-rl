@@ -132,7 +132,10 @@ def configure_global_push_sampling(dataset, *, state_mode="environment",
             "seed": int(seed), "pair_bank": "fixed_one_pair_per_replay_row",
             "trajectory_span_sampling": "uniform_positive_remaining_steps",
             "path_cost_target_added": False,
-            "whole_push_has_recorded_witnesses": state_mode == "trajectory" and task_mode == "witnessed"}
+            "whole_push_has_recorded_witnesses": bool(
+                state_mode == "trajectory" and pair_mask.any()
+                and infos["global_push_task_mask"].any()
+                and witnessed[infos["global_push_task_mask"].numpy()].all())}
 
 
 def write_global_push_coverage(dataset, env, output_dir, *, sampling,

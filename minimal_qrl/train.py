@@ -629,7 +629,8 @@ def train(args):
     if ((args.global_push_state_sampling != 'environment' or args.global_push_task_sampling != 'all')
             and args.env_type != 'comm_inspection_dubins_uav'):
         raise ValueError('Global Push support experiments require comm_inspection_dubins_uav')
-    if getattr(args, 'comm_dataset_mode', 'standard') == 'qrl_explore':
+    path_support_only = getattr(args, 'comm_dataset_mode', 'standard') == 'path_support_only'
+    if getattr(args, 'comm_dataset_mode', 'standard') in ('qrl_explore', 'path_support_only'):
         args.task_aware_teacher_ratio = 0.0
         args.target_env_transitions = None
     from minimal_qrl.path_support import validate_training_protocol
@@ -837,6 +838,7 @@ def train(args):
                 qrl_explore_config=qrl_explore_config,
                 include_global_push_pairs=(args.global_push_state_sampling == "environment"),
                 path_support_bank=getattr(args, 'path_support_bank', None),
+                path_support_only=path_support_only,
             )
         
         register_offline_env(
@@ -860,6 +862,9 @@ def train(args):
             dataset, state_mode=args.global_push_state_sampling,
             task_mode=args.global_push_task_sampling, seed=args.seed,
         )
+        if path_support_only:
+            from minimal_qrl.path_support import validate_path_only_replay
+            validate_path_only_replay(dataset.raw_data, args.batch_size)
         push_coverage = write_global_push_coverage(
             dataset, create_env_fn(), output_dir, sampling=push_sampling,
             position_resolution=args.global_push_coverage_position_resolution,
@@ -876,7 +881,8 @@ def train(args):
         if 'path_support' in collection_stats:
             from minimal_qrl.path_support import base_fingerprint
             support = collection_stats['path_support']
-            support['base_replay_sha256'] = base_fingerprint(dataset.raw_data, support['base_episode_count'])
+            support['base_replay_sha256'] = (base_fingerprint(dataset.raw_data, support['base_episode_count'])
+                                              if support['base_episode_count'] else None)
             support['augmented_replay_sha256'] = push_coverage['physical_replay_sha256']
             topology_improvement_metadata['path_support'].update(support)
         logger.info('Global Push sampling: %s; coverage=%s; task sampler retention=%.4f; stats=%s',
@@ -928,14 +934,14 @@ def train(args):
         )
     if collection_stats:
         logger.info(f"数据收集统计: {collection_stats}")
-    if qrl_explore_config is not None:
+    if qrl_explore_config is not None or path_support_only:
         exploration_stats = dict(collection_stats)
         exploration_stats.update(
             {
-                'start_bank_path': os.path.abspath(exploration_start_bank_path),
+                'start_bank_path': os.path.abspath(exploration_start_bank_path) if exploration_start_bank_path else None,
                 'exclusion_task_bank': (
                     os.path.abspath(args.explore_exclusion_task_bank)
-                    if args.explore_exclusion_task_bank
+                    if args.explore_exclusion_task_bank and not path_support_only
                     else None
                 ),
                 'seed': int(args.seed),
@@ -946,7 +952,7 @@ def train(args):
         )
         with open(exploration_stats_path, 'w', encoding='utf-8') as handle:
             json.dump(exploration_stats, handle, ensure_ascii=False, indent=2)
-        logger.info('保存 QRL-explore 收集统计: %s', exploration_stats_path)
+        logger.info('保存数据收集统计: %s', exploration_stats_path)
     
     # 创建 QRL Agent 和 Losses
     logger.info("创建 QRL Agent 和 Losses...")
@@ -1261,6 +1267,15 @@ def train(args):
                 "解释结果时必须同时报告 coverage。"
             )
     
+    path_probe = None
+    if path_support_only:
+        from minimal_qrl.eval.path_support_diagnostic import PathSupportDiagnostic
+        path_probe = PathSupportDiagnostic(dataset.raw_data, Path(output_dir) / 'path_support_diagnostic')
+        topology_improvement_metadata['path_support']['probe_interval'] = args.path_support_probe_interval
+        probe_started = perf_counter()
+        path_probe.snapshot(agent, loaded_optim_steps)
+        evaluation_time += perf_counter() - probe_started
+
     # 初始化训练状态
     logger.info("开始训练...")
     optimization_start = perf_counter()
@@ -1307,6 +1322,10 @@ def train(args):
             
             optim_steps += 1
             pbar.update(1)
+            if path_probe is not None and optim_steps % args.path_support_probe_interval == 0:
+                probe_started = perf_counter()
+                path_probe.snapshot(agent, optim_steps)
+                evaluation_time += perf_counter() - probe_started
             
             # 记录日志
             if optim_steps % args.log_interval == 0:
@@ -1631,6 +1650,10 @@ def train(args):
             final_audit_row.update({f'critic_{idx:02d}/{mode}/{key}': value
                                     for key, value in audit_info.items()})
         train_metric_rows.append(final_audit_row)
+    if path_probe is not None:
+        probe_started = perf_counter()
+        path_probe.snapshot(agent, optim_steps)
+        evaluation_time += perf_counter() - probe_started
     
     final_path = os.path.join(output_dir, 'checkpoint_final.pth')
     checkpoint_start = perf_counter()
@@ -1645,6 +1668,11 @@ def train(args):
     train_metrics_path = os.path.join(output_dir, 'train_metrics.csv')
     _write_metric_rows_csv(train_metrics_path, train_metric_rows)
     logger.info(f"保存训练指标 CSV: {train_metrics_path}")
+    if path_probe is not None:
+        probe_started = perf_counter()
+        path_probe.write_report()
+        evaluation_time += perf_counter() - probe_started
+        logger.info('保存逐路径机制诊断: %s', path_probe.output / 'report.md')
 
     if (
         oracle_bank_enabled
@@ -2232,10 +2260,10 @@ def main():
                              '1.0 表示每个 random rollout 额外收集 1 条 teacher 轨迹')
     parser.add_argument(
         '--comm-dataset-mode',
-        choices=['standard', 'qrl_explore'],
+        choices=['standard', 'qrl_explore', 'path_support_only'],
         default='standard',
         help='通信巡检数据模式：standard=现有 random+teacher；'
-             'qrl_explore=覆盖驱动、局部安全的无目标探索',
+             'qrl_explore=覆盖驱动、局部安全的无目标探索；path_support_only=仅冻结成功路径的 B1 机制诊断',
     )
     parser.add_argument(
         '--explore-attempted-env-steps',
@@ -2304,7 +2332,9 @@ def main():
         help='默认检查完整前视范围；legacy_action_hold 仅用于复现历史 replay',
     )
     parser.add_argument('--path-support-bank', default=None,
-                        help='冻结的规划器成功路径正对照 bank；仅追加一步转移与 anchor，禁止额外回报监督')
+                        help='冻结成功路径 bank：追加数据或作为 path_support_only 的全部数据，仅一步转移与 anchor，无额外回报监督')
+    parser.add_argument('--path-support-probe-interval', type=int, default=100,
+                        help='path_support_only 的逐路径诊断间隔；初始和最终状态也记录，不参与 loss')
     
     parser.add_argument('--num-episodes', type=int, default=100, help='数据集中的 episode 数量')
     parser.add_argument('--target-env-transitions', type=int, default=None,

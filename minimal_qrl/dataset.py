@@ -1440,6 +1440,7 @@ def create_dataset(
     qrl_explore_config: Optional[QRLExploreConfig] = None,
     include_global_push_pairs: bool = True,
     path_support_bank: Optional[str] = None,
+    path_support_only: bool = False,
 ) -> Iterator[EpisodeData]:
     """
     创建数据集，支持多种环境
@@ -1456,6 +1457,27 @@ def create_dataset(
     Yields:
         EpisodeData
     """
+    if path_support_only:
+        if not path_support_bank or qrl_explore_config is not None:
+            raise ValueError('path_support_only requires a bank and no exploration config')
+        from minimal_qrl.path_support import bank_episodes, load_bank
+        bank = load_bank(path_support_bank)
+        # This branch must precede every collector. The diagnostic uses only
+        # the frozen physical trajectories and their actual terminal anchors.
+        yield from bank_episodes(env, path_support_bank, context_start=0,
+                                 include_global_push_pairs=include_global_push_pairs)
+        if collection_stats is not None:
+            steps = sum(len(r['actions']) for r in bank['records'])
+            collection_stats.update({
+                'collection_mode': 'path_support_only', 'expert_free': False,
+                'attempted_env_step_budget': 0, 'attempted_env_steps': 0,
+                'stored_real_transitions': steps, 'successful_real_transitions': steps,
+                'synthetic_abstract_edges': len(bank['records']), 'episodes': len(bank['records']),
+                'path_support': {'purpose': bank['purpose'], 'data_scope': 'bank_only',
+                    'expert_free': False, 'bank_sha256': bank['content_digest'],
+                    'base_episode_count': 0, **bank['summary'], 'path_cost_targets_added': False},
+            })
+        return
     if path_support_bank and qrl_explore_config is None:
         raise ValueError('path-support positive control requires qrl_explore base replay')
     if qrl_explore_config is not None:

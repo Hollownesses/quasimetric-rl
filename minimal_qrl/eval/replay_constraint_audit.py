@@ -52,11 +52,26 @@ def load_training_args(path):
 def load_run_spec(checkpoint):
     directory = Path(checkpoint).resolve().parent
     args = load_training_args(directory / "train.log")
-    if args.comm_dataset_mode != "qrl_explore":
-        raise ValueError("Exact replay reconstruction currently supports qrl_explore only")
+    if args.comm_dataset_mode not in ("qrl_explore", "path_support_only"):
+        raise ValueError("Exact replay reconstruction supports qrl_explore and path_support_only")
     if args.qrl_cost_source != "negative_reward":
         raise ValueError("Communication replay audit requires negative_reward cost semantics")
     stats = json.loads((directory / "global_push_sampling_stats.json").read_text())
+    scenario = args._scenario_data
+    if not scenario:
+        raise ValueError("Replay audit needs the saved diagnostic scenario")
+    if getattr(args, 'path_support_bank', None):
+        from minimal_qrl.path_support import load_bank
+        bank = load_bank(directory / 'path_support_bank.json')
+        if bank['content_digest'] != args.path_support_bank_sha256:
+            raise ValueError('path-support snapshot disagrees with training log')
+        args.path_support_bank = str(directory / 'path_support_bank.json')
+    if args.comm_dataset_mode == 'path_support_only':
+        from minimal_qrl.path_support import validate_training_protocol
+        validate_training_protocol(args)
+        # No exploration start bank exists in the bank-only experiment.
+        return {"checkpoint": str(Path(checkpoint).resolve()), "args": args,
+                "config": None, "expected_sha256": stats["physical_replay_sha256"], "scenario": scenario}
     bank = json.loads((directory / "exploration_start_bank.json").read_text())
     claimed_digest = bank.pop("content_digest")
     actual_digest = hashlib.sha256(json.dumps(
@@ -69,9 +84,6 @@ def load_run_spec(checkpoint):
     records = sorted(bank["records"], key=lambda r: r["start_index"])
     if [r["start_index"] for r in records] != list(range(len(records))):
         raise ValueError("Start bank indices must be contiguous")
-    scenario = args._scenario_data
-    if not scenario:
-        raise ValueError("Replay audit needs the saved diagnostic scenario")
     config = QRLExploreConfig(
         attempted_env_steps=int(args.explore_attempted_env_steps),
         start_position_resolution=float(args.explore_start_position_resolution),
@@ -91,12 +103,6 @@ def load_run_spec(checkpoint):
         # exact replay instead of silently changing the data behind a checkpoint.
         safety_lookahead_mode=getattr(args, "explore_safety_lookahead_mode", "legacy_action_hold"),
     )
-    if getattr(args, 'path_support_bank', None):
-        from minimal_qrl.path_support import load_bank
-        bank = load_bank(directory / 'path_support_bank.json')
-        if bank['content_digest'] != args.path_support_bank_sha256:
-            raise ValueError('path-support snapshot disagrees with training log')
-        args.path_support_bank = str(directory / 'path_support_bank.json')
     return {"checkpoint": str(Path(checkpoint).resolve()), "args": args,
             "config": config, "expected_sha256": stats["physical_replay_sha256"],
             "scenario": scenario}
@@ -117,13 +123,14 @@ def load_replay(spec, cache_path):
         validate_replay(raw, spec["expected_sha256"])
         print(f"Loaded verified replay cache: {cache_path}", flush=True)
         return raw
-    print("Reconstructing replay from saved starts; environment push pairs disabled", flush=True)
+    print("Reconstructing replay from saved starts or frozen path bank; environment push pairs disabled", flush=True)
     env = CommInspectionDubinsUAV2D(**get_env_kwargs(spec["args"]))
     episodes = []
     for episode in create_dataset(
             env, max_steps_per_episode=spec["args"].max_steps_per_episode,
             seed=spec["args"].seed, qrl_explore_config=spec["config"],
             path_support_bank=getattr(spec['args'], 'path_support_bank', None),
+            path_support_only=getattr(spec['args'], 'comm_dataset_mode', None) == 'path_support_only',
             include_global_push_pairs=False):
         # Drop the large push-only tensors; the constraint replay remains exact.
         episode.transition_infos = {k: episode.transition_infos[k] for k in REPLAY_INFO_KEYS}

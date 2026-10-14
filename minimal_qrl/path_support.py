@@ -249,9 +249,12 @@ def base_fingerprint(raw, episode_count):
 
 
 def validate_training_protocol(args):
+    only = getattr(args, 'comm_dataset_mode', None) == 'path_support_only'
+    if only and not getattr(args, 'path_support_bank', None):
+        raise ValueError('path_support_only requires --path-support-bank')
     if not getattr(args,'path_support_bank',None):
         return
-    expected = {'env_type':'comm_inspection_dubins_uav','comm_dataset_mode':'qrl_explore',
+    expected = {'env_type':'comm_inspection_dubins_uav','comm_dataset_mode':'path_support_only' if only else 'qrl_explore',
         'qrl_local_constraint_mode':'goal_set_barrier','global_push_objective':'linear',
         'global_push_task_sampling':'all','global_push_abstract_goal_ratio':.6,'global_push_state_goal_ratio':.4,
         'qrl_temporal_constraint_weight':0.,'qrl_goal_return_constraint_weight':0.,
@@ -261,8 +264,26 @@ def validate_training_protocol(args):
         mismatches.append('init_checkpoint (fresh initialization required)')
     if args.global_push_state_sampling not in ('environment','trajectory'):
         mismatches.append('global_push_state_sampling')
+    if only and args.global_push_state_sampling != 'trajectory':
+        mismatches.append('global_push_state_sampling (bank-only diagnostic requires B1)')
+    if only and getattr(args, 'path_support_probe_interval', 100) <= 0:
+        mismatches.append('path_support_probe_interval (must be positive)')
     if mismatches:
         raise ValueError('path-support positive control requires unchanged barrier/control-B1 protocol: '+', '.join(mismatches))
+
+
+def validate_path_only_replay(raw, batch_size):
+    """Guard the mechanism experiment before optimization, including empty loaders."""
+    infos = raw.transition_infos
+    real = ~infos['abstract_goal_edge'].bool()
+    if not 0 < batch_size <= raw.num_transitions:
+        raise ValueError('path_support_only batch size must be positive and no larger than replay')
+    if (not real.any() or not infos['planner_path_support'].all()
+            or not infos['task_success_episode'][real].all()
+            or not infos['global_push_task_witness_mask'][real].all()
+            or not infos['global_push_pair_mask'][real].all()
+            or infos['goal_return_mask'].any() or infos['goal_return_cost'].any()):
+        raise ValueError('path_support_only requires exclusively witnessed physical paths without return targets')
 
 
 def main():
