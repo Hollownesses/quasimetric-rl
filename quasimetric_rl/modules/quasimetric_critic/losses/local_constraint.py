@@ -12,6 +12,7 @@ from ....data import BatchData
 from ...utils import MLP, LatentTensor, LossResult, grad_mul, softplus_inv_float
 
 from . import CriticLossBase, CriticBatchInfo
+from .phr import phr_terms
 
 
 
@@ -447,18 +448,8 @@ class LocalConstraintLoss(CriticLossBase):
             positive_residual = residual.relu()
             detached_lagrange_mult = lagrange_mult.detach()
             rho = self.augmented_lagrangian_rho
-            if rho > 0.0:
-                effective_lagrange_mult = (
-                    detached_lagrange_mult + rho * residual
-                ).relu()
-                loss = (
-                    effective_lagrange_mult.square()
-                    - detached_lagrange_mult.square()
-                ).mean() / (2.0 * rho)
-            else:
-                # rho=0 is retained as the exact linear-Lagrangian ablation.
-                effective_lagrange_mult = detached_lagrange_mult
-                loss = (detached_lagrange_mult * residual).mean()
+            loss, effective_lagrange_mult = phr_terms(
+                residual, detached_lagrange_mult, rho)
 
             violation_mask = residual > 0
             slack_mask = ~violation_mask
