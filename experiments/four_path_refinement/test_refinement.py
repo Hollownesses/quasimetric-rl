@@ -1,10 +1,15 @@
 import unittest
+import argparse
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 import torch
 from experiments.four_path_refinement.run import (
     load_data, restore, advance, optimizer_digest, diagnose, learning_rate,
     training_objective, tensor_digest,
 )
-from experiments.four_path_refinement.repair import accept_candidate, apply_delta, actual, local_linearization, qp_direction
+from experiments.four_path_refinement.repair import accept_candidate, apply_delta, actual, local_linearization, qp_direction, stopping_reason
 
 
 class RestartTests(unittest.TestCase):
@@ -69,6 +74,43 @@ class RestartTests(unittest.TestCase):
         self.assertTrue(accept_candidate(old,better,80.95,80.9,physical))
         self.assertFalse(accept_candidate(old,better,80.89,80.9,physical))
         self.assertFalse(accept_candidate(old,old*2,81.,80.9,physical))
+
+    def test_reference_free_stop_rules(self):
+        physical=torch.tensor([True,True,False])
+        h=torch.tensor([-1.,0.,0.])
+        self.assertEqual(stopping_reason(h,0.,-.15,physical,0,40,0),'feasible_with_value_guard')
+        self.assertIsNone(stopping_reason(h,0.,.1,physical,0,40,0))
+        self.assertIsNone(stopping_reason(torch.tensor([.01,0.,0.]),1.,0.,physical,0,40,0))
+        self.assertIsNone(stopping_reason(torch.tensor([0.,0.,.01]),1.,0.,physical,0,40,0))
+        self.assertEqual(stopping_reason(h,0.,.1,physical,40,40,0),'iteration_budget')
+        self.assertEqual(stopping_reason(h,0.,.1,physical,3,40,3),'three_stalled_iterations')
+
+    def test_feasible_but_poor_values_stop_before_reference_evaluation(self):
+        from experiments.four_path_refinement import repair
+        from experiments.four_path_refinement.run import START
+        model,solver,opt,saved=restore(self.data)
+        layer=getattr(model.projector.module,'2')
+        with torch.no_grad(): layer.weight.zero_();layer.bias.zero_()
+        with tempfile.TemporaryDirectory() as tmp:
+            out=Path(tmp)/'repair'
+            args=argparse.Namespace(checkpoint=str(START),output=str(out),iterations=40,delta=.15,push_step=0.)
+            calls=[]
+            def evaluate_after_save(*args):
+                payload=torch.load(out/'latest.pt',weights_only=True)
+                self.assertEqual(payload['stop_reason'],'feasible_with_value_guard')
+                calls.append(payload['step'])
+                return diagnose(*args)
+            with patch.object(repair,'load_data',return_value=self.data), \
+                 patch.object(repair,'restore',return_value=(model,solver,opt,saved)), \
+                 patch.object(repair,'diagnose',side_effect=evaluate_after_save), \
+                 patch.object(repair,'local_linearization',side_effect=AssertionError('must stop before QP')):
+                repair.run(args)
+            final=json.loads((out/'evaluation.json').read_text())
+            self.assertEqual(calls,[0])
+            self.assertFalse(final['joint_pass'])
+            self.assertAlmostEqual(final['push_gap_percent'],100.)
+            self.assertEqual(final['stop_reason'],'feasible_with_value_guard')
+        torch.set_num_threads(1)
 
     def test_repair_subspace_is_actual_network_update(self):
         model, _, _, _ = restore(self.data)

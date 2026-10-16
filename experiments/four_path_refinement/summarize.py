@@ -129,7 +129,8 @@ def summarize(root):
         if not (root/name/'curve.jsonl').exists(): continue
         repair=records(root/name/'curve.jsonl')
         for ax,key,title in zip(axes,['max_violation','push','task_nrmse_percent'],['Max physical violation','Push with fixed floor','Task NRMSE (%)']):
-            ax.plot([r['step'] for r in repair],[r[key] for r in repair],marker='o',label=name);ax.set(xlabel='Local QP iterations',title=title);ax.grid(alpha=.2);ax.legend(fontsize=8)
+            measured=[r for r in repair if key in r]
+            ax.plot([r['step'] for r in measured],[r[key] for r in measured],marker='o',label=name);ax.set(xlabel='Local QP iterations',title=title);ax.grid(alpha=.2);ax.legend(fontsize=8)
     axes[0].set_yscale('log');axes[0].axhline(1e-5,linestyle=':',color='black')
     axes[1].axhline(repair[0]['push_floor'],linestyle=':',color='black')
     fig.tight_layout();fig.savefig(out/'repair.png',dpi=160);plt.close(fig)

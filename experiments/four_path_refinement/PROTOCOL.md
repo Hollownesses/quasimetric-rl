@@ -56,3 +56,15 @@ normalized original push-ascent direction of norm .1 instead of zero. The
 Gram-factor direction is exactly mapped to that real-parameter ascent vector.
 This changes the local QP objective, not its constraints or the joint gate.
 Keep the first unsuccessful repair as `repair`, the follow-up as `repair_push`.
+
+## Reference-free repair stopping (subsequent correction)
+
+Repair now selects and saves its final model using only full physical feasibility
+(h<=1e-5), zero anchors (abs(h)<=1e-6), its fixed model-derived push floor, the
+iteration budget and the three-stall limit. Graph push gap / task NRMSE / joint
+pass are evaluated only after that selection. `evaluation.json` records the
+post-stop evaluation; intermediate repair curve rows contain no graph metrics.
+A low-value feasible model may therefore stop and subsequently FAIL the joint
+evaluation. That failure must be retained, not used to restart or extend training.
+Existing archived runs retain their original stopping semantics and are not
+silently relabeled as reference-free experiments.

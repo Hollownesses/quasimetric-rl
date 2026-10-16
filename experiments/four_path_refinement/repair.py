@@ -29,6 +29,20 @@ def actual(model, data):
     return edge-data.cost, float(.6*task.mean()+.4*pair.mean())
 
 
+def stopping_reason(residual, push, floor, physical, iteration, budget, stalls):
+    """Only transition costs, model values and fixed budgets select the iterate."""
+    feasible = (bool(torch.isfinite(residual).all()) and math.isfinite(push)
+                and float(residual[physical].max()) <= 1e-5
+                and float(residual[~physical].abs().max()) <= 1e-6)
+    if feasible and push >= floor:
+        return 'feasible_with_value_guard'
+    if iteration >= budget:
+        return 'iteration_budget'
+    if stalls >= 3:
+        return 'three_stalled_iterations'
+    return None
+
+
 def accept_candidate(old_h, new_h, new_push, floor, physical):
     if not torch.isfinite(new_h).all() or not math.isfinite(new_push) or new_push < floor:
         return False
@@ -111,6 +125,8 @@ def run(args):
         initial_model_sha256=tensor_digest(*model.state_dict().values()),
         subspace='entire final projector: 2048 x (512 hidden+bias); 1050624 existing parameters',
         constraints='all 339 edges + model-derived global push floor',
+        stopping='model-only: full-edge feasibility and fixed push floor, or iteration/stall budget; references evaluated after stopping',
+        feasibility_tolerance=1e-5, anchor_tolerance=1e-6,
         interior_margin=5e-5, trust_radius=.1, qp_sweeps=2000,
         script_sha256=file_digest(__file__),
         qp_script_sha256=file_digest('quasimetric_rl/modules/quasimetric_critic/losses/feasible_direction.py'))
@@ -118,17 +134,29 @@ def run(args):
     curve = (out/'curve.jsonl').open('w'); trace = (out/'qp.jsonl').open('w')
     start = time.perf_counter(); stalls = 0; candidate_evaluations = 0
     for iteration in range(args.iterations+1):
-        rec, values, arrays = diagnose(model,data,solver,iteration,time.perf_counter()-start)
+        old_h, old_push = actual(model,data)
+        reason = stopping_reason(old_h,old_push,floor,data.physical,iteration,args.iterations,stalls)
+        rec = dict(step=iteration,seconds=time.perf_counter()-start,push=old_push,
+            max_residual=float(old_h[data.physical].max()),
+            max_violation=float(old_h[data.physical].relu().max()),
+            violation_count=int((old_h[data.physical]>1e-5).sum()),
+            anchor_max=float(old_h[~data.physical].abs().max()),stop_reason=reason)
         rec['push_floor']=floor; rec['push_loss_from_start']=initial_push-rec['push']
         rec['candidate_evaluations']=candidate_evaluations
-        curve.write(json.dumps(rec)+'\n'); curve.flush()
-        np.savez(out/'latest_edges.npz',**arrays)
         torch.save(dict(step=iteration,model=model.state_dict(),solver=solver.state_dict(),
-            optimizer=optimizer.state_dict(),rng=torch.get_rng_state(),optimizer_stale_after_repair=True),out/'latest.pt')
-        (out/'values.json').write_text(json.dumps(values))
-        print(json.dumps({k:rec[k] for k in ('step','seconds','push','max_violation','violation_count','joint_pass')}),flush=True)
-        if rec['joint_pass'] or iteration == args.iterations or stalls >= 3: break
-        old_h, old_push = actual(model,data)
+            optimizer=optimizer.state_dict(),rng=torch.get_rng_state(),
+            optimizer_stale_after_repair=iteration>0,stop_reason=reason),out/'latest.pt')
+        if reason is not None:
+            # The selected model is already saved. References cannot select a
+            # stopping time, candidate, restart or checkpoint, even indirectly.
+            evaluated, values, arrays = diagnose(model,data,solver,iteration,time.perf_counter()-start)
+            rec.update(evaluated)
+            np.savez(out/'latest_edges.npz',**arrays)
+            (out/'values.json').write_text(json.dumps(values))
+            (out/'evaluation.json').write_text(json.dumps(rec,indent=2)+'\n')
+        curve.write(json.dumps(rec)+'\n'); curve.flush()
+        print(json.dumps({k:rec[k] for k in ('step','seconds','push','max_violation','violation_count','stop_reason')}),flush=True)
+        if reason is not None: break
         linearization = local_linearization(model,data,floor)
         direction,alpha,slack = qp_direction(linearization,data,push_step=args.push_step)
         mode = 'hard'
