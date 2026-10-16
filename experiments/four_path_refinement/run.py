@@ -21,7 +21,10 @@ START = ROOT/'results/four_path_factorial_20261016/main/encoder_phr_c0/latest.pt
 
 def restore(data, checkpoint=START):
     saved = torch.load(checkpoint, map_location='cpu', weights_only=True)
-    model = IndexedIQE(data, 'encoder', 0)
+    seed = saved.get('initialization_seed')
+    model = IndexedIQE(data, 'encoder', 0, initialization_seed=seed)
+    if seed is not None:
+        data.fingerprint.pop('initial_checkpoint', None)  # legacy metadata, not used for fresh seeds
     model.load_state_dict(saved['model'])
     # The original c0 run used one group in model.parameters() order.
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5, weight_decay=0.)
