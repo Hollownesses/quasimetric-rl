@@ -1,0 +1,98 @@
+{
+  "step": 25000,
+  "seconds": 0.0,
+  "push": 81.00569915771484,
+  "push_reference": 81.61738999171489,
+  "push_gap": 0.6116908340000435,
+  "push_gap_percent": 0.7494614003978041,
+  "feasible_scale": 0.9937910437583923,
+  "feasible_push": 80.50273831632376,
+  "feasible_push_gap_percent": 1.3657036515187266,
+  "task_rmse": 1.2468245998522232,
+  "task_nrmse_percent": 1.0175514799859946,
+  "pair_rmse": 0.8777863227885951,
+  "max_residual": 0.0052225589752197266,
+  "max_violation": 0.0052225589752197266,
+  "violation_count": 130,
+  "mean_positive_residual": 0.0003969897225033492,
+  "anchor_max": 0.0,
+  "terminal_max": 0.0,
+  "full_top8_penalty": 8.220555305480957,
+  "dual_max": 166.285888671875,
+  "dual_mean": 34.363460540771484,
+  "complementarity": 0.035036712884902954,
+  "paths": [
+    {
+      "path": 0,
+      "start": 193.32736206054688,
+      "reference": 194.48878202587366,
+      "edge_slack": 1.1374413967132568,
+      "triangle_slack": 0.023982763290405273,
+      "positive_residual_sum": 0.06332473456859589,
+      "max_violation": 0.0052225589752197266
+    },
+    {
+      "path": 1,
+      "start": 209.8839111328125,
+      "reference": 213.11610508710146,
+      "edge_slack": 3.2317354679107666,
+      "triangle_slack": 0.00044339895248413086,
+      "positive_residual_sum": 0.01794135570526123,
+      "max_violation": 0.0045468807220458984
+    },
+    {
+      "path": 2,
+      "start": 258.9610595703125,
+      "reference": 259.0626526251435,
+      "edge_slack": 0.10136804729700089,
+      "triangle_slack": 0.0002308487892150879,
+      "positive_residual_sum": 0.029281198978424072,
+      "max_violation": 0.004370689392089844
+    },
+    {
+      "path": 3,
+      "start": 267.27276611328125,
+      "reference": 270.5480177178979,
+      "edge_slack": 2.7813265323638916,
+      "triangle_slack": 0.49386700987815857,
+      "positive_residual_sum": 0.022444263100624084,
+      "max_violation": 0.002585172653198242
+    }
+  ],
+  "terminal_entry_edges": [
+    {
+      "row": 71,
+      "path": 0,
+      "cost": 0.10000000149011612,
+      "distance": 0.10009279102087021,
+      "residual": 9.278953075408936e-05
+    },
+    {
+      "row": 148,
+      "path": 1,
+      "cost": 0.10000000149011612,
+      "distance": 0.09996255487203598,
+      "residual": -3.744661808013916e-05
+    },
+    {
+      "row": 240,
+      "path": 2,
+      "cost": 0.10000000149011612,
+      "distance": 0.0999375581741333,
+      "residual": -6.24433159828186e-05
+    },
+    {
+      "row": 337,
+      "path": 3,
+      "cost": 0.10000000149011612,
+      "distance": 0.10022734850645065,
+      "residual": 0.0002273470163345337
+    }
+  ],
+  "complementarity_max": 0.5641748905181885,
+  "dual_stationarity_eta1_max": 0.00794219970703125,
+  "joint_pass": false,
+  "strict_physical_feasible": false,
+  "model_sha256": "0c3e00fa1dcaa2e0ebfe346edb005d3227a7b291806953dbdd947b2499428cfb",
+  "checkpoint_sha256": "500e2307414eccdd304727e11301cfa575ec3f6617fe32685cc408cc049960df"
+}

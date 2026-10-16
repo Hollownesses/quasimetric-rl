@@ -1,0 +1,330 @@
+{
+  "seed": 9001,
+  "stages": {
+    "phr": {
+      "step": 20,
+      "seconds": 0.0,
+      "push": 0.6814067959785461,
+      "push_reference": 81.61738999171489,
+      "push_gap": 80.93598319573634,
+      "push_gap_percent": 99.16512057534833,
+      "feasible_scale": 0.18069007992744446,
+      "feasible_push": 0.12312344842846734,
+      "feasible_push_gap_percent": 99.8491455700299,
+      "task_rmse": 121.91146770034815,
+      "task_nrmse_percent": 99.49370135980388,
+      "pair_rmse": 88.84482108875402,
+      "max_residual": 0.4534338414669037,
+      "max_violation": 0.4534338414669037,
+      "violation_count": 4,
+      "mean_positive_residual": 0.00516894506290555,
+      "anchor_max": 0.0,
+      "terminal_max": 0.0,
+      "full_top8_penalty": 110.72478485107422,
+      "dual_max": 10.290796279907227,
+      "dual_mean": 0.11579675227403641,
+      "complementarity": 0.05018996447324753,
+      "paths": [
+        {
+          "path": 0,
+          "start": 0.8640814423561096,
+          "reference": 194.48878202587366,
+          "edge_slack": 189.08160400390625,
+          "triangle_slack": 4.543105602264404,
+          "positive_residual_sum": 0.4408923089504242,
+          "max_violation": 0.4408923089504242
+        },
+        {
+          "path": 1,
+          "start": 0.8247120976448059,
+          "reference": 213.11610508710146,
+          "edge_slack": 207.60702514648438,
+          "triangle_slack": 4.6843695640563965,
+          "positive_residual_sum": 0.4189949333667755,
+          "max_violation": 0.4189949333667755
+        },
+        {
+          "path": 2,
+          "start": 0.6775922775268555,
+          "reference": 259.0626526251435,
+          "edge_slack": 252.20425415039062,
+          "triangle_slack": 6.18079137802124,
+          "positive_residual_sum": 0.4534338414669037,
+          "max_violation": 0.4534338414669037
+        },
+        {
+          "path": 3,
+          "start": 0.7123980522155762,
+          "reference": 270.5480177178979,
+          "edge_slack": 262.9755554199219,
+          "triangle_slack": 6.8600592613220215,
+          "positive_residual_sum": 0.41827550530433655,
+          "max_violation": 0.41827550530433655
+        }
+      ],
+      "terminal_entry_edges": [
+        {
+          "row": 71,
+          "path": 0,
+          "cost": 0.10000000149011612,
+          "distance": 0.5408923029899597,
+          "residual": 0.4408923089504242
+        },
+        {
+          "row": 148,
+          "path": 1,
+          "cost": 0.10000000149011612,
+          "distance": 0.518994927406311,
+          "residual": 0.4189949333667755
+        },
+        {
+          "row": 240,
+          "path": 2,
+          "cost": 0.10000000149011612,
+          "distance": 0.5534338355064392,
+          "residual": 0.4534338414669037
+        },
+        {
+          "row": 337,
+          "path": 3,
+          "cost": 0.10000000149011612,
+          "distance": 0.5182754993438721,
+          "residual": 0.41827550530433655
+        }
+      ],
+      "complementarity_max": 4.666195392608643,
+      "dual_stationarity_eta1_max": 0.4534339904785156,
+      "joint_pass": false,
+      "strict_physical_feasible": false,
+      "model_sha256": "e7f54d60705f2a677152b0f4fe7e9f83ba0d4c58c338319db66bb0561a85db27",
+      "checkpoint_sha256": "9399c1b2185673fb2534f8dc288fd968b6f8cf4a5e4b1530a41fe11327c9ffb8"
+    },
+    "decay": {
+      "step": 40,
+      "seconds": 0.0,
+      "push": 0.6977021098136902,
+      "push_reference": 81.61738999171489,
+      "push_gap": 80.9196878819012,
+      "push_gap_percent": 99.1451550829002,
+      "feasible_scale": 0.1851227581501007,
+      "feasible_push": 0.12916053893585477,
+      "feasible_push_gap_percent": 99.8417487511559,
+      "task_rmse": 121.89113940375489,
+      "task_nrmse_percent": 99.47711114471947,
+      "pair_rmse": 88.83156893691093,
+      "max_residual": 0.4401821196079254,
+      "max_violation": 0.4401821196079254,
+      "violation_count": 4,
+      "mean_positive_residual": 0.005030835047364235,
+      "anchor_max": 0.0,
+      "terminal_max": 0.0,
+      "full_top8_penalty": 107.8331069946289,
+      "dual_max": 19.237497329711914,
+      "dual_mean": 0.2166970819234848,
+      "complementarity": 0.09140277653932571,
+      "paths": [
+        {
+          "path": 0,
+          "start": 0.892419695854187,
+          "reference": 194.48878202587366,
+          "edge_slack": 189.01837158203125,
+          "triangle_slack": 4.577989101409912,
+          "positive_residual_sum": 0.42814359068870544,
+          "max_violation": 0.42814359068870544
+        },
+        {
+          "path": 1,
+          "start": 0.8546478152275085,
+          "reference": 213.11610508710146,
+          "edge_slack": 207.52899169921875,
+          "triangle_slack": 4.732471942901611,
+          "positive_residual_sum": 0.40866366028785706,
+          "max_violation": 0.40866366028785706
+        },
+        {
+          "path": 2,
+          "start": 0.7034962177276611,
+          "reference": 259.0626526251435,
+          "edge_slack": 252.12904357910156,
+          "triangle_slack": 6.230127334594727,
+          "positive_residual_sum": 0.4401821196079254,
+          "max_violation": 0.4401821196079254
+        },
+        {
+          "path": 3,
+          "start": 0.7282554507255554,
+          "reference": 270.5480177178979,
+          "edge_slack": 262.890869140625,
+          "triangle_slack": 6.928879261016846,
+          "positive_residual_sum": 0.4083404242992401,
+          "max_violation": 0.4083404242992401
+        }
+      ],
+      "terminal_entry_edges": [
+        {
+          "row": 71,
+          "path": 0,
+          "cost": 0.10000000149011612,
+          "distance": 0.528143584728241,
+          "residual": 0.42814359068870544
+        },
+        {
+          "row": 148,
+          "path": 1,
+          "cost": 0.10000000149011612,
+          "distance": 0.5086636543273926,
+          "residual": 0.40866366028785706
+        },
+        {
+          "row": 240,
+          "path": 2,
+          "cost": 0.10000000149011612,
+          "distance": 0.5401821136474609,
+          "residual": 0.4401821196079254
+        },
+        {
+          "row": 337,
+          "path": 3,
+          "cost": 0.10000000149011612,
+          "distance": 0.5083404183387756,
+          "residual": 0.4083404242992401
+        }
+      ],
+      "complementarity_max": 8.468002319335938,
+      "dual_stationarity_eta1_max": 0.4401817321777344,
+      "joint_pass": false,
+      "strict_physical_feasible": false,
+      "model_sha256": "4335456f703a04f5fe90fd11371dc042c98696af24700e3e54716ba9210b0bff",
+      "checkpoint_sha256": "d8aff816d8fd32fc8d5feff2134a85771e0301f2cb544a1dd639b6d4399b6088"
+    },
+    "qp": {
+      "step": 2,
+      "seconds": 0.0,
+      "push": 0.6830110549926758,
+      "push_reference": 81.61738999171489,
+      "push_gap": 80.93437893672221,
+      "push_gap_percent": 99.16315499054551,
+      "feasible_scale": 0.19751805067062378,
+      "feasible_push": 0.13490701216863954,
+      "feasible_push_gap_percent": 99.83470800501911,
+      "task_rmse": 121.90037683452788,
+      "task_nrmse_percent": 99.48464994476835,
+      "pair_rmse": 88.83461674032687,
+      "max_residual": 0.40628287196159363,
+      "max_violation": 0.40628287196159363,
+      "violation_count": 4,
+      "mean_positive_residual": 0.004621912259608507,
+      "anchor_max": 0.0,
+      "terminal_max": 0.0,
+      "full_top8_penalty": 99.27129364013672,
+      "dual_max": 19.237497329711914,
+      "dual_mean": 0.2166970819234848,
+      "complementarity": 0.08397234976291656,
+      "paths": [
+        {
+          "path": 0,
+          "start": 0.8835042119026184,
+          "reference": 194.48878202587366,
+          "edge_slack": 189.07406616210938,
+          "triangle_slack": 4.5311994552612305,
+          "positive_residual_sum": 0.39006492495536804,
+          "max_violation": 0.39006492495536804
+        },
+        {
+          "path": 1,
+          "start": 0.845077633857727,
+          "reference": 213.11610508710146,
+          "edge_slack": 207.56723022460938,
+          "triangle_slack": 4.703793048858643,
+          "positive_residual_sum": 0.37567809224128723,
+          "max_violation": 0.37567809224128723
+        },
+        {
+          "path": 2,
+          "start": 0.6935482621192932,
+          "reference": 259.0626526251435,
+          "edge_slack": 252.18051147460938,
+          "triangle_slack": 6.188584804534912,
+          "positive_residual_sum": 0.40628287196159363,
+          "max_violation": 0.40628287196159363
+        },
+        {
+          "path": 3,
+          "start": 0.7221521139144897,
+          "reference": 270.5480177178979,
+          "edge_slack": 262.9275207519531,
+          "triangle_slack": 6.8983540534973145,
+          "positive_residual_sum": 0.37631475925445557,
+          "max_violation": 0.37631475925445557
+        }
+      ],
+      "terminal_entry_edges": [
+        {
+          "row": 71,
+          "path": 0,
+          "cost": 0.10000000149011612,
+          "distance": 0.49006491899490356,
+          "residual": 0.39006492495536804
+        },
+        {
+          "row": 148,
+          "path": 1,
+          "cost": 0.10000000149011612,
+          "distance": 0.47567808628082275,
+          "residual": 0.37567809224128723
+        },
+        {
+          "row": 240,
+          "path": 2,
+          "cost": 0.10000000149011612,
+          "distance": 0.5062828660011292,
+          "residual": 0.40628287196159363
+        },
+        {
+          "row": 337,
+          "path": 3,
+          "cost": 0.10000000149011612,
+          "distance": 0.4763147532939911,
+          "residual": 0.37631475925445557
+        }
+      ],
+      "complementarity_max": 7.815865516662598,
+      "dual_stationarity_eta1_max": 0.4062824249267578,
+      "joint_pass": false,
+      "strict_physical_feasible": false,
+      "model_sha256": "4bf32f5536035bc7a60939e6ba6d747ff6eba013ab181ff8a3a84eed2b132aee",
+      "checkpoint_sha256": "40a414f48a5ef2eb91641dcf4da5092dfc622ebc39e2a1c3b65e99051e7d18a5"
+    }
+  },
+  "timing": {
+    "phr": {
+      "primal_updates": 20,
+      "dual_updates": 20,
+      "seconds": 1.8017069170000002,
+      "train_seconds": 1.6197780780000008,
+      "model_sha256": "e7f54d60705f2a677152b0f4fe7e9f83ba0d4c58c338319db66bb0561a85db27",
+      "adam_sha256": "4a25b6cbddc9e1ca3e606807cd15b110c26eff5ba2fb91bdc2da65313d44905c",
+      "dual_sha256": "60aceeca646e2eb7d915894e8cff711c2738f548c2cdf767077cdeeca836fb9c"
+    },
+    "decay": {
+      "primal_updates": 20,
+      "dual_updates": 20,
+      "seconds": 1.670410167,
+      "train_seconds": 1.515808669000001,
+      "model_sha256": "4335456f703a04f5fe90fd11371dc042c98696af24700e3e54716ba9210b0bff",
+      "adam_sha256": "39f6d13401b33ee0a1f33c2afc82f9db06f5e6ce3d9933bdde0e554dd6acd045",
+      "dual_sha256": "d99e15a0bf8e679930e27c79e2eb1c73ca47072ce9b667047613ba7c010b09c1"
+    },
+    "total_seconds": 5.211916167
+  },
+  "stage_boundary": {
+    "model_sha256": "e7f54d60705f2a677152b0f4fe7e9f83ba0d4c58c338319db66bb0561a85db27",
+    "adam_sha256": "4a25b6cbddc9e1ca3e606807cd15b110c26eff5ba2fb91bdc2da65313d44905c",
+    "dual_sha256": "60aceeca646e2eb7d915894e8cff711c2738f548c2cdf767077cdeeca836fb9c"
+  },
+  "repair_stop_reason": "iteration_budget",
+  "repair_iterations": 2,
+  "repair_candidate_evaluations": 4,
+  "fixed_push_floor": 0.5477021098136902,
+  "final_joint_pass": false
+}

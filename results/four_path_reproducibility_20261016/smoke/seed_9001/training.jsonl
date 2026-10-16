@@ -1,0 +1,4 @@
+{"stage": "phr", "stage_step": 0, "total_primal_step": 0, "seconds": 0.08184262500000017, "train_seconds": 0.0, "push": 0.5644011497497559, "max_violation": 0.6106966733932495, "violation_count": 4, "complementarity": 0.0}
+{"stage": "phr", "stage_step": 20, "total_primal_step": 20, "seconds": 1.764724208, "train_seconds": 1.6197780780000008, "push": 0.6814067959785461, "max_violation": 0.4534338414669037, "violation_count": 4, "complementarity": 0.05018996447324753}
+{"stage": "decay", "stage_step": 0, "total_primal_step": 20, "seconds": 0.05876933399999995, "train_seconds": 0.0, "push": 0.6814067959785461, "max_violation": 0.4534338414669037, "violation_count": 4, "complementarity": 0.05018996447324753}
+{"stage": "decay", "stage_step": 20, "total_primal_step": 40, "seconds": 1.6366475839999994, "train_seconds": 1.515808669000001, "push": 0.6977021098136902, "max_violation": 0.4401821196079254, "violation_count": 4, "complementarity": 0.09140277653932571}

@@ -1,0 +1,99 @@
+{
+  "step": 2,
+  "seconds": 1.0978324170000002,
+  "push": 0.6830110549926758,
+  "max_residual": 0.40628287196159363,
+  "max_violation": 0.40628287196159363,
+  "violation_count": 4,
+  "anchor_max": 0.0,
+  "stop_reason": "iteration_budget",
+  "push_floor": 0.5477021098136902,
+  "push_loss_from_start": 0.014691054821014404,
+  "candidate_evaluations": 4,
+  "push_reference": 81.61738999171489,
+  "push_gap": 80.93437893672221,
+  "push_gap_percent": 99.16315499054551,
+  "feasible_scale": 0.19751805067062378,
+  "feasible_push": 0.13490701216863954,
+  "feasible_push_gap_percent": 99.83470800501911,
+  "task_rmse": 121.90037683452788,
+  "task_nrmse_percent": 99.48464994476835,
+  "pair_rmse": 88.83461674032687,
+  "mean_positive_residual": 0.004621912259608507,
+  "terminal_max": 0.0,
+  "full_top8_penalty": 99.27129364013672,
+  "dual_max": 19.237497329711914,
+  "dual_mean": 0.2166970819234848,
+  "complementarity": 0.08397234976291656,
+  "paths": [
+    {
+      "path": 0,
+      "start": 0.8835042119026184,
+      "reference": 194.48878202587366,
+      "edge_slack": 189.07406616210938,
+      "triangle_slack": 4.5311994552612305,
+      "positive_residual_sum": 0.39006492495536804,
+      "max_violation": 0.39006492495536804
+    },
+    {
+      "path": 1,
+      "start": 0.845077633857727,
+      "reference": 213.11610508710146,
+      "edge_slack": 207.56723022460938,
+      "triangle_slack": 4.703793048858643,
+      "positive_residual_sum": 0.37567809224128723,
+      "max_violation": 0.37567809224128723
+    },
+    {
+      "path": 2,
+      "start": 0.6935482621192932,
+      "reference": 259.0626526251435,
+      "edge_slack": 252.18051147460938,
+      "triangle_slack": 6.188584804534912,
+      "positive_residual_sum": 0.40628287196159363,
+      "max_violation": 0.40628287196159363
+    },
+    {
+      "path": 3,
+      "start": 0.7221521139144897,
+      "reference": 270.5480177178979,
+      "edge_slack": 262.9275207519531,
+      "triangle_slack": 6.8983540534973145,
+      "positive_residual_sum": 0.37631475925445557,
+      "max_violation": 0.37631475925445557
+    }
+  ],
+  "terminal_entry_edges": [
+    {
+      "row": 71,
+      "path": 0,
+      "cost": 0.10000000149011612,
+      "distance": 0.49006491899490356,
+      "residual": 0.39006492495536804
+    },
+    {
+      "row": 148,
+      "path": 1,
+      "cost": 0.10000000149011612,
+      "distance": 0.47567808628082275,
+      "residual": 0.37567809224128723
+    },
+    {
+      "row": 240,
+      "path": 2,
+      "cost": 0.10000000149011612,
+      "distance": 0.5062828660011292,
+      "residual": 0.40628287196159363
+    },
+    {
+      "row": 337,
+      "path": 3,
+      "cost": 0.10000000149011612,
+      "distance": 0.4763147532939911,
+      "residual": 0.37631475925445557
+    }
+  ],
+  "complementarity_max": 7.815865516662598,
+  "dual_stationarity_eta1_max": 0.4062824249267578,
+  "joint_pass": false
+}

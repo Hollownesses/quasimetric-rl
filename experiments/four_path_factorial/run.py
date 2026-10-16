@@ -108,12 +108,20 @@ def load_data():
 
 
 class IndexedIQE(nn.Module):
-    def __init__(self, data, parameterization, critic_index):
+    def __init__(self, data, parameterization, critic_index, *, initialization_seed=None):
         super().__init__()
-        critic = QuasimetricCritic.Conf().make(env_spec=EnvSpec.from_env(data.env))
-        saved = torch.load(INIT, map_location='cpu', weights_only=True)['agent']
-        prefix = f'critics.{critic_index}.'
-        critic.load_state_dict({k[len(prefix):]: v for k,v in saved.items() if k.startswith(prefix)})
+        if initialization_seed is None:
+            critic = QuasimetricCritic.Conf().make(env_spec=EnvSpec.from_env(data.env))
+            saved = torch.load(INIT, map_location='cpu', weights_only=True)['agent']
+            prefix = f'critics.{critic_index}.'
+            critic.load_state_dict({k[len(prefix):]: v for k,v in saved.items() if k.startswith(prefix)})
+        else:
+            # Fresh production initialization of encoder, projector and IQE.
+            # No historical critic weights or optimizer state are read.
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(initialization_seed)
+                critic = QuasimetricCritic.Conf().make(env_spec=EnvSpec.from_env(data.env))
+            critic.encoder.enable_comm_goal_set_quotient()
         assert bool(critic.encoder.comm_goal_set_quotient)
         self.register_buffer('nodes', data.nodes.clone())
         self.parameterization = parameterization

@@ -1,0 +1,3 @@
+{"step": 0, "seconds": 0.09605387499999996, "push": 80.91661071777344, "max_violation": 0.003567218780517578, "violation_count": 138, "stop_reason": null}
+{"step": 1, "seconds": 2.398126083, "push": 80.78365325927734, "max_violation": 0.00014793872833251953, "violation_count": 2, "stop_reason": null}
+{"step": 2, "seconds": 3.851890292, "push": 80.78071594238281, "max_violation": 0.0, "violation_count": 0, "stop_reason": "feasible_with_value_guard"}

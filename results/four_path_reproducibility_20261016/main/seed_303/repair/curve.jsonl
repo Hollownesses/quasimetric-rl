@@ -1,0 +1,1 @@
+{"step": 0, "seconds": 0.05059766699969259, "push": 80.91661071777344, "max_residual": 0.003567218780517578, "max_violation": 0.003567218780517578, "violation_count": 138, "anchor_max": 0.0, "stop_reason": null, "push_floor": 80.76661071777343, "push_loss_from_start": 0.0, "candidate_evaluations": 0}

@@ -1,0 +1,22 @@
+{
+  "101": {
+    "exit_code": 0,
+    "seconds_since_suite_start": 6.057236209
+  },
+  "404": {
+    "exit_code": 0,
+    "seconds_since_suite_start": 6.0579617500000005
+  },
+  "303": {
+    "exit_code": 0,
+    "seconds_since_suite_start": 8.063288541999999
+  },
+  "505": {
+    "exit_code": 0,
+    "seconds_since_suite_start": 8.063886875000001
+  },
+  "202": {
+    "exit_code": 0,
+    "seconds_since_suite_start": 12.074519959
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "seeds": [
+    101,
+    202,
+    303,
+    404,
+    505
+  ],
+  "source": "results/four_path_reproducibility_20261016/main",
+  "reason": "same mathematical QP; stable Jacobian-block Gram fallback for cancellation; all five rerun without retuning",
+  "sources": {
+    "experiments/four_path_refinement/repair.py": "6a9b47bc395bb0b95d9c3e51eace3daed48e14deaee75121c2c9a56337d558c0",
+    "experiments/four_path_reproducibility/rerun_qp.py": "163afe8c741494da805dd1c59d8c39d315d1e8d4da0aea33d367fa755a45c81a"
+  },
+  "decay_checkpoints": {
+    "101": "ec41c52913000dcabf9e6ad58678abf8b137bcbf3f74c2179a1eaa724fb4ab02",
+    "202": "4e62bb3d54ec859125b97dd93e549bcf8db9feddff87607100627e17ef3b42ba",
+    "303": "b7c3f2a9d0e3f1d01975e23e657cb10e04be1e21f3f768b2b31d364b90c7488f",
+    "404": "500e2307414eccdd304727e11301cfa575ec3f6617fe32685cc408cc049960df",
+    "505": "086239aff28e936541c94bda939cd4ba4ea4e81b92a31487a70262da8f45ebda"
+  },
+  "delta": 0.15,
+  "iterations": 40,
+  "push_step": 0.0
+}

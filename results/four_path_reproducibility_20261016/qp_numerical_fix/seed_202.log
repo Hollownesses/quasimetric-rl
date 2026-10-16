@@ -1,0 +1,5 @@
+{"step": 0, "seconds": 0.08151816700000003, "push": 80.85726928710938, "max_violation": 0.011904239654541016, "violation_count": 151, "stop_reason": null}
+{"step": 1, "seconds": 3.372115083, "push": 80.70730590820312, "max_violation": 0.00034934282302856445, "violation_count": 4, "stop_reason": null}
+{"step": 2, "seconds": 5.198572625000001, "push": 80.70734405517578, "max_violation": 2.4378299713134766e-05, "violation_count": 1, "stop_reason": null}
+{"step": 3, "seconds": 6.645559042, "push": 80.70731353759766, "max_violation": 1.3828277587890625e-05, "violation_count": 1, "stop_reason": null}
+{"step": 4, "seconds": 8.033813792, "push": 80.70732116699219, "max_violation": 0.0, "violation_count": 0, "stop_reason": "feasible_with_value_guard"}

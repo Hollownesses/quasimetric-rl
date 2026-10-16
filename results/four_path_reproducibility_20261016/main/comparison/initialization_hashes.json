@@ -1,0 +1,37 @@
+[
+  {
+    "seed": 101,
+    "initial_model_sha256": "9be26b106a2fca75043184e2ff8eea3037231c97b92b30ac2e03c54c3af07806",
+    "initial_encoder_sha256": "d67b2b4a2d67ed021c2234e6266bc723eb14fb586defbd06b69a5a56d3a85cb8",
+    "initial_projector_sha256": "8d6a710fcd91c0311e4cff4e854580ffc9e8fdd7dcfc2dd446afd21589e7ae85",
+    "initial_projected_sha256": "e215723d616dd5f1e29e58fdb8ca15a7728e82933ca4b2947dcb142ce54ececd"
+  },
+  {
+    "seed": 202,
+    "initial_model_sha256": "0eebbc9819093249af848f49da01c7a54478394865b39fc8a05feaaada157409",
+    "initial_encoder_sha256": "da6d9b19d47b5dee361bd7ebcd9a34cdd8c87a90b4454b5eabbe657e26270060",
+    "initial_projector_sha256": "79889640e8cf1a11cd1572dd010839b5fe38ee233757cb60fe4ba2d7f1cd98e9",
+    "initial_projected_sha256": "e708b88edf3ac9d07a3428c27df3bddd80f9a3386b571a33b39e7c0e5c0719ed"
+  },
+  {
+    "seed": 303,
+    "initial_model_sha256": "6eb356d29cdf912d820cd23ff1151985302bf0496d21757b1c8062ce11e251da",
+    "initial_encoder_sha256": "f0411f7acb4b40f6533800f05847152138f96a7d603371b117984c151f9a9f6c",
+    "initial_projector_sha256": "9046c19400f9c9f4215777863d3fc0ab09e3a693dd85326464a48d47cfa7a833",
+    "initial_projected_sha256": "4975485e02441489314a914f24b2c995dc4a3e7d46ab706ec4f173cc2371768e"
+  },
+  {
+    "seed": 404,
+    "initial_model_sha256": "1d9a9b3e3c698e9b8909a1ed4233c970084c148b9d3bdb290b7593a9e060d84a",
+    "initial_encoder_sha256": "d83983bc536c670449aabb58627a79437d4159e9a96ff4927c4ad5287a1afacf",
+    "initial_projector_sha256": "7de9f20a849d1ac7e802dceaefa07791da7495410e235438c3cb9b59503519a6",
+    "initial_projected_sha256": "8b3de57f11c061cc26c78048a4b9968f30fb640df77a88b1ddd2d450e1d40572"
+  },
+  {
+    "seed": 505,
+    "initial_model_sha256": "c6e339c2841813cc8ab263adf1e16fdcc13cfc616c97b3321c2319abf86e1db6",
+    "initial_encoder_sha256": "1cebc1bbb835e75f0d4049b71e7c744d17127e1e7c97f14f2d756f2289eab571",
+    "initial_projector_sha256": "34a5250cf6d57c22ad269a9451ee420bede77095456329268d49e31d5974eeef",
+    "initial_projected_sha256": "2fb3d168795cf49ffe1f274f471d5677729898134109a19e0522660fb4979bf9"
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "seed": 202,
+    "seconds": 1.0699973750000003,
+    "expanded_min_max_eigenvalue_ratio": -1.4878741349794462e-10,
+    "stable_block_fallback": true,
+    "stable_relative_gram_difference": 7.369269349962044e-10,
+    "final_min_max_eigenvalue_ratio": -2.427320370776586e-21,
+    "max_quadratic_form_relative_error": 9.94581114403875e-14
+  },
+  {
+    "seed": 303,
+    "seconds": 0.980591333,
+    "expanded_min_max_eigenvalue_ratio": -1.6034410260372115e-10,
+    "stable_block_fallback": true,
+    "stable_relative_gram_difference": 7.810562898665221e-10,
+    "final_min_max_eigenvalue_ratio": 0.0,
+    "max_quadratic_form_relative_error": 2.1788227190457047e-13
+  }
+]

@@ -1,0 +1,1568 @@
+{
+  "101": {
+    "initial_checkpoint_sha256": "91c386e5c54cb3a24bd68f199cee6a43db2c3512a1b4d3bc28bb0d3cd4c70fa7",
+    "original_complete": true,
+    "original_process": {
+      "exit_code": 0,
+      "seconds_since_suite_start": 2408.986968292
+    },
+    "final_process": {
+      "exit_code": 0,
+      "seconds_since_suite_start": 6.057236209
+    },
+    "stages": {
+      "phr": {
+        "step": 20000,
+        "seconds": 0.0,
+        "push": 80.65699768066406,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.9603923110508248,
+        "push_gap_percent": 1.1767005918080886,
+        "feasible_scale": 0.9614120125770569,
+        "feasible_push": 77.54460646859025,
+        "feasible_push_gap_percent": 4.99009282646514,
+        "task_rmse": 1.661293490742775,
+        "task_nrmse_percent": 1.3558055001455431,
+        "pair_rmse": 1.0050394962632427,
+        "max_residual": 0.09271597862243652,
+        "max_violation": 0.09271597862243652,
+        "violation_count": 136,
+        "mean_positive_residual": 0.004162359982728958,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 31.85328483581543,
+        "dual_max": 249.14805603027344,
+        "dual_mean": 35.0081787109375,
+        "complementarity": 0.5016279816627502,
+        "paths": [
+          {
+            "path": 0,
+            "start": 192.77774047851562,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.2966032028198242,
+            "triangle_slack": 0.4144703149795532,
+            "positive_residual_sum": 0.2793985605239868,
+            "max_violation": 0.0484619140625
+          },
+          {
+            "path": 1,
+            "start": 209.40174865722656,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.5285258293151855,
+            "triangle_slack": 0.18585708737373352,
+            "positive_residual_sum": 0.37952500581741333,
+            "max_violation": 0.09271597862243652
+          },
+          {
+            "path": 2,
+            "start": 257.6363830566406,
+            "reference": 259.0626526251435,
+            "edge_slack": 1.1971184015274048,
+            "triangle_slack": 0.22916531562805176,
+            "positive_residual_sum": 0.45560020208358765,
+            "max_violation": 0.09160923957824707
+          },
+          {
+            "path": 3,
+            "start": 266.37982177734375,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.226090908050537,
+            "triangle_slack": 0.9421151876449585,
+            "positive_residual_sum": 0.27986690402030945,
+            "max_violation": 0.04049992561340332
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.04797784239053726,
+            "residual": -0.05202215909957886
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.0,
+            "residual": -0.10000000149011612
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.0,
+            "residual": -0.10000000149011612
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.07208745926618576,
+            "residual": -0.02791254222393036
+          }
+        ],
+        "complementarity_max": 24.914806365966797,
+        "dual_stationarity_eta1_max": 0.100006103515625,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "e70d24b090dc58dcdf8a9b744aa35265d74fff4ff18a4f6529334fc7e8fb3fa9",
+        "model_sha256": "29ae65af152bed6b9c9fc542c6ed378794cc15577c07b5c20b3f0941d7b312dc"
+      },
+      "decay": {
+        "step": 25000,
+        "seconds": 0.0,
+        "push": 80.83855438232422,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.7788356093906685,
+        "push_gap_percent": 0.9542520404900591,
+        "feasible_scale": 0.9904860854148865,
+        "feasible_push": 80.06946328074673,
+        "feasible_push_gap_percent": 1.8965648265955188,
+        "task_rmse": 1.4673291358951757,
+        "task_nrmse_percent": 1.1975084017701212,
+        "pair_rmse": 0.9902191334390926,
+        "max_residual": 0.007404804229736328,
+        "max_violation": 0.007404804229736328,
+        "violation_count": 145,
+        "mean_positive_residual": 0.0004287324845790863,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 8.454167366027832,
+        "dual_max": 110.81217956542969,
+        "dual_mean": 34.30510330200195,
+        "complementarity": 0.035313449800014496,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.11195373535156,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.2341715097427368,
+            "triangle_slack": 0.14268702268600464,
+            "positive_residual_sum": 0.03819096088409424,
+            "max_violation": 0.0046100616455078125
+          },
+          {
+            "path": 1,
+            "start": 209.61451721191406,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.494732141494751,
+            "triangle_slack": 0.006869196891784668,
+            "positive_residual_sum": 0.0351739302277565,
+            "max_violation": 0.007404804229736328
+          },
+          {
+            "path": 2,
+            "start": 258.15185546875,
+            "reference": 259.0626526251435,
+            "edge_slack": 0.9023886919021606,
+            "triangle_slack": 0.008413851261138916,
+            "positive_residual_sum": 0.039840906858444214,
+            "max_violation": 0.0064890384674072266
+          },
+          {
+            "path": 3,
+            "start": 266.607666015625,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.2314834594726562,
+            "triangle_slack": 0.7089423537254333,
+            "positive_residual_sum": 0.030419588088989258,
+            "max_violation": 0.004152238368988037
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.09896417707204819,
+            "residual": -0.0010358244180679321
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.10059179365634918,
+            "residual": 0.0005917921662330627
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09983140975236893,
+            "residual": -0.00016859173774719238
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.10096053034067154,
+            "residual": 0.0009605288505554199
+          }
+        ],
+        "complementarity_max": 1.7557463645935059,
+        "dual_stationarity_eta1_max": 0.01584625244140625,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "ec41c52913000dcabf9e6ad58678abf8b137bcbf3f74c2179a1eaa724fb4ab02",
+        "model_sha256": "85c8431857b3ea61641560232a9e53ce649606b80f5e95b484dca45703efee85"
+      },
+      "qp": {
+        "step": 2,
+        "seconds": 0.0,
+        "push": 80.68858337402344,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.9288066176914498,
+        "push_gap_percent": 1.1380008816573703,
+        "feasible_scale": 0.9999972581863403,
+        "feasible_push": 80.68836214096336,
+        "feasible_push_gap_percent": 1.1382719428369752,
+        "task_rmse": 1.6517515153211135,
+        "task_nrmse_percent": 1.3480181568308118,
+        "pair_rmse": 1.1042917473659966,
+        "max_residual": 2.682209014892578e-06,
+        "max_violation": 2.682209014892578e-06,
+        "violation_count": 0,
+        "mean_positive_residual": 8.006594498510822e-09,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 6.550895690917969,
+        "dual_max": 110.81217956542969,
+        "dual_mean": 34.30510330200195,
+        "complementarity": 0.15548540651798248,
+        "paths": [
+          {
+            "path": 0,
+            "start": 192.80335998535156,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.5407687425613403,
+            "triangle_slack": 0.14464735984802246,
+            "positive_residual_sum": 2.682209014892578e-06,
+            "max_violation": 2.682209014892578e-06
+          },
+          {
+            "path": 1,
+            "start": 209.23623657226562,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.8729352951049805,
+            "triangle_slack": 0.006947815418243408,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 2,
+            "start": 257.7132263183594,
+            "reference": 259.0626526251435,
+            "edge_slack": 1.3383240699768066,
+            "triangle_slack": 0.0110701322555542,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 3,
+            "start": 266.1266174316406,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.7141354084014893,
+            "triangle_slack": 0.7073049545288086,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.09803246706724167,
+            "residual": -0.0019675344228744507
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.0986035093665123,
+            "residual": -0.0013964921236038208
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09998966753482819,
+            "residual": -1.033395528793335e-05
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.09984683245420456,
+            "residual": -0.00015316903591156006
+          }
+        ],
+        "complementarity_max": 2.189960479736328,
+        "dual_stationarity_eta1_max": 0.0197601318359375,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "818c7c7e29b61237d2ef933ededa1e35ec41a27edb4ba973637f17bd5e6a2cc5",
+        "model_sha256": "04c0dd2bb160eee5ac8fa9a2810984a0fa3ac0476014a7d80a5488cdd3d5f126"
+      }
+    },
+    "qp_repeat_comparison": {
+      "identical_model": false,
+      "parameter_difference_l2": 0.00018283350372745862,
+      "parameter_difference_linf": 7.614493370056152e-06,
+      "push_difference": -3.0517578125e-05,
+      "same_joint_result": true
+    },
+    "success": false
+  },
+  "202": {
+    "initial_checkpoint_sha256": "9da5eafb664081c57bf1b194b7565e16a4dd8053b2089dab66e63437039b476a",
+    "original_complete": false,
+    "original_process": {
+      "exit_code": 1,
+      "seconds_since_suite_start": 2413.9990518339996
+    },
+    "final_process": {
+      "exit_code": 0,
+      "seconds_since_suite_start": 12.074519959
+    },
+    "stages": {
+      "phr": {
+        "step": 20000,
+        "seconds": 0.0,
+        "push": 80.86524200439453,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.752147987320356,
+        "push_gap_percent": 0.9215535897395246,
+        "feasible_scale": 0.3601348400115967,
+        "feasible_push": 29.122390991751672,
+        "feasible_push_gap_percent": 64.31839955344329,
+        "task_rmse": 1.4153312363913682,
+        "task_nrmse_percent": 1.1550721684759324,
+        "pair_rmse": 1.0255495730137598,
+        "max_residual": 0.17767378687858582,
+        "max_violation": 0.17767378687858582,
+        "violation_count": 125,
+        "mean_positive_residual": 0.0040296888910233974,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 40.10961151123047,
+        "dual_max": 218.6638641357422,
+        "dual_mean": 34.71965408325195,
+        "complementarity": 0.4341934323310852,
+        "paths": [
+          {
+            "path": 0,
+            "start": 192.69189453125,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.7496061325073242,
+            "triangle_slack": 0.04727286100387573,
+            "positive_residual_sum": 0.203925222158432,
+            "max_violation": 0.07039389759302139
+          },
+          {
+            "path": 1,
+            "start": 210.4317169189453,
+            "reference": 213.11610508710146,
+            "edge_slack": 2.682257890701294,
+            "triangle_slack": 0.002124607563018799,
+            "positive_residual_sum": 0.4030235707759857,
+            "max_violation": 0.17767378687858582
+          },
+          {
+            "path": 2,
+            "start": 257.7237243652344,
+            "reference": 259.0626526251435,
+            "edge_slack": 1.3278502225875854,
+            "triangle_slack": 0.011056661605834961,
+            "positive_residual_sum": 0.44328591227531433,
+            "max_violation": 0.10564299672842026
+          },
+          {
+            "path": 3,
+            "start": 267.3385925292969,
+            "reference": 270.5480177178979,
+            "edge_slack": 2.8636679649353027,
+            "triangle_slack": 0.34572291374206543,
+            "positive_residual_sum": 0.2997111678123474,
+            "max_violation": 0.07729209214448929
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.1703938990831375,
+            "residual": 0.07039389759302139
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.27767378091812134,
+            "residual": 0.17767378687858582
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.20564299821853638,
+            "residual": 0.10564299672842026
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.1772920936346054,
+            "residual": 0.07729209214448929
+          }
+        ],
+        "complementarity_max": 31.713098526000977,
+        "dual_stationarity_eta1_max": 0.17767333984375,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "f1a2eb1efd5d82f1d609603602f810d5cb91bcdb60ea61d047526108ed39f074",
+        "model_sha256": "4a505ce403bddf656eeb4f47131842c6c76ed39c265f9a35298de5ee306711c7"
+      },
+      "decay": {
+        "step": 25000,
+        "seconds": 0.0,
+        "push": 80.85726928710938,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.7601207046055123,
+        "push_gap_percent": 0.9313219948379547,
+        "feasible_scale": 0.9951281547546387,
+        "feasible_push": 80.46334518418007,
+        "feasible_push_gap_percent": 1.4139692627416358,
+        "task_rmse": 1.4242087342500567,
+        "task_nrmse_percent": 1.1623172220991542,
+        "pair_rmse": 0.9776162489567944,
+        "max_residual": 0.011904239654541016,
+        "max_violation": 0.011904239654541016,
+        "violation_count": 151,
+        "mean_positive_residual": 0.0004953860188834369,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 8.717564582824707,
+        "dual_max": 201.82229614257812,
+        "dual_mean": 34.358314514160156,
+        "complementarity": 0.035669099539518356,
+        "paths": [
+          {
+            "path": 0,
+            "start": 192.5901336669922,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.8870956897735596,
+            "triangle_slack": 0.011548340320587158,
+            "positive_residual_sum": 0.031063087284564972,
+            "max_violation": 0.004774570465087891
+          },
+          {
+            "path": 1,
+            "start": 210.37722778320312,
+            "reference": 213.11610508710146,
+            "edge_slack": 2.7371833324432373,
+            "triangle_slack": 0.0016945600509643555,
+            "positive_residual_sum": 0.025890707969665527,
+            "max_violation": 0.005477428436279297
+          },
+          {
+            "path": 2,
+            "start": 257.7908935546875,
+            "reference": 259.0626526251435,
+            "edge_slack": 1.2608246803283691,
+            "triangle_slack": 0.0108795166015625,
+            "positive_residual_sum": 0.06188231706619263,
+            "max_violation": 0.011904239654541016
+          },
+          {
+            "path": 3,
+            "start": 267.2677001953125,
+            "reference": 270.5480177178979,
+            "edge_slack": 2.842092752456665,
+            "triangle_slack": 0.43825337290763855,
+            "positive_residual_sum": 0.04711820185184479,
+            "max_violation": 0.005764961242675781
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.10048957169055939,
+            "residual": 0.0004895702004432678
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.09966249763965607,
+            "residual": -0.0003375038504600525
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09995821118354797,
+            "residual": -4.179030656814575e-05
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.10042902082204819,
+            "residual": 0.00042901933193206787
+          }
+        ],
+        "complementarity_max": 1.180724024772644,
+        "dual_stationarity_eta1_max": 0.011904239654541016,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "4e62bb3d54ec859125b97dd93e549bcf8db9feddff87607100627e17ef3b42ba",
+        "model_sha256": "6c2f430cd3efb94ba9b623ba845d618fde4c5f7ab83c598af07e3e7f34228eca"
+      },
+      "qp": {
+        "step": 4,
+        "seconds": 0.0,
+        "push": 80.70732116699219,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.9100688247226998,
+        "push_gap_percent": 1.115042792737041,
+        "feasible_scale": 1.0,
+        "feasible_push": 80.70732116699219,
+        "feasible_push_gap_percent": 1.115042792737041,
+        "task_rmse": 1.6108663681291755,
+        "task_nrmse_percent": 1.314651200452559,
+        "pair_rmse": 1.107607600531444,
+        "max_residual": -1.7404556274414062e-05,
+        "max_violation": 0.0,
+        "violation_count": 0,
+        "mean_positive_residual": 0.0,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 6.54548978805542,
+        "dual_max": 201.82229614257812,
+        "dual_mean": 34.358314514160156,
+        "complementarity": 0.15220066905021667,
+        "paths": [
+          {
+            "path": 0,
+            "start": 192.23301696777344,
+            "reference": 194.48878202587366,
+            "edge_slack": 2.2446489334106445,
+            "triangle_slack": 0.01111823320388794,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 1,
+            "start": 209.97055053710938,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.143393039703369,
+            "triangle_slack": 0.0021657943725585938,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 2,
+            "start": 257.19561767578125,
+            "reference": 259.0626526251435,
+            "edge_slack": 1.8561134338378906,
+            "triangle_slack": 0.010896563529968262,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 3,
+            "start": 266.66876220703125,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.4393107891082764,
+            "triangle_slack": 0.4399830996990204,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.09987156838178635,
+            "residual": -0.00012843310832977295
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.09894105046987534,
+            "residual": -0.0010589510202407837
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09995406121015549,
+            "residual": -4.5940279960632324e-05
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.09979592263698578,
+            "residual": -0.00020407885313034058
+          }
+        ],
+        "complementarity_max": 2.386662006378174,
+        "dual_stationarity_eta1_max": 0.017862319946289062,
+        "joint_pass": false,
+        "strict_physical_feasible": true,
+        "checkpoint_sha256": "273c24bd1488b6231bab576c0f1464107ab08f62b5c2b76ee036e8c097edc0ec",
+        "model_sha256": "c78f6f098b372560311353e00dd79ee7a656d4f04372c14c0d850e9de2fff934"
+      }
+    },
+    "success": false
+  },
+  "303": {
+    "initial_checkpoint_sha256": "77a44892634f1123dcd11c8da43dd90173d4763cc80d7633383c1d8dd1b090d1",
+    "original_complete": false,
+    "original_process": {
+      "exit_code": 1,
+      "seconds_since_suite_start": 2408.987427667
+    },
+    "final_process": {
+      "exit_code": 0,
+      "seconds_since_suite_start": 8.063288541999999
+    },
+    "stages": {
+      "phr": {
+        "step": 20000,
+        "seconds": 0.0,
+        "push": 80.91064453125,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.7067454604648873,
+        "push_gap_percent": 0.8659250933368858,
+        "feasible_scale": 0.533287763595581,
+        "feasible_push": 43.14865667314734,
+        "feasible_push_gap_percent": 47.133010896908814,
+        "task_rmse": 1.453672265485736,
+        "task_nrmse_percent": 1.1863628335011367,
+        "pair_rmse": 1.1152692525170484,
+        "max_residual": 0.08751601725816727,
+        "max_violation": 0.08751601725816727,
+        "violation_count": 143,
+        "mean_positive_residual": 0.0033627923112362623,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 26.9200496673584,
+        "dual_max": 198.20849609375,
+        "dual_mean": 34.81705856323242,
+        "complementarity": 0.32702359557151794,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.25791931152344,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.2294504642486572,
+            "triangle_slack": 0.001411736011505127,
+            "positive_residual_sum": 0.1560630202293396,
+            "max_violation": 0.05060332268476486
+          },
+          {
+            "path": 1,
+            "start": 209.04815673828125,
+            "reference": 213.11610508710146,
+            "edge_slack": 4.059994697570801,
+            "triangle_slack": 0.007930219173431396,
+            "positive_residual_sum": 0.18204718828201294,
+            "max_violation": 0.08751601725816727
+          },
+          {
+            "path": 2,
+            "start": 258.5479431152344,
+            "reference": 259.0626526251435,
+            "edge_slack": 0.4754089415073395,
+            "triangle_slack": 0.03933364152908325,
+            "positive_residual_sum": 0.4525285065174103,
+            "max_violation": 0.0698714330792427
+          },
+          {
+            "path": 3,
+            "start": 266.3532409667969,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.6219770908355713,
+            "triangle_slack": 0.5727536082267761,
+            "positive_residual_sum": 0.335896760225296,
+            "max_violation": 0.03558635711669922
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.15060332417488098,
+            "residual": 0.05060332268476486
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.1875160187482834,
+            "residual": 0.08751601725816727
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.16987143456935883,
+            "residual": 0.0698714330792427
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.11616156250238419,
+            "residual": 0.016161561012268066
+          }
+        ],
+        "complementarity_max": 17.346418380737305,
+        "dual_stationarity_eta1_max": 0.11018514633178711,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "6fcee2f482a14abc4146349bc06c205994aeec059aca00af290da9c9cee2c7ba",
+        "model_sha256": "59abfd1441ae5892504dab60d7380b6dbbacbf1d0640049ef94883de7b844f6a"
+      },
+      "decay": {
+        "step": 25000,
+        "seconds": 0.0,
+        "push": 80.91661071777344,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.7007792739414498,
+        "push_gap_percent": 0.8586151480861947,
+        "feasible_scale": 0.9865029454231262,
+        "feasible_push": 79.82447480674,
+        "feasible_push_gap_percent": 2.196731830259323,
+        "task_rmse": 1.4107286444271119,
+        "task_nrmse_percent": 1.1513159270081628,
+        "pair_rmse": 1.0712209602992568,
+        "max_residual": 0.003567218780517578,
+        "max_violation": 0.003567218780517578,
+        "violation_count": 138,
+        "mean_positive_residual": 0.0003263235848862678,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 7.460298538208008,
+        "dual_max": 108.18669128417969,
+        "dual_mean": 34.37116241455078,
+        "complementarity": 0.028196174651384354,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.3144073486328,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.1737135648727417,
+            "triangle_slack": 0.0006628632545471191,
+            "positive_residual_sum": 0.04065931588411331,
+            "max_violation": 0.002245187759399414
+          },
+          {
+            "path": 1,
+            "start": 209.1433563232422,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.966667652130127,
+            "triangle_slack": 0.006108462810516357,
+            "positive_residual_sum": 0.03467227518558502,
+            "max_violation": 0.003567218780517578
+          },
+          {
+            "path": 2,
+            "start": 258.307373046875,
+            "reference": 259.0626526251435,
+            "edge_slack": 0.7144675254821777,
+            "triangle_slack": 0.040794551372528076,
+            "positive_residual_sum": 0.01836085319519043,
+            "max_violation": 0.002458810806274414
+          },
+          {
+            "path": 3,
+            "start": 266.4496765136719,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.5509321689605713,
+            "triangle_slack": 0.547410249710083,
+            "positive_residual_sum": 0.015625953674316406,
+            "max_violation": 0.001798868179321289
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.10136817395687103,
+            "residual": 0.0013681724667549133
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.10005252808332443,
+            "residual": 5.252659320831299e-05
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09852499514818192,
+            "residual": -0.001475006341934204
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.0990355983376503,
+            "residual": -0.0009644031524658203
+          }
+        ],
+        "complementarity_max": 0.23360082507133484,
+        "dual_stationarity_eta1_max": 0.003566741943359375,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "b7c3f2a9d0e3f1d01975e23e657cb10e04be1e21f3f768b2b31d364b90c7488f",
+        "model_sha256": "b59861b052cb58f751c78bd900cbe1fe0100524a41952a7d6d46d6e11cb695a7"
+      },
+      "qp": {
+        "step": 2,
+        "seconds": 0.0,
+        "push": 80.78071594238281,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.8366740493320748,
+        "push_gap_percent": 1.0251173792950337,
+        "feasible_scale": 1.0,
+        "feasible_push": 80.78071594238281,
+        "feasible_push_gap_percent": 1.0251173792950337,
+        "task_rmse": 1.552909281067917,
+        "task_nrmse_percent": 1.2673515885249065,
+        "pair_rmse": 1.1441982201791925,
+        "max_residual": -1.8104910850524902e-05,
+        "max_violation": 0.0,
+        "violation_count": 0,
+        "mean_positive_residual": 0.0,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 6.511861801147461,
+        "dual_max": 108.18669128417969,
+        "dual_mean": 34.37116241455078,
+        "complementarity": 0.13854366540908813,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.01486206054688,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.4723397493362427,
+            "triangle_slack": 0.0015469193458557129,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 1,
+            "start": 208.86917114257812,
+            "reference": 213.11610508710146,
+            "edge_slack": 4.236718654632568,
+            "triangle_slack": 0.010229766368865967,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 2,
+            "start": 257.9718933105469,
+            "reference": 259.0626526251435,
+            "edge_slack": 1.048267126083374,
+            "triangle_slack": 0.04251068830490112,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 3,
+            "start": 266.13909912109375,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.85054612159729,
+            "triangle_slack": 0.5583858489990234,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.0999818965792656,
+            "residual": -1.8104910850524902e-05
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.09949890524148941,
+            "residual": -0.000501096248626709
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09817133843898773,
+            "residual": -0.0018286630511283875
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.09870687872171402,
+            "residual": -0.0012931227684020996
+          }
+        ],
+        "complementarity_max": 0.6699904799461365,
+        "dual_stationarity_eta1_max": 0.008977890014648438,
+        "joint_pass": false,
+        "strict_physical_feasible": true,
+        "checkpoint_sha256": "809c57225e9137b07f5ef9dcb9ebf9625056178e6c92b669aaf2b66d51626231",
+        "model_sha256": "f01a2105946815e1f817937359e27e0ba8bc949c134b73ae5a28d50515c60997"
+      }
+    },
+    "success": false
+  },
+  "404": {
+    "initial_checkpoint_sha256": "20400cb23bb723031f184c4af3023b7e1fe27b371e721d567e426ca81a117e2d",
+    "original_complete": true,
+    "original_process": {
+      "exit_code": 0,
+      "seconds_since_suite_start": 2393.9561732089996
+    },
+    "final_process": {
+      "exit_code": 0,
+      "seconds_since_suite_start": 6.0579617500000005
+    },
+    "stages": {
+      "phr": {
+        "step": 20000,
+        "seconds": 0.0,
+        "push": 80.84919738769531,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.7681926040195748,
+        "push_gap_percent": 0.9412119207653605,
+        "feasible_scale": 0.3919473886489868,
+        "feasible_push": 31.688631790473664,
+        "feasible_push_gap_percent": 61.1741666896106,
+        "task_rmse": 1.4704132424830991,
+        "task_nrmse_percent": 1.2000253854928904,
+        "pair_rmse": 1.0576138869352778,
+        "max_residual": 0.15513628721237183,
+        "max_violation": 0.15513628721237183,
+        "violation_count": 126,
+        "mean_positive_residual": 0.0037233021575957537,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 37.79153060913086,
+        "dual_max": 194.2576446533203,
+        "dual_mean": 34.80547332763672,
+        "complementarity": 0.5270830392837524,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.08982849121094,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.3630611896514893,
+            "triangle_slack": 0.03586685657501221,
+            "positive_residual_sum": 0.18198662996292114,
+            "max_violation": 0.0909501239657402
+          },
+          {
+            "path": 1,
+            "start": 209.4691162109375,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.6464052200317383,
+            "triangle_slack": 0.000635981559753418,
+            "positive_residual_sum": 0.21146509051322937,
+            "max_violation": 0.09533130377531052
+          },
+          {
+            "path": 2,
+            "start": 259.03076171875,
+            "reference": 259.0626526251435,
+            "edge_slack": 0.03162837028503418,
+            "triangle_slack": 0.00023698806762695312,
+            "positive_residual_sum": 0.5169265866279602,
+            "max_violation": 0.15513628721237183
+          },
+          {
+            "path": 3,
+            "start": 266.8600769042969,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.2610349655151367,
+            "triangle_slack": 0.4268949627876282,
+            "positive_residual_sum": 0.3369279205799103,
+            "max_violation": 0.050188519060611725
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.19095012545585632,
+            "residual": 0.0909501239657402
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.19533130526542664,
+            "residual": 0.09533130377531052
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.25513628125190735,
+            "residual": 0.15513628721237183
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.15018852055072784,
+            "residual": 0.050188519060611725
+          }
+        ],
+        "complementarity_max": 28.720787048339844,
+        "dual_stationarity_eta1_max": 0.18479156494140625,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "8471d68cac1119ff2e0afff3daf725206f27047efb091c5762cb58879c652069",
+        "model_sha256": "602324270ca34666277e7b1ae72b34bd96a0eda01e1f4a155e16b81cbf96d284"
+      },
+      "decay": {
+        "step": 25000,
+        "seconds": 0.0,
+        "push": 81.00569915771484,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.6116908340000435,
+        "push_gap_percent": 0.7494614003978041,
+        "feasible_scale": 0.9937910437583923,
+        "feasible_push": 80.50273831632376,
+        "feasible_push_gap_percent": 1.3657036515187266,
+        "task_rmse": 1.2468245998522232,
+        "task_nrmse_percent": 1.0175514799859946,
+        "pair_rmse": 0.8777863227885951,
+        "max_residual": 0.0052225589752197266,
+        "max_violation": 0.0052225589752197266,
+        "violation_count": 130,
+        "mean_positive_residual": 0.0003969897225033492,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 8.220555305480957,
+        "dual_max": 166.285888671875,
+        "dual_mean": 34.363460540771484,
+        "complementarity": 0.035036712884902954,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.32736206054688,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.1374413967132568,
+            "triangle_slack": 0.023982763290405273,
+            "positive_residual_sum": 0.06332473456859589,
+            "max_violation": 0.0052225589752197266
+          },
+          {
+            "path": 1,
+            "start": 209.8839111328125,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.2317354679107666,
+            "triangle_slack": 0.00044339895248413086,
+            "positive_residual_sum": 0.01794135570526123,
+            "max_violation": 0.0045468807220458984
+          },
+          {
+            "path": 2,
+            "start": 258.9610595703125,
+            "reference": 259.0626526251435,
+            "edge_slack": 0.10136804729700089,
+            "triangle_slack": 0.0002308487892150879,
+            "positive_residual_sum": 0.029281198978424072,
+            "max_violation": 0.004370689392089844
+          },
+          {
+            "path": 3,
+            "start": 267.27276611328125,
+            "reference": 270.5480177178979,
+            "edge_slack": 2.7813265323638916,
+            "triangle_slack": 0.49386700987815857,
+            "positive_residual_sum": 0.022444263100624084,
+            "max_violation": 0.002585172653198242
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.10009279102087021,
+            "residual": 9.278953075408936e-05
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.09996255487203598,
+            "residual": -3.744661808013916e-05
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.0999375581741333,
+            "residual": -6.24433159828186e-05
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.10022734850645065,
+            "residual": 0.0002273470163345337
+          }
+        ],
+        "complementarity_max": 0.5641748905181885,
+        "dual_stationarity_eta1_max": 0.00794219970703125,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "500e2307414eccdd304727e11301cfa575ec3f6617fe32685cc408cc049960df",
+        "model_sha256": "0c3e00fa1dcaa2e0ebfe346edb005d3227a7b291806953dbdd947b2499428cfb"
+      },
+      "qp": {
+        "step": 2,
+        "seconds": 0.0,
+        "push": 80.85575103759766,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.761638954117231,
+        "push_gap_percent": 0.9331821982968902,
+        "feasible_scale": 1.0,
+        "feasible_push": 80.85575103759766,
+        "feasible_push_gap_percent": 0.9331821982968902,
+        "task_rmse": 1.4128081162776789,
+        "task_nrmse_percent": 1.1530130138793908,
+        "pair_rmse": 0.9699403680396436,
+        "max_residual": -8.881092071533203e-06,
+        "max_violation": 0.0,
+        "violation_count": 0,
+        "mean_positive_residual": 0.0,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 6.535857677459717,
+        "dual_max": 166.285888671875,
+        "dual_mean": 34.363460540771484,
+        "complementarity": 0.16260312497615814,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.01806640625,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.4463562965393066,
+            "triangle_slack": 0.02433222532272339,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 1,
+            "start": 209.55911254882812,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.555842638015747,
+            "triangle_slack": 0.0011644959449768066,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 2,
+            "start": 258.5940246582031,
+            "reference": 259.0626526251435,
+            "edge_slack": 0.46824589371681213,
+            "triangle_slack": 0.0004741549491882324,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 3,
+            "start": 266.89154052734375,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.153229236602783,
+            "triangle_slack": 0.5032249689102173,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.0999453067779541,
+            "residual": -5.469471216201782e-05
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.09646867960691452,
+            "residual": -0.003531321883201599
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09990747272968292,
+            "residual": -9.252876043319702e-05
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.09977848827838898,
+            "residual": -0.00022151321172714233
+          }
+        ],
+        "complementarity_max": 1.0045722723007202,
+        "dual_stationarity_eta1_max": 0.013824462890625,
+        "joint_pass": true,
+        "strict_physical_feasible": true,
+        "checkpoint_sha256": "8e7d1e2bad2df777ad31828545d3b82984f529b306c49bf8d32ccb2e7e0549a1",
+        "model_sha256": "c2daeb68f2c0d2068eafd386cc5f9635ea6564826f229ee7f0806226a27e99de"
+      }
+    },
+    "qp_repeat_comparison": {
+      "identical_model": true,
+      "parameter_difference_l2": 0.0,
+      "parameter_difference_linf": 0.0,
+      "push_difference": 0.0,
+      "same_joint_result": true
+    },
+    "success": true
+  },
+  "505": {
+    "initial_checkpoint_sha256": "c5ff3e97c4a277f8a31a112b6a992589b82c3c32c4a23da53e09185ff9a2f263",
+    "original_complete": true,
+    "original_process": {
+      "exit_code": 0,
+      "seconds_since_suite_start": 2378.93083275
+    },
+    "final_process": {
+      "exit_code": 0,
+      "seconds_since_suite_start": 8.063886875000001
+    },
+    "stages": {
+      "phr": {
+        "step": 20000,
+        "seconds": 0.0,
+        "push": 80.89808654785156,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.7193034438633248,
+        "push_gap_percent": 0.8813114998364227,
+        "feasible_scale": 0.4083389341831207,
+        "feasible_push": 33.03383843840356,
+        "feasible_push_gap_percent": 59.52598038021446,
+        "task_rmse": 1.3691791302183025,
+        "task_nrmse_percent": 1.1174067711566626,
+        "pair_rmse": 0.9882209616478425,
+        "max_residual": 0.14489459991455078,
+        "max_violation": 0.14489459991455078,
+        "violation_count": 154,
+        "mean_positive_residual": 0.0047526052221655846,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 31.662471771240234,
+        "dual_max": 200.0315704345703,
+        "dual_mean": 34.8328742980957,
+        "complementarity": 0.4466920793056488,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.18260192871094,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.1557929515838623,
+            "triangle_slack": 0.1503528356552124,
+            "positive_residual_sum": 0.3400247395038605,
+            "max_violation": 0.0331573486328125
+          },
+          {
+            "path": 1,
+            "start": 209.85162353515625,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.2642369270324707,
+            "triangle_slack": 0.00022369623184204102,
+            "positive_residual_sum": 0.39918869733810425,
+            "max_violation": 0.14489459991455078
+          },
+          {
+            "path": 2,
+            "start": 258.2669982910156,
+            "reference": 259.0626526251435,
+            "edge_slack": 0.7806434035301208,
+            "triangle_slack": 0.01504051685333252,
+            "positive_residual_sum": 0.369803786277771,
+            "max_violation": 0.03744983673095703
+          },
+          {
+            "path": 3,
+            "start": 267.2798156738281,
+            "reference": 270.5480177178979,
+            "edge_slack": 2.8385097980499268,
+            "triangle_slack": 0.4296873211860657,
+            "positive_residual_sum": 0.4831055998802185,
+            "max_violation": 0.06630301475524902
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.10198605805635452,
+            "residual": 0.0019860565662384033
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.2448946088552475,
+            "residual": 0.14489459991455078
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.08376040309667587,
+            "residual": -0.016239598393440247
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.13144278526306152,
+            "residual": 0.031442783772945404
+          }
+        ],
+        "complementarity_max": 28.98349380493164,
+        "dual_stationarity_eta1_max": 0.1953282356262207,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "6141befc6f77e93b5e6612c62a8f9e5ae939ffff96f6f7548561df766704e19a",
+        "model_sha256": "e8c00e2eed378f13dc3b6c3db59d8fd704994fabfa1da3e59fa83efcebe4edbd"
+      },
+      "decay": {
+        "step": 25000,
+        "seconds": 0.0,
+        "push": 80.93268585205078,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.684704139664106,
+        "push_gap_percent": 0.8389194260360585,
+        "feasible_scale": 0.9887697100639343,
+        "feasible_push": 80.02378832462773,
+        "feasible_push_gap_percent": 1.9525271112552431,
+        "task_rmse": 1.329248696152612,
+        "task_nrmse_percent": 1.0848189698854636,
+        "pair_rmse": 0.9045321304247267,
+        "max_residual": 0.0043451786041259766,
+        "max_violation": 0.0043451786041259766,
+        "violation_count": 149,
+        "mean_positive_residual": 0.00031278954702429473,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 7.534412384033203,
+        "dual_max": 111.06156158447266,
+        "dual_mean": 34.36075973510742,
+        "complementarity": 0.02424032986164093,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.3483428955078,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.014933466911316,
+            "triangle_slack": 0.12553739547729492,
+            "positive_residual_sum": 0.046801403164863586,
+            "max_violation": 0.002929210662841797
+          },
+          {
+            "path": 1,
+            "start": 210.09178161621094,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.0243115425109863,
+            "triangle_slack": -3.063678741455078e-05,
+            "positive_residual_sum": 0.026588797569274902,
+            "max_violation": 0.0043451786041259766
+          },
+          {
+            "path": 2,
+            "start": 258.35369873046875,
+            "reference": 259.0626526251435,
+            "edge_slack": 0.7089333534240723,
+            "triangle_slack": 2.3305416107177734e-05,
+            "positive_residual_sum": 0.021658897399902344,
+            "max_violation": 0.001894235610961914
+          },
+          {
+            "path": 3,
+            "start": 267.2580871582031,
+            "reference": 270.5480177178979,
+            "edge_slack": 2.7907161712646484,
+            "triangle_slack": 0.4991438090801239,
+            "positive_residual_sum": 0.00973539799451828,
+            "max_violation": 0.0015958547592163086
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.10113578289747238,
+            "residual": 0.0011357814073562622
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.09968972206115723,
+            "residual": -0.0003102794289588928
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09920363128185272,
+            "residual": -0.0007963702082633972
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.10007038712501526,
+            "residual": 7.03856348991394e-05
+          }
+        ],
+        "complementarity_max": 0.45058754086494446,
+        "dual_stationarity_eta1_max": 0.0043487548828125,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "086239aff28e936541c94bda939cd4ba4ea4e81b92a31487a70262da8f45ebda",
+        "model_sha256": "f8ce5fdd691654533834ee13d09e1e78eb273484254c496da31e9370bfdeca05"
+      },
+      "qp": {
+        "step": 4,
+        "seconds": 0.0,
+        "push": 80.78274536132812,
+        "push_reference": 81.61738999171489,
+        "push_gap": 0.8346446303867623,
+        "push_gap_percent": 1.0226308761790697,
+        "feasible_scale": 0.9999632835388184,
+        "feasible_push": 80.77977930479392,
+        "feasible_push_gap_percent": 1.0262649749103654,
+        "task_rmse": 1.5030885347119376,
+        "task_nrmse_percent": 1.2266921612128834,
+        "pair_rmse": 1.0090571598226248,
+        "max_residual": 3.6731362342834473e-06,
+        "max_violation": 3.6731362342834473e-06,
+        "violation_count": 0,
+        "mean_positive_residual": 1.0964585683836958e-08,
+        "anchor_max": 0.0,
+        "terminal_max": 0.0,
+        "full_top8_penalty": 6.506520748138428,
+        "dual_max": 111.06156158447266,
+        "dual_mean": 34.36075973510742,
+        "complementarity": 0.1502991020679474,
+        "paths": [
+          {
+            "path": 0,
+            "start": 193.02163696289062,
+            "reference": 194.48878202587366,
+            "edge_slack": 1.3405178785324097,
+            "triangle_slack": 0.12664473056793213,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 1,
+            "start": 209.75393676757812,
+            "reference": 213.11610508710146,
+            "edge_slack": 3.3617217540740967,
+            "triangle_slack": 0.00048738718032836914,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 2,
+            "start": 257.98785400390625,
+            "reference": 259.0626526251435,
+            "edge_slack": 1.0744129419326782,
+            "triangle_slack": 0.0004259347915649414,
+            "positive_residual_sum": 0.0,
+            "max_violation": 0.0
+          },
+          {
+            "path": 3,
+            "start": 266.8802795410156,
+            "reference": 270.5480177178979,
+            "edge_slack": 3.164832592010498,
+            "triangle_slack": 0.5028948187828064,
+            "positive_residual_sum": 3.6731362342834473e-06,
+            "max_violation": 3.6731362342834473e-06
+          }
+        ],
+        "terminal_entry_edges": [
+          {
+            "row": 71,
+            "path": 0,
+            "cost": 0.10000000149011612,
+            "distance": 0.09990540146827698,
+            "residual": -9.460002183914185e-05
+          },
+          {
+            "row": 148,
+            "path": 1,
+            "cost": 0.10000000149011612,
+            "distance": 0.09864096343517303,
+            "residual": -0.0013590380549430847
+          },
+          {
+            "row": 240,
+            "path": 2,
+            "cost": 0.10000000149011612,
+            "distance": 0.09736506640911102,
+            "residual": -0.0026349350810050964
+          },
+          {
+            "row": 337,
+            "path": 3,
+            "cost": 0.10000000149011612,
+            "distance": 0.1000036746263504,
+            "residual": 3.6731362342834473e-06
+          }
+        ],
+        "complementarity_max": 0.7294270992279053,
+        "dual_stationarity_eta1_max": 0.009006500244140625,
+        "joint_pass": false,
+        "strict_physical_feasible": false,
+        "checkpoint_sha256": "f91fa21dc7fd25969eee2d7debc546d208cd793eaedcc77d8244a603df2e69b1",
+        "model_sha256": "334579cf3dc7bddaca898e6ea3d37da3e206269e1b83dd2a0aa7508866bfff23"
+      }
+    },
+    "qp_repeat_comparison": {
+      "identical_model": true,
+      "parameter_difference_l2": 0.0,
+      "parameter_difference_linf": 0.0,
+      "push_difference": 0.0,
+      "same_joint_result": true
+    },
+    "success": false
+  }
+}

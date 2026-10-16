@@ -1,0 +1,2714 @@
+[
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 0,
+    "node": 0,
+    "value": 193.18260192871094,
+    "reference": 194.48878202587366
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 1,
+    "node": 1,
+    "value": 189.07901000976562,
+    "reference": 190.3788314834237
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 2,
+    "node": 2,
+    "value": 184.85211181640625,
+    "reference": 186.1516119018197
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 3,
+    "node": 3,
+    "value": 180.49954223632812,
+    "reference": 181.80975160747766
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 4,
+    "node": 4,
+    "value": 176.03265380859375,
+    "reference": 177.3581915870309
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 5,
+    "node": 5,
+    "value": 171.47494506835938,
+    "reference": 172.80394802242517
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 6,
+    "node": 6,
+    "value": 166.82647705078125,
+    "reference": 168.1674262061715
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 7,
+    "node": 7,
+    "value": 162.12918090820312,
+    "reference": 163.47529945522547
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 8,
+    "node": 8,
+    "value": 157.40843200683594,
+    "reference": 158.7583299651742
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 9,
+    "node": 9,
+    "value": 152.8056182861328,
+    "reference": 154.04906902462244
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 10,
+    "node": 10,
+    "value": 148.14889526367188,
+    "reference": 149.37951526790857
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 11,
+    "node": 11,
+    "value": 143.51820373535156,
+    "reference": 144.74734649807215
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 12,
+    "node": 12,
+    "value": 138.9315948486328,
+    "reference": 140.1501904502511
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 13,
+    "node": 13,
+    "value": 134.35716247558594,
+    "reference": 135.58562765270472
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 14,
+    "node": 14,
+    "value": 129.82373046875,
+    "reference": 131.05119285732508
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 15,
+    "node": 15,
+    "value": 125.32353210449219,
+    "reference": 126.54437694698572
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 16,
+    "node": 16,
+    "value": 120.86296844482422,
+    "reference": 122.09560308605433
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 17,
+    "node": 17,
+    "value": 116.50399017333984,
+    "reference": 117.73104820400476
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 18,
+    "node": 18,
+    "value": 112.23857879638672,
+    "reference": 113.47048435360193
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 19,
+    "node": 19,
+    "value": 108.09687042236328,
+    "reference": 109.32534895092249
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 20,
+    "node": 20,
+    "value": 104.04193878173828,
+    "reference": 105.29721985012293
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 21,
+    "node": 21,
+    "value": 100.13956451416016,
+    "reference": 101.38661942631006
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 22,
+    "node": 22,
+    "value": 96.3470687866211,
+    "reference": 97.59136781841516
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 23,
+    "node": 23,
+    "value": 92.64627838134766,
+    "reference": 93.90641985088587
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 24,
+    "node": 24,
+    "value": 89.05098724365234,
+    "reference": 90.32376465946436
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 25,
+    "node": 25,
+    "value": 85.5548095703125,
+    "reference": 86.83242139965296
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 26,
+    "node": 26,
+    "value": 82.16151428222656,
+    "reference": 83.4310308471322
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 27,
+    "node": 27,
+    "value": 78.85322570800781,
+    "reference": 80.11814246326685
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 28,
+    "node": 28,
+    "value": 75.62301635742188,
+    "reference": 76.89220509678125
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 29,
+    "node": 29,
+    "value": 72.48710632324219,
+    "reference": 73.75156197696924
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 30,
+    "node": 30,
+    "value": 69.42672729492188,
+    "reference": 70.69444165378809
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 31,
+    "node": 31,
+    "value": 66.4593505859375,
+    "reference": 67.718950368464
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 32,
+    "node": 32,
+    "value": 63.56065368652344,
+    "reference": 64.82306299358606
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 33,
+    "node": 33,
+    "value": 60.73426055908203,
+    "reference": 62.00461516529322
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 34,
+    "node": 34,
+    "value": 58.086669921875,
+    "reference": 59.261294938623905
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 35,
+    "node": 35,
+    "value": 55.46445846557617,
+    "reference": 56.590633012354374
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 36,
+    "node": 36,
+    "value": 52.86351776123047,
+    "reference": 53.98999438434839
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 37,
+    "node": 37,
+    "value": 50.35708999633789,
+    "reference": 51.456570245325565
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 38,
+    "node": 38,
+    "value": 47.86237716674805,
+    "reference": 48.9873703494668
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 39,
+    "node": 39,
+    "value": 45.45732116699219,
+    "reference": 46.57921610027552
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 40,
+    "node": 40,
+    "value": 43.10919189453125,
+    "reference": 44.22873459011316
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 41,
+    "node": 41,
+    "value": 41.73186111450195,
+    "reference": 41.9323543086648
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 42,
+    "node": 42,
+    "value": 39.763885498046875,
+    "reference": 39.68630538135767
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 43,
+    "node": 43,
+    "value": 37.562007904052734,
+    "reference": 37.48661646991968
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 44,
+    "node": 44,
+    "value": 35.409698486328125,
+    "reference": 35.32912025600672
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 45,
+    "node": 45,
+    "value": 33.2642707824707,
+    "reference": 33.2094584479928
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 46,
+    "node": 46,
+    "value": 31.173009872436523,
+    "reference": 31.139699555933475
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 47,
+    "node": 47,
+    "value": 29.131589889526367,
+    "reference": 29.131433822214603
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 48,
+    "node": 48,
+    "value": 27.19520378112793,
+    "reference": 27.195642448961735
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 49,
+    "node": 49,
+    "value": 25.341875076293945,
+    "reference": 25.3425550237298
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 50,
+    "node": 50,
+    "value": 23.592281341552734,
+    "reference": 23.58149442821741
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 51,
+    "node": 51,
+    "value": 21.89825439453125,
+    "reference": 21.885603047907352
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 52,
+    "node": 52,
+    "value": 20.247318267822266,
+    "reference": 20.23055849224329
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 53,
+    "node": 53,
+    "value": 18.63926124572754,
+    "reference": 18.619617082178593
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 54,
+    "node": 54,
+    "value": 17.073450088500977,
+    "reference": 17.056300975382328
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 55,
+    "node": 55,
+    "value": 15.565377235412598,
+    "reference": 15.544395662844181
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 56,
+    "node": 56,
+    "value": 14.092889785766602,
+    "reference": 14.08793542534113
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 57,
+    "node": 57,
+    "value": 12.670347213745117,
+    "reference": 12.69117221981287
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 58,
+    "node": 58,
+    "value": 11.339605331420898,
+    "reference": 11.358522154390812
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 59,
+    "node": 59,
+    "value": 10.080876350402832,
+    "reference": 10.094486214220524
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 60,
+    "node": 60,
+    "value": 8.889983177185059,
+    "reference": 8.90353987365961
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 61,
+    "node": 61,
+    "value": 7.769561290740967,
+    "reference": 7.784632660448551
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 62,
+    "node": 62,
+    "value": 6.722763538360596,
+    "reference": 6.736403681337833
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 63,
+    "node": 63,
+    "value": 5.734678268432617,
+    "reference": 5.757095254957676
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 64,
+    "node": 64,
+    "value": 4.819206237792969,
+    "reference": 4.84442887455225
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 65,
+    "node": 65,
+    "value": 3.959470748901367,
+    "reference": 3.9954222813248634
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 66,
+    "node": 66,
+    "value": 3.183637857437134,
+    "reference": 3.2196779623627663
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 67,
+    "node": 67,
+    "value": 2.493903875350952,
+    "reference": 2.5284324660897255
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 68,
+    "node": 68,
+    "value": 1.9014863967895508,
+    "reference": 1.934622086584568
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 69,
+    "node": 69,
+    "value": 1.2929348945617676,
+    "reference": 1.330162025988102
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 70,
+    "node": 70,
+    "value": 0.5613657832145691,
+    "reference": 0.5983461514115334
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 71,
+    "node": 71,
+    "value": 0.10198605805635452,
+    "reference": 0.10000000149011612
+  },
+  {
+    "step": 20000,
+    "path": 0,
+    "timestep": 72,
+    "node": 72,
+    "value": 0.0,
+    "reference": 0.0
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 0,
+    "node": 73,
+    "value": 209.85162353515625,
+    "reference": 213.11610508710146
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 1,
+    "node": 74,
+    "value": 206.28616333007812,
+    "reference": 209.55443192273378
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 2,
+    "node": 75,
+    "value": 202.80506896972656,
+    "reference": 205.8851361349225
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 3,
+    "node": 76,
+    "value": 199.025390625,
+    "reference": 202.10770750790834
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 4,
+    "node": 77,
+    "value": 195.14231872558594,
+    "reference": 198.2216727808118
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 5,
+    "node": 78,
+    "value": 191.14349365234375,
+    "reference": 194.22659135609865
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 6,
+    "node": 79,
+    "value": 187.03253173828125,
+    "reference": 190.11688400059938
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 7,
+    "node": 80,
+    "value": 183.14932250976562,
+    "reference": 185.88984704762697
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 8,
+    "node": 81,
+    "value": 178.80514526367188,
+    "reference": 181.54550720006227
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 9,
+    "node": 82,
+    "value": 174.4430694580078,
+    "reference": 177.08643556386232
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 10,
+    "node": 83,
+    "value": 169.8701934814453,
+    "reference": 172.5175254419446
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 11,
+    "node": 84,
+    "value": 165.21456909179688,
+    "reference": 167.85535026341677
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 12,
+    "node": 85,
+    "value": 160.4988250732422,
+    "reference": 163.12376952916384
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 13,
+    "node": 86,
+    "value": 155.71298217773438,
+    "reference": 158.35183645039797
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 14,
+    "node": 87,
+    "value": 151.04476928710938,
+    "reference": 153.571542032063
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 15,
+    "node": 88,
+    "value": 147.08563232421875,
+    "reference": 148.8154795244336
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 16,
+    "node": 89,
+    "value": 143.1341552734375,
+    "reference": 144.09826446324587
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 17,
+    "node": 90,
+    "value": 139.2471923828125,
+    "reference": 139.43395019322634
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 18,
+    "node": 91,
+    "value": 134.69126892089844,
+    "reference": 134.83580566197634
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 19,
+    "node": 92,
+    "value": 130.18148803710938,
+    "reference": 130.3160922601819
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 20,
+    "node": 93,
+    "value": 125.74563598632812,
+    "reference": 125.88583112508059
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 21,
+    "node": 94,
+    "value": 121.4129867553711,
+    "reference": 121.54385209828615
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 22,
+    "node": 95,
+    "value": 117.1772689819336,
+    "reference": 117.28892255574465
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 23,
+    "node": 96,
+    "value": 113.11053466796875,
+    "reference": 113.11974263936281
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 24,
+    "node": 97,
+    "value": 109.04114532470703,
+    "reference": 109.03494191914797
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 25,
+    "node": 98,
+    "value": 105.05160522460938,
+    "reference": 105.03307557851076
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 26,
+    "node": 99,
+    "value": 101.11785125732422,
+    "reference": 101.11261964589357
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 27,
+    "node": 100,
+    "value": 97.27854919433594,
+    "reference": 97.27196813374758
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 28,
+    "node": 101,
+    "value": 93.51991271972656,
+    "reference": 93.50942683964968
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 29,
+    "node": 102,
+    "value": 89.84625244140625,
+    "reference": 89.82321048527956
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 30,
+    "node": 103,
+    "value": 86.23993682861328,
+    "reference": 86.2114381864667
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 31,
+    "node": 104,
+    "value": 82.71202850341797,
+    "reference": 82.68527842313051
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 32,
+    "node": 105,
+    "value": 79.3036117553711,
+    "reference": 79.25461436063051
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 33,
+    "node": 106,
+    "value": 75.99488067626953,
+    "reference": 75.9278152063489
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 34,
+    "node": 107,
+    "value": 72.78512573242188,
+    "reference": 72.71149326115847
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 35,
+    "node": 108,
+    "value": 69.66445922851562,
+    "reference": 69.6102509573102
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 36,
+    "node": 109,
+    "value": 66.65768432617188,
+    "reference": 66.61876989156008
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 37,
+    "node": 110,
+    "value": 63.767906188964844,
+    "reference": 63.72866154462099
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 38,
+    "node": 111,
+    "value": 60.96234893798828,
+    "reference": 60.92842770367861
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 39,
+    "node": 112,
+    "value": 58.2609977722168,
+    "reference": 58.20355988293886
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 40,
+    "node": 113,
+    "value": 55.598533630371094,
+    "reference": 55.53681779652834
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 41,
+    "node": 114,
+    "value": 53.01533508300781,
+    "reference": 52.92499256879091
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 42,
+    "node": 115,
+    "value": 50.46018600463867,
+    "reference": 50.364710338413715
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 43,
+    "node": 116,
+    "value": 47.94380187988281,
+    "reference": 47.852432020008564
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 44,
+    "node": 117,
+    "value": 45.46409225463867,
+    "reference": 45.38445616513491
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 45,
+    "node": 118,
+    "value": 43.04072952270508,
+    "reference": 42.95692015439272
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 46,
+    "node": 119,
+    "value": 40.66895294189453,
+    "reference": 40.582229383289814
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 47,
+    "node": 120,
+    "value": 38.504005432128906,
+    "reference": 38.27223015576601
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 48,
+    "node": 121,
+    "value": 36.28184127807617,
+    "reference": 36.038058526813984
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 49,
+    "node": 122,
+    "value": 34.14197540283203,
+    "reference": 33.88997746258974
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 50,
+    "node": 123,
+    "value": 32.08516311645508,
+    "reference": 31.83719802647829
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 51,
+    "node": 124,
+    "value": 30.123443603515625,
+    "reference": 29.877895958721638
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 52,
+    "node": 125,
+    "value": 28.190488815307617,
+    "reference": 27.966788418591022
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 53,
+    "node": 126,
+    "value": 26.26031494140625,
+    "reference": 26.092180259525776
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 54,
+    "node": 127,
+    "value": 24.403491973876953,
+    "reference": 24.256813295185566
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 55,
+    "node": 128,
+    "value": 22.593931198120117,
+    "reference": 22.46365273743868
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 56,
+    "node": 129,
+    "value": 20.850187301635742,
+    "reference": 20.715891130268574
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 57,
+    "node": 130,
+    "value": 19.152570724487305,
+    "reference": 19.016946204006672
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 58,
+    "node": 131,
+    "value": 17.501829147338867,
+    "reference": 17.370448239147663
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 59,
+    "node": 132,
+    "value": 15.915623664855957,
+    "reference": 15.780215509235859
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 60,
+    "node": 133,
+    "value": 14.392197608947754,
+    "reference": 14.25021231919527
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 61,
+    "node": 134,
+    "value": 12.92930793762207,
+    "reference": 12.784487135708332
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 62,
+    "node": 135,
+    "value": 11.539945602416992,
+    "reference": 11.387088067829609
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 63,
+    "node": 136,
+    "value": 10.215837478637695,
+    "reference": 10.06195367127657
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 64,
+    "node": 137,
+    "value": 8.966930389404297,
+    "reference": 8.812782175838947
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 65,
+    "node": 138,
+    "value": 7.796529293060303,
+    "reference": 7.642884023487568
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 66,
+    "node": 139,
+    "value": 6.711419582366943,
+    "reference": 6.551849253475666
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 67,
+    "node": 140,
+    "value": 5.687769412994385,
+    "reference": 5.539125807583332
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 68,
+    "node": 141,
+    "value": 4.753218173980713,
+    "reference": 4.603989787399769
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 69,
+    "node": 142,
+    "value": 3.893639087677002,
+    "reference": 3.7455024793744087
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 70,
+    "node": 143,
+    "value": 3.112034320831299,
+    "reference": 2.962447054684162
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 71,
+    "node": 144,
+    "value": 2.405541181564331,
+    "reference": 2.2532374933362007
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 72,
+    "node": 145,
+    "value": 1.764286756515503,
+    "reference": 1.6157820299267769
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 73,
+    "node": 146,
+    "value": 1.1923632621765137,
+    "reference": 1.0472711399197578
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 74,
+    "node": 147,
+    "value": 0.685814380645752,
+    "reference": 0.543840117752552
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 75,
+    "node": 148,
+    "value": 0.2448946088552475,
+    "reference": 0.10000000149011612
+  },
+  {
+    "step": 20000,
+    "path": 1,
+    "timestep": 76,
+    "node": 72,
+    "value": 0.0,
+    "reference": 0.0
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 0,
+    "node": 149,
+    "value": 258.2669982910156,
+    "reference": 259.0626526251435
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 1,
+    "node": 150,
+    "value": 255.64300537109375,
+    "reference": 256.4408574476838
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 2,
+    "node": 151,
+    "value": 252.98802185058594,
+    "reference": 253.78913716226816
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 3,
+    "node": 152,
+    "value": 250.3056182861328,
+    "reference": 251.1094527617097
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 4,
+    "node": 153,
+    "value": 247.62445068359375,
+    "reference": 248.40360716730356
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 5,
+    "node": 154,
+    "value": 244.89501953125,
+    "reference": 245.6732578650117
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 6,
+    "node": 155,
+    "value": 242.126708984375,
+    "reference": 242.91992930322886
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 7,
+    "node": 156,
+    "value": 239.340576171875,
+    "reference": 240.14502386003733
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 8,
+    "node": 157,
+    "value": 236.5561065673828,
+    "reference": 237.34983233362436
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 9,
+    "node": 158,
+    "value": 233.69882202148438,
+    "reference": 234.48948673158884
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 10,
+    "node": 159,
+    "value": 230.72866821289062,
+    "reference": 231.52487758547068
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 11,
+    "node": 160,
+    "value": 227.6563262939453,
+    "reference": 228.45520643144846
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 12,
+    "node": 161,
+    "value": 224.47622680664062,
+    "reference": 225.27974013239145
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 13,
+    "node": 162,
+    "value": 221.19590759277344,
+    "reference": 221.99780539423227
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 14,
+    "node": 163,
+    "value": 217.91958618164062,
+    "reference": 218.60878209024668
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 15,
+    "node": 164,
+    "value": 214.64810180664062,
+    "reference": 215.11209753900766
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 16,
+    "node": 165,
+    "value": 211.38137817382812,
+    "reference": 211.50722316652536
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 17,
+    "node": 166,
+    "value": 207.66519165039062,
+    "reference": 207.7936692610383
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 18,
+    "node": 167,
+    "value": 203.8411865234375,
+    "reference": 203.97098235040903
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 19,
+    "node": 168,
+    "value": 199.914306640625,
+    "reference": 200.03874067217112
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 20,
+    "node": 169,
+    "value": 195.87962341308594,
+    "reference": 195.99655298143625
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 21,
+    "node": 170,
+    "value": 191.699951171875,
+    "reference": 191.83922389894724
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 22,
+    "node": 171,
+    "value": 187.42431640625,
+    "reference": 187.56441644579172
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 23,
+    "node": 172,
+    "value": 183.03269958496094,
+    "reference": 183.1725025549531
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 24,
+    "node": 173,
+    "value": 178.51255798339844,
+    "reference": 178.66636995226145
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 25,
+    "node": 174,
+    "value": 173.8938446044922,
+    "reference": 174.05120185762644
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 26,
+    "node": 175,
+    "value": 169.17762756347656,
+    "reference": 169.34410098940134
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 27,
+    "node": 176,
+    "value": 164.4113311767578,
+    "reference": 164.56933406740427
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 28,
+    "node": 177,
+    "value": 159.60289001464844,
+    "reference": 159.75622991472483
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 29,
+    "node": 178,
+    "value": 154.79702758789062,
+    "reference": 154.93690828233957
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 30,
+    "node": 179,
+    "value": 150.0165252685547,
+    "reference": 150.14393619447947
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 31,
+    "node": 180,
+    "value": 145.27984619140625,
+    "reference": 145.3918810263276
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 32,
+    "node": 181,
+    "value": 140.5786895751953,
+    "reference": 140.69471172243357
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 33,
+    "node": 182,
+    "value": 135.9528350830078,
+    "reference": 136.06557897478342
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 34,
+    "node": 183,
+    "value": 131.40127563476562,
+    "reference": 131.51658872514963
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 35,
+    "node": 184,
+    "value": 126.94261932373047,
+    "reference": 127.05856946855783
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 36,
+    "node": 185,
+    "value": 122.58326721191406,
+    "reference": 122.70083621889353
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 37,
+    "node": 186,
+    "value": 118.32001495361328,
+    "reference": 118.45095304399729
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 38,
+    "node": 187,
+    "value": 114.18612670898438,
+    "reference": 114.31448701769114
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 39,
+    "node": 188,
+    "value": 110.16829681396484,
+    "reference": 110.2947678938508
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 40,
+    "node": 189,
+    "value": 106.26481628417969,
+    "reference": 106.39265898615122
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 41,
+    "node": 190,
+    "value": 102.48057556152344,
+    "reference": 102.60367301851511
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 42,
+    "node": 191,
+    "value": 98.79547882080078,
+    "reference": 98.912493981421
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 43,
+    "node": 192,
+    "value": 95.20171356201172,
+    "reference": 95.29375628381968
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 44,
+    "node": 193,
+    "value": 91.59356689453125,
+    "reference": 91.7141969576478
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 45,
+    "node": 194,
+    "value": 87.98976135253906,
+    "reference": 88.13610938936472
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 46,
+    "node": 195,
+    "value": 84.44966125488281,
+    "reference": 84.59112409502268
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 47,
+    "node": 196,
+    "value": 80.97613525390625,
+    "reference": 81.10861829668283
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 48,
+    "node": 197,
+    "value": 77.58895111083984,
+    "reference": 77.7135820761323
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 49,
+    "node": 198,
+    "value": 74.30149841308594,
+    "reference": 74.42455557733774
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 50,
+    "node": 199,
+    "value": 71.11471557617188,
+    "reference": 71.25172284990549
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 51,
+    "node": 200,
+    "value": 68.05846405029297,
+    "reference": 68.1907663717866
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 52,
+    "node": 201,
+    "value": 65.11634063720703,
+    "reference": 65.23434046655893
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 53,
+    "node": 202,
+    "value": 62.27633285522461,
+    "reference": 62.37199691683054
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 54,
+    "node": 203,
+    "value": 59.49888610839844,
+    "reference": 59.590235747396946
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 55,
+    "node": 204,
+    "value": 56.79545593261719,
+    "reference": 56.87272051721811
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 56,
+    "node": 205,
+    "value": 54.13561248779297,
+    "reference": 54.216512240469456
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 57,
+    "node": 206,
+    "value": 51.541603088378906,
+    "reference": 51.61850503832102
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 58,
+    "node": 207,
+    "value": 49.00313186645508,
+    "reference": 49.0754235163331
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 59,
+    "node": 208,
+    "value": 46.512203216552734,
+    "reference": 46.58382038027048
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 60,
+    "node": 209,
+    "value": 44.067344665527344,
+    "reference": 44.14007667452097
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 61,
+    "node": 210,
+    "value": 41.689491271972656,
+    "reference": 41.75633577257395
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 62,
+    "node": 211,
+    "value": 39.519100189208984,
+    "reference": 39.44408515840769
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 63,
+    "node": 212,
+    "value": 37.291748046875,
+    "reference": 37.213996924459934
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 64,
+    "node": 213,
+    "value": 35.137420654296875,
+    "reference": 35.07575301080942
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 65,
+    "node": 214,
+    "value": 33.0711669921875,
+    "reference": 33.03785280138254
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 66,
+    "node": 215,
+    "value": 31.087331771850586,
+    "reference": 31.051554836332798
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 67,
+    "node": 216,
+    "value": 29.127458572387695,
+    "reference": 29.095920242369175
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 68,
+    "node": 217,
+    "value": 27.167512893676758,
+    "reference": 27.1734152212739
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 69,
+    "node": 218,
+    "value": 25.261465072631836,
+    "reference": 25.286756552755833
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 70,
+    "node": 219,
+    "value": 23.41061782836914,
+    "reference": 23.43893400579691
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 71,
+    "node": 220,
+    "value": 21.608896255493164,
+    "reference": 21.633231557905674
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 72,
+    "node": 221,
+    "value": 19.85509490966797,
+    "reference": 19.873245395720005
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 73,
+    "node": 222,
+    "value": 18.14558982849121,
+    "reference": 18.16289559751749
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 74,
+    "node": 223,
+    "value": 16.494924545288086,
+    "reference": 16.50642804056406
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 75,
+    "node": 224,
+    "value": 14.89283561706543,
+    "reference": 14.908400811254978
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 76,
+    "node": 225,
+    "value": 13.365395545959473,
+    "reference": 13.373648561537266
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 77,
+    "node": 226,
+    "value": 11.874340057373047,
+    "reference": 11.907218374311924
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 78,
+    "node": 227,
+    "value": 10.485294342041016,
+    "reference": 10.514268554747105
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 79,
+    "node": 228,
+    "value": 9.172991752624512,
+    "reference": 9.19992545992136
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 80,
+    "node": 229,
+    "value": 7.940911293029785,
+    "reference": 7.969097413122654
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 81,
+    "node": 230,
+    "value": 6.798043251037598,
+    "reference": 6.821476019918919
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 82,
+    "node": 231,
+    "value": 5.726525783538818,
+    "reference": 5.75665906816721
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 83,
+    "node": 232,
+    "value": 4.733170509338379,
+    "reference": 4.774124421179295
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 84,
+    "node": 233,
+    "value": 3.827254295349121,
+    "reference": 3.873193420469761
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 85,
+    "node": 234,
+    "value": 3.011948823928833,
+    "reference": 3.0529749169945717
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 86,
+    "node": 235,
+    "value": 2.27394437789917,
+    "reference": 2.312281347811222
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 87,
+    "node": 236,
+    "value": 1.5998238325119019,
+    "reference": 1.6494951620697975
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 88,
+    "node": 237,
+    "value": 1.0155296325683594,
+    "reference": 1.0623482838273048
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 89,
+    "node": 238,
+    "value": 0.5049604773521423,
+    "reference": 0.547537125647068
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 90,
+    "node": 239,
+    "value": 0.08376040309667587,
+    "reference": 0.10000000149011612
+  },
+  {
+    "step": 20000,
+    "path": 2,
+    "timestep": 91,
+    "node": 72,
+    "value": 0.0,
+    "reference": 0.0
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 0,
+    "node": 240,
+    "value": 267.2798156738281,
+    "reference": 270.5480177178979
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 1,
+    "node": 241,
+    "value": 265.1304016113281,
+    "reference": 267.91859743744135
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 2,
+    "node": 242,
+    "value": 262.6429138183594,
+    "reference": 265.25171015411615
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 3,
+    "node": 243,
+    "value": 259.9389343261719,
+    "reference": 262.5494596734643
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 4,
+    "node": 244,
+    "value": 257.1809997558594,
+    "reference": 259.8138367906213
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 5,
+    "node": 245,
+    "value": 254.41326904296875,
+    "reference": 257.0467180982232
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 6,
+    "node": 246,
+    "value": 251.60446166992188,
+    "reference": 254.24513814598322
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 7,
+    "node": 247,
+    "value": 248.7511444091797,
+    "reference": 251.4067115560174
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 8,
+    "node": 248,
+    "value": 245.85768127441406,
+    "reference": 248.52956745773554
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 9,
+    "node": 249,
+    "value": 242.92758178710938,
+    "reference": 245.61229870468378
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 10,
+    "node": 250,
+    "value": 239.9512481689453,
+    "reference": 242.65392396599054
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 11,
+    "node": 251,
+    "value": 236.94801330566406,
+    "reference": 239.65734264999628
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 12,
+    "node": 252,
+    "value": 233.90098571777344,
+    "reference": 236.6267883554101
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 13,
+    "node": 253,
+    "value": 230.84381103515625,
+    "reference": 233.56747410446405
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 14,
+    "node": 254,
+    "value": 227.75570678710938,
+    "reference": 230.4852154031396
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 15,
+    "node": 255,
+    "value": 224.63766479492188,
+    "reference": 227.38608429580927
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 16,
+    "node": 256,
+    "value": 221.4932403564453,
+    "reference": 224.23250601440668
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 17,
+    "node": 257,
+    "value": 218.2369842529297,
+    "reference": 220.96261117607355
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 18,
+    "node": 258,
+    "value": 214.85427856445312,
+    "reference": 217.58637020736933
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 19,
+    "node": 259,
+    "value": 211.38807678222656,
+    "reference": 214.12214563041925
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 20,
+    "node": 260,
+    "value": 207.87176513671875,
+    "reference": 210.5947923436761
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 21,
+    "node": 261,
+    "value": 204.23768615722656,
+    "reference": 206.97622845321894
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 22,
+    "node": 262,
+    "value": 200.50938415527344,
+    "reference": 203.2479758039117
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 23,
+    "node": 263,
+    "value": 196.64254760742188,
+    "reference": 199.4023182168603
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 24,
+    "node": 264,
+    "value": 192.67559814453125,
+    "reference": 195.44221065193415
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 25,
+    "node": 265,
+    "value": 188.61036682128906,
+    "reference": 191.3802609220147
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 26,
+    "node": 266,
+    "value": 184.4437255859375,
+    "reference": 187.2033824697137
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 27,
+    "node": 267,
+    "value": 180.1636962890625,
+    "reference": 182.90929362922907
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 28,
+    "node": 268,
+    "value": 175.77232360839844,
+    "reference": 178.5059833303094
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 29,
+    "node": 269,
+    "value": 171.273681640625,
+    "reference": 174.0104017034173
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 30,
+    "node": 270,
+    "value": 166.73318481445312,
+    "reference": 169.44665572792292
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 31,
+    "node": 271,
+    "value": 162.12074279785156,
+    "reference": 164.8278369680047
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 32,
+    "node": 272,
+    "value": 157.44345092773438,
+    "reference": 160.16785094887018
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 33,
+    "node": 273,
+    "value": 152.7591094970703,
+    "reference": 155.48119685798883
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 34,
+    "node": 274,
+    "value": 148.0633544921875,
+    "reference": 150.78275392204523
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 35,
+    "node": 275,
+    "value": 143.3795928955078,
+    "reference": 146.08756683021784
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 36,
+    "node": 276,
+    "value": 138.71585083007812,
+    "reference": 141.42783973366022
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 37,
+    "node": 277,
+    "value": 134.1219940185547,
+    "reference": 136.8332113996148
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 38,
+    "node": 278,
+    "value": 129.74807739257812,
+    "reference": 132.32848785072565
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 39,
+    "node": 279,
+    "value": 125.4266357421875,
+    "reference": 127.93152282387018
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 40,
+    "node": 280,
+    "value": 121.29580688476562,
+    "reference": 123.65137288719416
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 41,
+    "node": 281,
+    "value": 117.14968872070312,
+    "reference": 119.48449275642633
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 42,
+    "node": 282,
+    "value": 113.08787536621094,
+    "reference": 115.42444894462824
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 43,
+    "node": 283,
+    "value": 109.13654327392578,
+    "reference": 111.46188137680292
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 44,
+    "node": 284,
+    "value": 105.26210021972656,
+    "reference": 107.58457086235285
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 45,
+    "node": 285,
+    "value": 101.45893859863281,
+    "reference": 103.77763292938471
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 46,
+    "node": 286,
+    "value": 97.73402404785156,
+    "reference": 100.0390414968133
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 47,
+    "node": 287,
+    "value": 94.10899353027344,
+    "reference": 96.36667487770319
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 48,
+    "node": 288,
+    "value": 90.49801635742188,
+    "reference": 92.7583117261529
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 49,
+    "node": 289,
+    "value": 86.95165252685547,
+    "reference": 89.21163008362055
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 50,
+    "node": 290,
+    "value": 83.45298767089844,
+    "reference": 85.72420308738947
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 51,
+    "node": 291,
+    "value": 80.04745483398438,
+    "reference": 82.30837366729975
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 52,
+    "node": 292,
+    "value": 76.73513793945312,
+    "reference": 78.97549388557673
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 53,
+    "node": 293,
+    "value": 73.48887634277344,
+    "reference": 75.73571512848139
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 54,
+    "node": 294,
+    "value": 70.35580444335938,
+    "reference": 72.59776327759027
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 55,
+    "node": 295,
+    "value": 67.30109405517578,
+    "reference": 69.56870291382074
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 56,
+    "node": 296,
+    "value": 64.4694595336914,
+    "reference": 66.63977334648371
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 57,
+    "node": 297,
+    "value": 61.70063400268555,
+    "reference": 63.799120880663395
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 58,
+    "node": 298,
+    "value": 59.0633659362793,
+    "reference": 61.03192088752985
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 59,
+    "node": 299,
+    "value": 56.35352325439453,
+    "reference": 58.32068059593439
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 60,
+    "node": 300,
+    "value": 53.67826461791992,
+    "reference": 55.645742155611515
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 61,
+    "node": 301,
+    "value": 51.092308044433594,
+    "reference": 53.019929863512516
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 62,
+    "node": 302,
+    "value": 48.503662109375,
+    "reference": 50.455522038042545
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 63,
+    "node": 303,
+    "value": 46.010223388671875,
+    "reference": 47.964093424379826
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 64,
+    "node": 304,
+    "value": 43.59588623046875,
+    "reference": 45.55634281784296
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 65,
+    "node": 305,
+    "value": 41.28274154663086,
+    "reference": 43.24191043525934
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 66,
+    "node": 306,
+    "value": 39.24341583251953,
+    "reference": 41.00674555450678
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 67,
+    "node": 307,
+    "value": 37.06965637207031,
+    "reference": 38.83376810699701
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 68,
+    "node": 308,
+    "value": 35.001461029052734,
+    "reference": 36.70331595093012
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 69,
+    "node": 309,
+    "value": 33.438480377197266,
+    "reference": 34.593848921358585
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 70,
+    "node": 310,
+    "value": 32.271785736083984,
+    "reference": 32.48286197334528
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 71,
+    "node": 311,
+    "value": 30.192943572998047,
+    "reference": 30.40041682869196
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 72,
+    "node": 312,
+    "value": 28.101144790649414,
+    "reference": 28.374918676912785
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 73,
+    "node": 313,
+    "value": 26.15074920654297,
+    "reference": 26.431338526308537
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 74,
+    "node": 314,
+    "value": 24.305747985839844,
+    "reference": 24.589368797838688
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 75,
+    "node": 315,
+    "value": 22.557220458984375,
+    "reference": 22.853027440607548
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 76,
+    "node": 316,
+    "value": 20.837039947509766,
+    "reference": 21.140532113611698
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 77,
+    "node": 317,
+    "value": 19.153776168823242,
+    "reference": 19.462539173662663
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 78,
+    "node": 318,
+    "value": 17.520362854003906,
+    "reference": 17.82981715351343
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 79,
+    "node": 319,
+    "value": 15.934916496276855,
+    "reference": 16.25243041664362
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 80,
+    "node": 320,
+    "value": 14.417073249816895,
+    "reference": 14.738696195185184
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 81,
+    "node": 321,
+    "value": 12.96988582611084,
+    "reference": 13.28728947788477
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 82,
+    "node": 322,
+    "value": 11.57995891571045,
+    "reference": 11.89648375660181
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 83,
+    "node": 323,
+    "value": 10.258169174194336,
+    "reference": 10.564061023294926
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 84,
+    "node": 324,
+    "value": 8.98239803314209,
+    "reference": 9.287186481058598
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 85,
+    "node": 325,
+    "value": 7.7569499015808105,
+    "reference": 8.062233068048954
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 86,
+    "node": 326,
+    "value": 6.619537353515625,
+    "reference": 6.895463444292545
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 87,
+    "node": 327,
+    "value": 5.630046367645264,
+    "reference": 5.794003821909428
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 88,
+    "node": 328,
+    "value": 4.712531089782715,
+    "reference": 4.765890218317509
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 89,
+    "node": 329,
+    "value": 3.8104193210601807,
+    "reference": 3.8200531974434853
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 90,
+    "node": 330,
+    "value": 2.9677298069000244,
+    "reference": 2.9661957398056984
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 91,
+    "node": 331,
+    "value": 2.224515676498413,
+    "reference": 2.2047864571213722
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 92,
+    "node": 332,
+    "value": 1.5618149042129517,
+    "reference": 1.5364461317658424
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 93,
+    "node": 333,
+    "value": 0.9889618158340454,
+    "reference": 0.9620122089982033
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 94,
+    "node": 334,
+    "value": 0.5121543407440186,
+    "reference": 0.4826434925198555
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 95,
+    "node": 335,
+    "value": 0.13144278526306152,
+    "reference": 0.10000000149011612
+  },
+  {
+    "step": 20000,
+    "path": 3,
+    "timestep": 96,
+    "node": 72,
+    "value": 0.0,
+    "reference": 0.0
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "same_final_metrics_as_user_run": true,
+  "selected_step": 10,
+  "stop_reason": "feasible_with_value_guard",
+  "joint_pass": true,
+  "strict_max_residual": -8.58306884765625e-06
+}

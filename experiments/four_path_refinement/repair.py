@@ -56,7 +56,42 @@ def accept_candidate(old_h, new_h, new_push, floor, physical):
             and float(b.max()) <= float(a.max())*1.05+1e-7)
 
 
-def local_linearization(model, data, floor, margin=5e-5):
+def stable_jacobian_gram(gx, gy, fs, fd, push_gradient, block_size=32):
+    """Same exact Gram, summed from explicit Jacobian blocks without cancellation.
+
+    Expanding (gx outer fs + gy outer fd) into four Gram terms can subtract
+    large nearly equal matrices. This bounded-memory fallback adds PSD blocks
+    instead; it changes neither the constraint Jacobian nor the QP objective.
+    """
+    gram = gx.new_zeros((len(gx)+1,len(gx)+1))
+    for start in range(0,gx.shape[1],block_size):
+        stop = start+block_size
+        edges = (gx[:,start:stop,None]*fs[:,None,:]
+                 +gy[:,start:stop,None]*fd[:,None,:]).flatten(1)
+        block = torch.cat((edges,-push_gradient[start:stop].flatten()[None,:]))
+        gram.add_(block@block.T)
+    return gram
+
+
+def factor_jacobian_gram(full, gx, gy, fs, fd, push_gradient, diagnostics=None):
+    eigenvalues,eigenvectors = torch.linalg.eigh((full+full.T)/2)
+    ratio = float(eigenvalues.min())/max(float(eigenvalues.max()),1e-30)
+    fallback = ratio < -1e-10
+    if fallback:
+        stable = stable_jacobian_gram(gx,gy,fs,fd,push_gradient)
+        difference = float((stable-full).norm()/stable.norm().clamp_min(1e-30))
+        eigenvalues,eigenvectors = torch.linalg.eigh((stable+stable.T)/2)
+    assert torch.isfinite(eigenvalues).all()
+    assert float(eigenvalues.min()) >= -1e-10*max(float(eigenvalues.max()),1e-30)
+    if diagnostics is not None:
+        diagnostics.update(expanded_min_max_eigenvalue_ratio=ratio,
+            stable_block_fallback=fallback,
+            stable_relative_gram_difference=difference if fallback else 0.,
+            final_min_max_eigenvalue_ratio=float(eigenvalues.min())/max(float(eigenvalues.max()),1e-30))
+    return eigenvectors*eigenvalues.clamp_min(0).sqrt()[None,:]
+
+
+def local_linearization(model, data, floor, margin=5e-5, diagnostics=None):
     module = model.projector.module
     with torch.no_grad():
         hidden = getattr(module,'1')(getattr(module,'0')(model.encoder(model.nodes)))
@@ -79,10 +114,7 @@ def local_linearization(model, data, floor, margin=5e-5):
     full = torch.zeros((len(edges)+1,len(edges)+1),dtype=torch.float64)
     full[:-1,:-1]=gram;full[-1,:-1]=cross;full[:-1,-1]=cross
     full[-1,-1]=push_gradient.square().sum()
-    eigenvalues,eigenvectors = torch.linalg.eigh((full+full.T)/2)
-    # Only numerical negative eigenvalues of a PSD Gram are clipped.
-    assert float(eigenvalues.min()) >= -1e-10*float(eigenvalues.max())
-    A = eigenvectors*eigenvalues.clamp_min(0).sqrt()[None,:]
+    A = factor_jacobian_gram(full,gx,gy,fs,fd,push_gradient,diagnostics)
     h = torch.cat((edges.detach()-data.cost+data.physical*margin,
                    torch.tensor([floor+margin-float(push.detach())])))
     return A,h,features,gx,gy,push_gradient
@@ -128,6 +160,7 @@ def run(args):
         stopping='model-only: full-edge feasibility and fixed push floor, or iteration/stall budget; references evaluated after stopping',
         feasibility_tolerance=1e-5, anchor_tolerance=1e-6,
         interior_margin=5e-5, trust_radius=.1, qp_sweeps=2000,
+        gram_numerics='expanded Gram; explicit PSD Jacobian-block fallback on failed PSD check; unchanged tolerance 1e-10',
         script_sha256=file_digest(__file__),
         qp_script_sha256=file_digest('quasimetric_rl/modules/quasimetric_critic/losses/feasible_direction.py'))
     (out/'config.json').write_text(json.dumps(config,indent=2)+'\n')
@@ -145,6 +178,7 @@ def run(args):
         rec['candidate_evaluations']=candidate_evaluations
         torch.save(dict(step=iteration,model=model.state_dict(),solver=solver.state_dict(),
             optimizer=optimizer.state_dict(),rng=torch.get_rng_state(),
+            initialization_seed=saved.get('initialization_seed'),
             optimizer_stale_after_repair=iteration>0,stop_reason=reason),out/'latest.pt')
         if reason is not None:
             # The selected model is already saved. References cannot select a
@@ -157,7 +191,8 @@ def run(args):
         curve.write(json.dumps(rec)+'\n'); curve.flush()
         print(json.dumps({k:rec[k] for k in ('step','seconds','push','max_violation','violation_count','stop_reason')}),flush=True)
         if reason is not None: break
-        linearization = local_linearization(model,data,floor)
+        gram_diagnostics = {}
+        linearization = local_linearization(model,data,floor,diagnostics=gram_diagnostics)
         direction,alpha,slack = qp_direction(linearization,data,push_step=args.push_step)
         mode = 'hard'
         if not torch.isfinite(direction).all(): raise RuntimeError('nonfinite QP direction')
@@ -184,6 +219,7 @@ def run(args):
             apply_delta(model,weight,bias,direction,0.)
             stalls += 1
         trace.write(json.dumps(dict(iteration=iteration,accepted=accepted,mode=mode,
+            gram_numerics=gram_diagnostics,
             qp_linear_slack_max=float(slack.max()),qp_direction_norm=norm,
             actual_parameter_update_l2=float(torch.cat(((layer.weight.detach()-weight).flatten(),(layer.bias.detach()-bias).flatten())).norm()),
             attempts=attempts))+'\n'); trace.flush()

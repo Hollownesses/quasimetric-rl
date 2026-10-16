@@ -1,0 +1,29 @@
+{
+  "checkpoint": "results/four_path_reproducibility_20261016/main/seed_404/decay.pt",
+  "output": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_404",
+  "iterations": 40,
+  "delta": 0.15,
+  "push_step": 0.0,
+  "checkpoint_sha256": "500e2307414eccdd304727e11301cfa575ec3f6617fe32685cc408cc049960df",
+  "fingerprints": {
+    "bank": "1ed1098b439fb0d7a990ea83c037d3db1cff4be4c58b5a134c10bfbe9c4368aa",
+    "replay": "af269a835ad45bab817230ed2f3f950d8b0d1781de51c146a2217de95f0d5b73",
+    "nodes": "ec5fea3b25864abdf6d073a98aa3c3bf0c2bebd6a6e19e30310ab49361529014",
+    "pairs": "b3064ac6a3af53666b3f04c41d843bebdcd7b801f9e1b0cf71a79b98919dd874",
+    "costs": "9c3c16080c78a5975cc4cf94fc210884a40689820d9085d3248ee2d580d2d4a6"
+  },
+  "initial_push": 81.00569915771484,
+  "fixed_push_floor": 80.85569915771484,
+  "initial_model_sha256": "0c3e00fa1dcaa2e0ebfe346edb005d3227a7b291806953dbdd947b2499428cfb",
+  "subspace": "entire final projector: 2048 x (512 hidden+bias); 1050624 existing parameters",
+  "constraints": "all 339 edges + model-derived global push floor",
+  "stopping": "model-only: full-edge feasibility and fixed push floor, or iteration/stall budget; references evaluated after stopping",
+  "feasibility_tolerance": 1e-05,
+  "anchor_tolerance": 1e-06,
+  "interior_margin": 5e-05,
+  "trust_radius": 0.1,
+  "qp_sweeps": 2000,
+  "gram_numerics": "expanded Gram; explicit PSD Jacobian-block fallback on failed PSD check; unchanged tolerance 1e-10",
+  "script_sha256": "6a9b47bc395bb0b95d9c3e51eace3daed48e14deaee75121c2c9a56337d558c0",
+  "qp_script_sha256": "3bdff469bf90b4f0297ead1e9d0c8ec3f1c20a9a20df945419a2d7e8d073057c"
+}

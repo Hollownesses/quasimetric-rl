@@ -1,0 +1,22 @@
+{
+  "seeds": [
+    101,
+    202,
+    303,
+    404,
+    505
+  ],
+  "smoke": false,
+  "sources": {
+    "experiments/four_path_reproducibility/run.py": "d2ec58131d1325260fc45b9378d3a8ce2c6c06e7c98633d9779e70fa82f56942",
+    "experiments/four_path_reproducibility/suite.py": "feac7479abbb623acd3a2e050ac00e3da0d326b8c8c5baf1a5fa53898b418a7e",
+    "experiments/four_path_reproducibility/test_reproducibility.py": "388c2a827737c8e51afe3b0b53544c63725fb6e475440f755c54e239ca686d61",
+    "experiments/four_path_reproducibility/PROTOCOL.md": "bd7492731d9412b4beb9bdbd95504cb272f53a63f37d1a48c4b668d8a366769f",
+    "experiments/four_path_factorial/run.py": "d678228f203b4e663b113a422631769fc97b48ed3ad65f419725e61c547bf8cc",
+    "experiments/four_path_refinement/run.py": "718469871c1819d8226b5a4898b834c44957624c93618068c612f3b7521be49f",
+    "experiments/four_path_refinement/repair.py": "924c2cdb7c41d50c1680a14bea777a852c00eaf5f8d0b723724fa855cfb34b8a",
+    "quasimetric_rl/modules/quasimetric_critic/losses/phr.py": "0dd905b147101ef3685c6a2958299c3faba5a3499b16576f9deb3d59f478c457",
+    "quasimetric_rl/modules/quasimetric_critic/losses/feasible_direction.py": "3bdff469bf90b4f0297ead1e9d0c8ec3f1c20a9a20df945419a2d7e8d073057c"
+  },
+  "git_head": "7bdabd0fea482367f22609d8b89c59c6e49e91a2"
+}
