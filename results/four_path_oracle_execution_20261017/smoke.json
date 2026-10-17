@@ -1,0 +1,247 @@
+[
+  {
+    "arm": "none",
+    "begin": {
+      "terminal_sample_count": 0,
+      "initial_planning_time_sec": 1.3374999999982151e-05
+    },
+    "steps": [
+      {
+        "action": [
+          -0.011049434542655945
+        ],
+        "reward": -3.4577096415454456,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          0.09121042490005493
+        ],
+        "reward": -3.4574757056981897,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          0.142117440700531
+        ],
+        "reward": -3.456613457435054,
+        "model_transitions": 1280
+      }
+    ],
+    "end": {
+      "model_rollouts": 384
+    }
+  },
+  {
+    "arm": "oracle",
+    "begin": {
+      "terminal_sample_count": 0,
+      "oracle_value_source": "hybrid_astar_lattice_reverse_dijkstra",
+      "oracle_value_grid_states": 85848,
+      "oracle_value_valid_grid_states": 79920,
+      "oracle_value_goal_grid_states": 24,
+      "oracle_value_graph_edges": 363143,
+      "oracle_value_reachable_grid_states": 76827,
+      "oracle_value_reachable_fraction": 0.9612987987987988,
+      "oracle_value_build_time_sec": 1.0824429999999996,
+      "oracle_value_cache_hit": false,
+      "oracle_value_cache_path": "/private/var/folders/bj/d0vbdgzs2232cg5l6t_xkh740000gn/T/tmpirpbaj1k/oracle_cache/hybrid_astar_value_e247996da6d357cf8767.npz",
+      "oracle_value_table_digest": "e247996da6d357cf8767fcdfb9fd4dc2ac2a37ff6284e60898a840eb89129846",
+      "initial_planning_time_sec": 1.0939520839999997
+    },
+    "steps": [
+      {
+        "action": [
+          -0.026720868423581123
+        ],
+        "reward": -3.4576437258091417,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          -1.5092790126800537
+        ],
+        "reward": -3.4514383770016113,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          -1.5760724544525146
+        ],
+        "reward": -3.439608480816032,
+        "model_transitions": 1280
+      }
+    ],
+    "end": {
+      "model_rollouts": 384,
+      "oracle_value_queries": 384,
+      "oracle_value_unreachable_queries": 0,
+      "oracle_value_unreachable_ratio": 0.0
+    }
+  },
+  {
+    "arm": "qp_101",
+    "begin": {
+      "terminal_sample_count": 0,
+      "initial_planning_time_sec": 1.604200000215883e-05
+    },
+    "steps": [
+      {
+        "action": [
+          0.5176078081130981
+        ],
+        "reward": -3.455582185216944,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          0.7456063628196716
+        ],
+        "reward": -3.4505440608770552,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          2.131734848022461
+        ],
+        "reward": -3.4376848804872857,
+        "model_transitions": 1280
+      }
+    ],
+    "end": {
+      "model_rollouts": 384
+    }
+  },
+  {
+    "arm": "qp_202",
+    "begin": {
+      "terminal_sample_count": 0,
+      "initial_planning_time_sec": 1.737500000231762e-05
+    },
+    "steps": [
+      {
+        "action": [
+          0.4231175184249878
+        ],
+        "reward": -3.455978727307609,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          0.42651286721229553
+        ],
+        "reward": -3.452596690667509,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          1.631351351737976
+        ],
+        "reward": -3.443123168156308,
+        "model_transitions": 1280
+      }
+    ],
+    "end": {
+      "model_rollouts": 384
+    }
+  },
+  {
+    "arm": "qp_303",
+    "begin": {
+      "terminal_sample_count": 0,
+      "initial_planning_time_sec": 2.6790999999803944e-05
+    },
+    "steps": [
+      {
+        "action": [
+          0.36739853024482727
+        ],
+        "reward": -3.456212757252079,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          1.3646876811981201
+        ],
+        "reward": -3.4492699675800202,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          2.3990321159362793
+        ],
+        "reward": -3.4337369975453687,
+        "model_transitions": 1280
+      }
+    ],
+    "end": {
+      "model_rollouts": 384
+    }
+  },
+  {
+    "arm": "qp_404",
+    "begin": {
+      "terminal_sample_count": 0,
+      "initial_planning_time_sec": 1.637499999773695e-05
+    },
+    "steps": [
+      {
+        "action": [
+          0.5914899706840515
+        ],
+        "reward": -3.455272191083836,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          0.5724441409111023
+        ],
+        "reward": -3.450644777246758,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          1.594570517539978
+        ],
+        "reward": -3.440176952272979,
+        "model_transitions": 1280
+      }
+    ],
+    "end": {
+      "model_rollouts": 384
+    }
+  },
+  {
+    "arm": "qp_505",
+    "begin": {
+      "terminal_sample_count": 0,
+      "initial_planning_time_sec": 1.8417000003267958e-05
+    },
+    "steps": [
+      {
+        "action": [
+          0.5222517251968384
+        ],
+        "reward": -3.455562648187291,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          0.5230454206466675
+        ],
+        "reward": -3.451404127073591,
+        "model_transitions": 1280
+      },
+      {
+        "action": [
+          1.2261362075805664
+        ],
+        "reward": -3.4427706037557364,
+        "model_transitions": 1280
+      }
+    ],
+    "end": {
+      "model_rollouts": 384
+    }
+  }
+]

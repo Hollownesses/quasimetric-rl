@@ -1,0 +1,11 @@
+{
+  "execution_sources_checked": 29,
+  "checkpoint_hashes_unchanged": 5,
+  "states_byte_identical_to_previous": true,
+  "post_run_analysis_sources": {
+    "experiments/four_path_oracle_execution/report.py": "bea9b6f25da6f2acb657940f594b324dd72f5c04c4ccaaae610b4367de5ac24f",
+    "experiments/four_path_oracle_execution/audit_oracle.py": "2397477a83b0bda334746aa2b186c2183ecaff3717f5e66f70f97490a5f2d6c7"
+  },
+  "tests": "22 passed in 8.49s (final rerun)",
+  "learner_updates": 0
+}

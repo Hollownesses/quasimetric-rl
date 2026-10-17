@@ -1,0 +1,113 @@
+{
+  "git_head": "cc3af8b4468636a0be6c96ae623228ce2195bac4",
+  "historical_oracle_commit": "34d1c011f637b3352ac1dc1134650f6f28c20b17",
+  "previous_manifest_sha256": "f90feb33acefb0ff8c294ffed8f96a870296af6092206e38b5f054a28859e6ef",
+  "config": {
+    "horizon": 10,
+    "num_samples": 128,
+    "noise_sigma": 0.8,
+    "temperature": 1.0,
+    "invalid_penalty": 1000000.0,
+    "terminal_weight": 1.0,
+    "terminal_samples": 128
+  },
+  "oracle_config": {
+    "position_resolution": 0.25,
+    "heading_bins": 24,
+    "primitive_steps": 5,
+    "primitive_scales": [
+      -1.0,
+      -0.5,
+      0.0,
+      0.5,
+      1.0
+    ],
+    "heuristic_weight": 1.0,
+    "max_expansions": 50000,
+    "timeout_sec": 30.0,
+    "terminal_samples": 128
+  },
+  "oracle_unreachable_cost": 1000000.0,
+  "states_sha256": "3dd2df2d38abedf6e693a9b8d98a97a34a061c02856b849840642401cb45798f",
+  "sources": {
+    "experiments/four_path_execution/run.py": "a528d2dbc8508f4d01b9fdc3d1ed18c36e51c46ffdb12220f162091dd065d9e8",
+    "experiments/four_path_execution/suite.py": "080306efebd8ee5f4b03542984123115a71ba6b266c26af1ee47ecaf258479ae",
+    "experiments/four_path_execution/audit_replay.py": "ab2e5e0c0df70e1b8bb8b0bd9104a0206916cead9f0a7964d595ff9dc36f8c91",
+    "experiments/four_path_execution/test_execution.py": "5d0f904dc03ccd206e52db5191916d6837df76958d9790b6a399a966c63f70be",
+    "experiments/four_path_execution/common.py": "918279962a4a8b8dfb5b8db808f3f0426330467a6393b90d83842bdc347649c6",
+    "experiments/four_path_execution/statistics.py": "490c61cd39b31998b6c688ae84622fe81c3ee684cb84732b1f1957cf14a411c9",
+    "experiments/four_path_execution/candidates.py": "912ecbfadeeb501b9b38d1f3285216052e61bb0cf7f0f18e5e728cde3a1516d2",
+    "experiments/four_path_execution/report.py": "f0ecbc2b1ead7f1a5e5855fb243a95281355a6cc7c63921b71d98db6e1182bcf",
+    "experiments/four_path_execution/prepare.py": "538964d267a0eef12e5e0c4066972a9149a31f560d4d80f9e45f06474598454e",
+    "experiments/four_path_execution/smoke.py": "1c0e0746777f7f855802882a633515f6c0fe335fd9d9382baaa13b907cfadb17",
+    "experiments/four_path_oracle_execution/run.py": "54a294fe06f3fea5ad451014d364fba7bf1153c90ac4035688dcc4161a1e18aa",
+    "experiments/four_path_oracle_execution/test_oracle.py": "6a3b87abd3cdf96181719c14de9de66e311e9ee5593962de2cbf958e9b16e850",
+    "experiments/four_path_oracle_execution/protocol.py": "ac31f9336a992ee6b72c01d137e66704acc5c950e3ee7ec466cd13878db4e9a0",
+    "experiments/four_path_oracle_execution/arm.py": "765a539c85b0c642cb4dccaaaea345c0b1742aac223ff12f1ac79c78984762c5",
+    "experiments/four_path_oracle_execution/smoke.py": "c9bee4920bcaa51d08969880f2a0c2227031866095c6187f5f09a5b54e80f51f",
+    "experiments/four_path_oracle_execution/PROTOCOL.md": "79786d165ac2eb4062c495405030337f36e9729c6fb684f5ca7d9a4c7f5eee05",
+    "experiments/four_path_factorial/run.py": "d678228f203b4e663b113a422631769fc97b48ed3ad65f419725e61c547bf8cc",
+    "minimal_qrl/baselines/hybrid_astar.py": "c8df8170ee448ebc85281b2b39472c107d2650494a3c05fc0aec3e02e22154e6",
+    "minimal_qrl/baselines/goal_set_sac.py": "7e6e80df947ad42f172e73663848b046cdaae3056980e95ba8ca72d1ad7e146a",
+    "minimal_qrl/baselines/context_gcrl.py": "6b43da1f9348fba6e885c0d78503df0da54c5cde02b03516396bca3b2ca4110b",
+    "minimal_qrl/baselines/mppi.py": "2bea2b1e8ba8260f74a62b4e3f5d4b6007b19ae593cb06d5dc3bc4b3d8f5b861",
+    "minimal_qrl/baselines/__init__.py": "c0cc9b53297aa80953757d55e89dce023f50fab8c7cc589d91e221631c4140a1",
+    "minimal_qrl/baselines/context_training.py": "9b9f9b194866045f4e96d5d6ef7bb95ac64e5f1427520f2cd2a948c09987d279",
+    "minimal_qrl/baselines/context_replay.py": "882e88f469fe9f82981dd1fb55a633d1024916d834b49fa547eae64b8e0bda7a",
+    "minimal_qrl/baselines/base.py": "95e9b78e5fe42e494695ceac892dc685675c49ecc1a4d05cd8c87bb15ff475f6",
+    "minimal_qrl/baselines/hybrid_astar_value.py": "eaad63241f3c9ca13ab247c513ff581865565d0c147746bd1ebc42019a17b042",
+    "minimal_qrl/gc_agents.py": "6448ee95708a0eb85817a6ee302a3ab95b3c1d81813137c22b36938ef011ca19",
+    "minimal_qrl/envs/comm_inspection_dubins_uav_2d.py": "2e785294c23bcb045a8176e9ed444dbf2fc51fa2936079b380131bf803a15878",
+    "minimal_qrl/envs/dubins_uav_2d.py": "e8b4be059cab286ec04e2c09e5f8b3e1da489ccd41accb860624ef76757f3cba"
+  },
+  "data_fingerprints": {
+    "bank": "1ed1098b439fb0d7a990ea83c037d3db1cff4be4c58b5a134c10bfbe9c4368aa",
+    "replay": "af269a835ad45bab817230ed2f3f950d8b0d1781de51c146a2217de95f0d5b73",
+    "nodes": "ec5fea3b25864abdf6d073a98aa3c3bf0c2bebd6a6e19e30310ab49361529014",
+    "pairs": "b3064ac6a3af53666b3f04c41d843bebdcd7b801f9e1b0cf71a79b98919dd874",
+    "costs": "9c3c16080c78a5975cc4cf94fc210884a40689820d9085d3248ee2d580d2d4a6"
+  },
+  "checkpoints": {
+    "qp_101": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_101/latest.pt",
+      "sha256": "818c7c7e29b61237d2ef933ededa1e35ec41a27edb4ba973637f17bd5e6a2cc5"
+    },
+    "qp_202": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_202/latest.pt",
+      "sha256": "273c24bd1488b6231bab576c0f1464107ab08f62b5c2b76ee036e8c097edc0ec"
+    },
+    "qp_303": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_303/latest.pt",
+      "sha256": "809c57225e9137b07f5ef9dcb9ebf9625056178e6c92b669aaf2b66d51626231"
+    },
+    "qp_404": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_404/latest.pt",
+      "sha256": "8e7d1e2bad2df777ad31828545d3b82984f529b306c49bf8d32ccb2e7e0549a1"
+    },
+    "qp_505": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_505/latest.pt",
+      "sha256": "f91fa21dc7fd25969eee2d7debc546d208cd793eaedcc77d8244a603df2e69b1"
+    }
+  },
+  "arms": [
+    "none",
+    "oracle",
+    "qp_101",
+    "qp_202",
+    "qp_303",
+    "qp_404",
+    "qp_505"
+  ],
+  "planner_seeds": [
+    314159,
+    271828
+  ],
+  "episodes_per_arm": 64,
+  "total_episodes": 448,
+  "max_steps": 300,
+  "device": "cpu",
+  "torch_threads": 1,
+  "python": "3.9.25 (main, Oct 31 2025, 18:40:52) \n[Clang 17.0.0 (clang-1700.4.4.1)]",
+  "torch": "2.8.0",
+  "platform": "macOS-26.5.2-arm64-arm-64bit"
+}

@@ -1,0 +1,6 @@
+22 passed in 23.20s
+Command: OMP_NUM_THREADS=1 ../quasimetric-rl/.venv/bin/python -m pytest -q experiments/four_path_oracle_execution/test_oracle.py experiments/four_path_execution/test_execution.py minimal_qrl/test_comm_inspection_baselines.py
+Smoke: 3 real steps per arm at development pose [4,3.65,pi], temporary Oracle cache, all seven arms completed; see smoke.json.
+
+Final verification after reusable utility changes: 22 passed in 8.49s.
+All frozen execution-source hashes, five checkpoint file hashes and byte-identical state bank checked after execution; see main/final_integrity.json.

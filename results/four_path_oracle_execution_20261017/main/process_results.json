@@ -1,0 +1,30 @@
+{
+  "none": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 22.071425208
+  },
+  "oracle": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 34.110372166
+  },
+  "qp_101": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 68.19238579099999
+  },
+  "qp_202": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 70.206252958
+  },
+  "qp_303": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 96.27197404099999
+  },
+  "qp_404": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 128.341574875
+  },
+  "qp_505": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 130.347189083
+  }
+}

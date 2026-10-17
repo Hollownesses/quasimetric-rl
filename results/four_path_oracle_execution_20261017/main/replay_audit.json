@@ -1,0 +1,49 @@
+{
+  "arms": {
+    "none": {
+      "episodes": 64,
+      "real_steps_replayed": 2999,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "oracle": {
+      "episodes": 64,
+      "real_steps_replayed": 4026,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_101": {
+      "episodes": 64,
+      "real_steps_replayed": 3454,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_202": {
+      "episodes": 64,
+      "real_steps_replayed": 3538,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_303": {
+      "episodes": 64,
+      "real_steps_replayed": 3797,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_404": {
+      "episodes": 64,
+      "real_steps_replayed": 4553,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_505": {
+      "episodes": 64,
+      "real_steps_replayed": 3282,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    }
+  },
+  "seconds": 7.652651499999999,
+  "episodes": 448,
+  "total_real_steps": 25649
+}

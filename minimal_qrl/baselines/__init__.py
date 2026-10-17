@@ -2,6 +2,7 @@
 
 from .base import BaselineController, PolicyController, rollout_controller_episode
 from .hybrid_astar import HybridAStarConfig, HybridAStarController
+from .hybrid_astar_value import HybridAStarValueOracle
 from .mppi import MPPIConfig, MPPIController, simulate_action_sequences
 from .goal_set_sac import (
     GoalSetReplayBuffer,
@@ -37,6 +38,7 @@ __all__ = [
     "rollout_controller_episode",
     "HybridAStarConfig",
     "HybridAStarController",
+    "HybridAStarValueOracle",
     "MPPIConfig",
     "MPPIController",
     "simulate_action_sequences",

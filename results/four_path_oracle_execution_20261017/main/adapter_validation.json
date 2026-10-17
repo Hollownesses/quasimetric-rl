@@ -1,0 +1,57 @@
+{
+  "qp_101": {
+    "checkpoint": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_101/latest.pt",
+    "sha256": "818c7c7e29b61237d2ef933ededa1e35ec41a27edb4ba973637f17bd5e6a2cc5",
+    "initialization_seed": 101,
+    "recorded_pairs": 1009,
+    "max_absolute_error": 0.0,
+    "raw_canonical_error": 0.0,
+    "chunk_error": 0.0,
+    "distance_scale": 1.0,
+    "model_sha256": "04c0dd2bb160eee5ac8fa9a2810984a0fa3ac0476014a7d80a5488cdd3d5f126"
+  },
+  "qp_202": {
+    "checkpoint": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_202/latest.pt",
+    "sha256": "273c24bd1488b6231bab576c0f1464107ab08f62b5c2b76ee036e8c097edc0ec",
+    "initialization_seed": 202,
+    "recorded_pairs": 1009,
+    "max_absolute_error": 0.0,
+    "raw_canonical_error": 0.0,
+    "chunk_error": 0.0,
+    "distance_scale": 1.0,
+    "model_sha256": "c78f6f098b372560311353e00dd79ee7a656d4f04372c14c0d850e9de2fff934"
+  },
+  "qp_303": {
+    "checkpoint": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_303/latest.pt",
+    "sha256": "809c57225e9137b07f5ef9dcb9ebf9625056178e6c92b669aaf2b66d51626231",
+    "initialization_seed": 303,
+    "recorded_pairs": 1009,
+    "max_absolute_error": 0.0,
+    "raw_canonical_error": 0.0,
+    "chunk_error": 0.0,
+    "distance_scale": 1.0,
+    "model_sha256": "f01a2105946815e1f817937359e27e0ba8bc949c134b73ae5a28d50515c60997"
+  },
+  "qp_404": {
+    "checkpoint": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_404/latest.pt",
+    "sha256": "8e7d1e2bad2df777ad31828545d3b82984f529b306c49bf8d32ccb2e7e0549a1",
+    "initialization_seed": 404,
+    "recorded_pairs": 1009,
+    "max_absolute_error": 0.0,
+    "raw_canonical_error": 0.0,
+    "chunk_error": 0.0,
+    "distance_scale": 1.0,
+    "model_sha256": "c2daeb68f2c0d2068eafd386cc5f9635ea6564826f229ee7f0806226a27e99de"
+  },
+  "qp_505": {
+    "checkpoint": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_505/latest.pt",
+    "sha256": "f91fa21dc7fd25969eee2d7debc546d208cd793eaedcc77d8244a603df2e69b1",
+    "initialization_seed": 505,
+    "recorded_pairs": 1009,
+    "max_absolute_error": 0.0,
+    "raw_canonical_error": 0.0,
+    "chunk_error": 0.0,
+    "distance_scale": 1.0,
+    "model_sha256": "334579cf3dc7bddaca898e6ea3d37da3e206269e1b83dd2a0aa7508866bfff23"
+  }
+}

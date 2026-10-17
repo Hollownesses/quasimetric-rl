@@ -1,0 +1,10 @@
+{
+  "historical_cache": "/Users/z./Documents/博士/本科毕设/quasimetric-rl-industrial-inspection/results/diagnostic_u_shadow_corridors/oracle_value_cache/hybrid_astar_value_e247996da6d357cf8767.npz",
+  "historical_sha256": "2fe3f409a163d86dda9c268afee05dba0419a4f00a7946114a656c8a44353ad1",
+  "current_cache": "results/four_path_oracle_execution_20261017/main/oracle_cache/hybrid_astar_value_e247996da6d357cf8767.npz",
+  "current_sha256": "2a01ed8b720ef47430c5766d900c7c8a3704535d986898f5747b6451270bbcf7",
+  "signature_equal": true,
+  "values_bitwise_equal": true,
+  "finite_masks_equal": true,
+  "maximum_finite_absolute_difference": 0.0
+}

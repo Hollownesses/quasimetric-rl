@@ -1,0 +1,28 @@
+[
+  {
+    "state_id": "path2_west_exit_perturbed",
+    "planner_seed": 314159,
+    "horizon_safe_candidates": 0,
+    "first_step_safe_candidates": 1,
+    "first_control": -0.0017708673840388656,
+    "negative_max_control_two_steps_safe": true,
+    "negative_max_control_two_steps_final": [
+      2.7174975872039795,
+      1.9270429611206055,
+      2.959885835647583
+    ]
+  },
+  {
+    "state_id": "path2_west_exit_perturbed",
+    "planner_seed": 271828,
+    "horizon_safe_candidates": 0,
+    "first_step_safe_candidates": 0,
+    "first_control": -0.005825756583362818,
+    "negative_max_control_two_steps_safe": true,
+    "negative_max_control_two_steps_final": [
+      2.7174975872039795,
+      1.9270429611206055,
+      2.959885835647583
+    ]
+  }
+]

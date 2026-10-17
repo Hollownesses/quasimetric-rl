@@ -1,0 +1,5 @@
+{
+  "candidate_banks": 16,
+  "unique_model_rollouts": 2048,
+  "scoring_arms": 7
+}
