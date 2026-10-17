@@ -7,13 +7,13 @@ import time
 from experiments.four_path_execution.common import *
 
 
-def run(root,workers):
+def run(root,workers,*,module='experiments.four_path_execution.run'):
     manifest=read(root/'manifest.json');pending=list(manifest['arms']);jobs=[];results={};start=time.perf_counter()
     if (root/'process_results.json').exists():raise FileExistsError('Use a fresh frozen output tree')
     while pending or jobs:
         while pending and len(jobs)<workers:
             arm=pending.pop(0);log=(root/f'{arm}.log').open('w')
-            command=[sys.executable,'-m','experiments.four_path_execution.run','--root',str(root),'--arm',arm]
+            command=[sys.executable,'-m',module,'--root',str(root),'--arm',arm]
             proc=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,
                 env=dict(os.environ,OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',MPLCONFIGDIR='/tmp/qrl-execution-mpl'))
             jobs.append((arm,proc,log))

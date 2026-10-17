@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Protocol
 
 import numpy as np
 
@@ -21,6 +21,25 @@ class MPPIConfig:
     invalid_penalty: float = 1_000_000.0
     terminal_weight: float = 1.0
     terminal_samples: int = 128
+
+
+class TerminalValueProvider(Protocol):
+    """Batch terminal-value interface used by non-learned MPPI oracles."""
+
+    def begin_episode(
+        self,
+        env: CommInspectionDubinsUAV2D,
+        *,
+        seed: int,
+    ) -> Dict[str, Any]: ...
+
+    def batch_value(
+        self,
+        env: CommInspectionDubinsUAV2D,
+        states: np.ndarray,
+    ) -> np.ndarray: ...
+
+    def end_episode(self) -> Dict[str, Any]: ...
 
 
 def _normalize_angle(values: np.ndarray) -> np.ndarray:
@@ -244,13 +263,17 @@ class MPPIController(BaselineController):
         *,
         terminal_mode: str,
         qrl_agent: Optional[GoalConditionedAgentBase] = None,
+        terminal_value_provider: Optional[TerminalValueProvider] = None,
         static_diagnostics: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
-        if terminal_mode not in {"none", "model", "qrl"}:
+        if terminal_mode not in {"none", "model", "qrl", "oracle"}:
             raise ValueError(f"Unknown MPPI terminal mode: {terminal_mode}")
         if terminal_mode == "qrl" and qrl_agent is None:
             raise ValueError("qrl terminal mode requires qrl_agent")
+        if terminal_mode == "oracle" and terminal_value_provider is None:
+            raise ValueError("oracle terminal mode requires terminal_value_provider")
+        self.terminal_value_provider = terminal_value_provider
         self.cfg = cfg
         self.terminal_mode = terminal_mode
         self.qrl_agent = qrl_agent
@@ -259,8 +282,10 @@ class MPPIController(BaselineController):
             self.name = "mppi_no_terminal"
         elif terminal_mode == "model":
             self.name = "model_mppi"
-        else:
+        elif terminal_mode == "qrl":
             self.name = "qrl_mppi"
+        else:
+            self.name = "oracle_mppi"
         self._nominal = np.zeros((max(1, int(cfg.horizon)),), dtype=np.float32)
         self._rng = np.random.default_rng(0)
         self._terminal_states = np.zeros((0, 3), dtype=np.float32)
@@ -284,10 +309,20 @@ class MPPIController(BaselineController):
             self._terminal_states = np.asarray(sampled, dtype=np.float32)
         else:
             self._terminal_states = np.zeros((0, 3), dtype=np.float32)
+        provider_diagnostics: Dict[str, Any] = {}
+        if self.terminal_mode == "oracle":
+            if self.terminal_value_provider is None:
+                raise RuntimeError("MPPI oracle terminal provider is unavailable")
+            provider_diagnostics = self.terminal_value_provider.begin_episode(
+                env,
+                seed=int(seed),
+            )
         self._episode_diagnostics.update(self.static_diagnostics)
+        self._episode_diagnostics.update(provider_diagnostics)
         return {
             "terminal_sample_count": int(len(self._terminal_states)),
             **self.static_diagnostics,
+            **provider_diagnostics,
         }
 
     def _terminal_cost(self, env: CommInspectionDubinsUAV2D, states: np.ndarray) -> np.ndarray:
@@ -299,6 +334,11 @@ class MPPIController(BaselineController):
             obs_batch = np.stack([env.state_to_observation(state) for state in states], axis=0)
             goal_batch = np.repeat(self.goal_obs[None, :], states.shape[0], axis=0)
             return self.qrl_agent.batch_value(obs_batch, goal_batch).astype(np.float32)
+
+        if self.terminal_mode == "oracle":
+            if self.terminal_value_provider is None:
+                raise RuntimeError("MPPI oracle terminal provider is unavailable")
+            return self.terminal_value_provider.batch_value(env, states).astype(np.float32)
 
         delta = states[:, None, :2] - self._terminal_states[None, :, :2]
         position_time = np.linalg.norm(delta, axis=2) / max(float(env.v), 1e-8)
@@ -365,4 +405,7 @@ class MPPIController(BaselineController):
         }
 
     def end_episode(self) -> Dict[str, Any]:
-        return {"model_rollouts": int(self._model_rollouts)}
+        diagnostics = {"model_rollouts": int(self._model_rollouts)}
+        if self.terminal_mode == "oracle" and self.terminal_value_provider is not None:
+            diagnostics.update(self.terminal_value_provider.end_episode())
+        return diagnostics

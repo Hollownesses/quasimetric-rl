@@ -8,7 +8,7 @@ def audit(root):
     output=root/'replay_audit.json'
     if output.exists():raise FileExistsError(output)
     torch.set_num_threads(1);data=load_data();env=data.env;counts={};started=time.perf_counter()
-    for arm in ARMS:
+    for arm in read(root/'manifest.json')['arms']:
         directory=root/'arms'/arm;rows=[json.loads(x) for x in (directory/'episodes.jsonl').read_text().splitlines()]
         steps=0;state_error=0.;reward_error=0.
         for row in rows:
