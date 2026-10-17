@@ -1,0 +1,110 @@
+{
+  "none": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 31.714868291000002,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "geometry": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 30.450202124999997,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "decay_101": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 173.799243583,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "qp_101": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 174.38317425,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "decay_202": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 128.52737825,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "qp_202": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 137.23423983299998,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "decay_303": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 167.735666917,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "qp_303": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 176.443960958,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "decay_404": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 126.19511575,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "qp_404": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 129.447582166,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "decay_505": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 112.280494167,
+    "episodes": 64,
+    "parameters_unchanged": true
+  },
+  "qp_505": {
+    "unique_pair_keys": true,
+    "checkpoint_unchanged": true,
+    "costs_and_steps_recomputed": true,
+    "stages_recomputed": true,
+    "seconds": 118.752989292,
+    "episodes": 64,
+    "parameters_unchanged": true
+  }
+}

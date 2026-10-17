@@ -1,0 +1,50 @@
+{
+  "none": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 34.166683084000006
+  },
+  "geometry": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 34.167671625000004
+  },
+  "decay_202": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 166.717400584
+  },
+  "decay_101": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 176.773504959
+  },
+  "qp_101": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 176.774670292
+  },
+  "qp_202": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 176.775505292
+  },
+  "decay_404": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 307.40613195900005
+  },
+  "qp_404": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 311.42909641700004
+  },
+  "decay_303": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 339.568289042
+  },
+  "qp_303": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 357.64784962500005
+  },
+  "decay_505": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 423.922534459
+  },
+  "qp_505": {
+    "exit_code": 0,
+    "suite_elapsed_seconds": 435.980884084
+  }
+}

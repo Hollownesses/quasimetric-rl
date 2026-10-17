@@ -1,0 +1,1778 @@
+[
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_101",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_101",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_202",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_02",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_202",
+    "state_id": "holdout_07",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_303",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_303",
+    "state_id": "holdout_01",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_404",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_404",
+    "state_id": "holdout_07",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "decay_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path1_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 314159,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "exit_completed",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "west_exit_visited",
+    "old": false,
+    "new": true
+  },
+  {
+    "arm": "qp_505",
+    "state_id": "path3_start_perturbed",
+    "planner_seed": 271828,
+    "metric": "cumulative_exit",
+    "old": false,
+    "new": true
+  }
+]

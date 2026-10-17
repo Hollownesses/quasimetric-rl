@@ -1,0 +1,62 @@
+[
+  {
+    "arm": "none",
+    "steps": 3,
+    "seconds_per_plan": 0.012488166666666597
+  },
+  {
+    "arm": "geometry",
+    "steps": 3,
+    "seconds_per_plan": 0.013035860666666585
+  },
+  {
+    "arm": "decay_101",
+    "steps": 3,
+    "seconds_per_plan": 0.04435572233333337
+  },
+  {
+    "arm": "qp_101",
+    "steps": 3,
+    "seconds_per_plan": 0.03550666666666672
+  },
+  {
+    "arm": "decay_202",
+    "steps": 3,
+    "seconds_per_plan": 0.04193125033333356
+  },
+  {
+    "arm": "qp_202",
+    "steps": 3,
+    "seconds_per_plan": 0.04174130566666667
+  },
+  {
+    "arm": "decay_303",
+    "steps": 3,
+    "seconds_per_plan": 0.03642734733333327
+  },
+  {
+    "arm": "qp_303",
+    "steps": 3,
+    "seconds_per_plan": 0.036215347333333536
+  },
+  {
+    "arm": "decay_404",
+    "steps": 3,
+    "seconds_per_plan": 0.03646987500000002
+  },
+  {
+    "arm": "qp_404",
+    "steps": 3,
+    "seconds_per_plan": 0.03496520833333324
+  },
+  {
+    "arm": "decay_505",
+    "steps": 3,
+    "seconds_per_plan": 0.039827416666666636
+  },
+  {
+    "arm": "qp_505",
+    "steps": 3,
+    "seconds_per_plan": 0.04150497233333331
+  }
+]

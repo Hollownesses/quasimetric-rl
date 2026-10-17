@@ -1,0 +1,323 @@
+{
+  "schema_version": 2,
+  "scenario_family": "diagnostic",
+  "scenario_id": "diagnostic_u_shadow_corridors_v1",
+  "experiment_axes": [
+    "topological_challenge"
+  ],
+  "meters_per_env_unit": 10.0,
+  "physical_width_m": 180.0,
+  "physical_height_m": 120.0,
+  "physical_area_m2": 21600.0,
+  "bounds": [
+    0.0,
+    0.0,
+    18.0,
+    12.0
+  ],
+  "device_count": 4,
+  "topology": "u_trap_plus_radio_shadow_corridors",
+  "max_episode_steps": 300,
+  "device_catalog": {
+    "ground_station": {
+      "position": [
+        7.0,
+        3.0
+      ],
+      "los_anchor": [
+        7.0,
+        3.0
+      ]
+    },
+    "devices": [
+      {
+        "id": "u_trap_target",
+        "position": [
+          6.7,
+          3.65
+        ],
+        "observation_anchor": [
+          6.7,
+          3.65
+        ],
+        "observation": {
+          "min_distance": 0.35,
+          "max_distance": 0.85,
+          "preferred_bearing_rad": 0.0,
+          "bearing_tolerance_rad": 0.5,
+          "fov_angle_rad": 1.5707963267948966,
+          "require_los": true
+        }
+      },
+      {
+        "id": "corridor_target",
+        "position": [
+          16.0,
+          6.5
+        ],
+        "observation_anchor": [
+          16.0,
+          6.5
+        ],
+        "observation": {
+          "min_distance": 0.35,
+          "max_distance": 0.85,
+          "preferred_bearing_rad": -1.5707963267948966,
+          "bearing_tolerance_rad": 0.5,
+          "fov_angle_rad": 1.5707963267948966,
+          "require_los": true
+        }
+      },
+      {
+        "id": "easy_north",
+        "position": [
+          7.8,
+          10.4
+        ],
+        "observation_anchor": [
+          7.8,
+          10.4
+        ],
+        "observation": {
+          "min_distance": 0.35,
+          "max_distance": 0.85,
+          "preferred_bearing_rad": 0.0,
+          "bearing_tolerance_rad": 0.5,
+          "fov_angle_rad": 1.5707963267948966,
+          "require_los": true
+        }
+      },
+      {
+        "id": "easy_south",
+        "position": [
+          11.0,
+          1.8
+        ],
+        "observation_anchor": [
+          11.0,
+          1.8
+        ],
+        "observation": {
+          "min_distance": 0.35,
+          "max_distance": 0.85,
+          "preferred_bearing_rad": 3.141592653589793,
+          "bearing_tolerance_rad": 0.5,
+          "fov_angle_rad": 1.5707963267948966,
+          "require_los": true
+        }
+      }
+    ]
+  },
+  "obstacles": [
+    {
+      "id": "u_top_wall",
+      "type": "rectangle",
+      "x_min": 2.8,
+      "x_max": 5.7,
+      "y_min": 5.4,
+      "y_max": 5.9
+    },
+    {
+      "id": "u_bottom_wall",
+      "type": "rectangle",
+      "x_min": 2.8,
+      "x_max": 5.7,
+      "y_min": 1.4,
+      "y_max": 1.9
+    },
+    {
+      "id": "u_closed_wall",
+      "type": "rectangle",
+      "x_min": 5.2,
+      "x_max": 5.7,
+      "y_min": 1.4,
+      "y_max": 5.9
+    },
+    {
+      "id": "long_radio_shadow_block",
+      "type": "rectangle",
+      "x_min": 9.0,
+      "x_max": 15.0,
+      "y_min": 6.0,
+      "y_max": 7.5
+    }
+  ],
+  "omega_max": 3.0,
+  "v": 1.0,
+  "dt": 0.1,
+  "comm_alpha": 2.0,
+  "comm_bias": 8.0,
+  "comm_occlusion_penalty": 4.0,
+  "comm_threshold": 0.5,
+  "require_ground_station_los": false,
+  "collision_cost": 10.0,
+  "out_of_bounds_cost": 10.0,
+  "communication_break_cost": 1.0,
+  "observation_violation_cost_weight": 1.0,
+  "communication_violation_cost_weight": 0.5,
+  "observation_failure_cost": 0.25,
+  "taskscore_beta_obs": 1.0,
+  "taskscore_beta_comm": 1.0,
+  "taskscore_beta_feas": 0.5,
+  "taskscore_margin_clip": 2.0,
+  "min_start_target_distance": 0.5,
+  "metadata": {
+    "coordinate_interpretation": "1 environment unit = 10 metres",
+    "diagnostic_only": true,
+    "u_opening_direction": "west",
+    "u_target_side": "east_of_closed_wall",
+    "corridor_safe_route": "lower",
+    "corridor_shadow_route": "upper",
+    "task_strata": [
+      "u_trap",
+      "comm_shadow_corridor",
+      "easy_open"
+    ],
+    "exploration_diagnostic_regions": {
+      "u_trap_interior": [
+        2.8,
+        1.9,
+        5.2,
+        5.4
+      ],
+      "u_trap_west_exit": [
+        0.0,
+        1.9,
+        2.8,
+        5.4
+      ],
+      "corridor_west_entry": [
+        7.5,
+        4.5,
+        9.0,
+        9.0
+      ],
+      "corridor_upper": [
+        9.0,
+        7.5,
+        15.0,
+        12.0
+      ],
+      "corridor_lower": [
+        9.0,
+        0.0,
+        15.0,
+        6.0
+      ],
+      "corridor_east_exit": [
+        15.0,
+        4.5,
+        17.0,
+        9.0
+      ]
+    },
+    "exploration_diagnostic_routes": {
+      "u_inside_to_exit": [
+        "u_trap_interior",
+        "u_trap_west_exit"
+      ],
+      "corridor_upper_complete": [
+        "corridor_west_entry",
+        "corridor_upper",
+        "corridor_east_exit"
+      ],
+      "corridor_lower_complete": [
+        "corridor_west_entry",
+        "corridor_lower",
+        "corridor_east_exit"
+      ]
+    },
+    "exploration_start_strata": [
+      {
+        "name": "u_trap_interior",
+        "weight": 0.3,
+        "bounds": [
+          2.9,
+          2.0,
+          5.1,
+          5.3
+        ]
+      },
+      {
+        "name": "u_trap_exit",
+        "weight": 0.15,
+        "bounds": [
+          1.5,
+          2.0,
+          2.8,
+          5.3
+        ]
+      },
+      {
+        "name": "corridor_fork",
+        "weight": 0.2,
+        "bounds": [
+          7.5,
+          4.0,
+          8.9,
+          9.0
+        ]
+      },
+      {
+        "name": "comm_shadow_boundary",
+        "weight": 0.15,
+        "bounds": [
+          8.5,
+          7.6,
+          10.5,
+          10.5
+        ]
+      },
+      {
+        "name": "uniform_free_space",
+        "weight": 0.2,
+        "bounds": [
+          0.0,
+          0.0,
+          18.0,
+          12.0
+        ]
+      }
+    ],
+    "u_trap_local_navigability_probes": {
+      "device_id": "u_trap_target",
+      "centerline_y": 3.65,
+      "positions": [
+        {
+          "label": "deep",
+          "x": 4.8
+        },
+        {
+          "label": "middle",
+          "x": 4.0
+        },
+        {
+          "label": "mouth",
+          "x": 3.2
+        },
+        {
+          "label": "outside",
+          "x": 2.4
+        }
+      ],
+      "headings": [
+        {
+          "label": "west",
+          "theta": 3.141592653589793
+        },
+        {
+          "label": "north",
+          "theta": 1.5707963267948966
+        },
+        {
+          "label": "east",
+          "theta": 0.0
+        },
+        {
+          "label": "south",
+          "theta": -1.5707963267948966
+        }
+      ]
+    }
+  }
+}

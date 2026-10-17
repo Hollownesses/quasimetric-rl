@@ -1,0 +1,11 @@
+{
+  "sources": {
+    "experiments/four_path_execution/common.py": "918279962a4a8b8dfb5b8db808f3f0426330467a6393b90d83842bdc347649c6",
+    "experiments/four_path_execution/statistics.py": "490c61cd39b31998b6c688ae84622fe81c3ee684cb84732b1f1957cf14a411c9",
+    "experiments/four_path_execution/report.py": "f0ecbc2b1ead7f1a5e5855fb243a95281355a6cc7c63921b71d98db6e1182bcf",
+    "experiments/four_path_execution/audit_replay.py": "9c312f672578756f093926cb83d5969765cdacdd4224f7768c7861bc626b6c70",
+    "experiments/four_path_execution/test_execution.py": "5d0f904dc03ccd206e52db5191916d6837df76958d9790b6a399a966c63f70be",
+    "experiments/four_path_execution/PROTOCOL.md": "7da7281b8754cff2dc49c1c4eb89657e8d81540485742287100e1d8a4fb82eda"
+  },
+  "reason": "post-execution trajectory audit and exit segment measurement correction; no controller reruns or checkpoint changes"
+}

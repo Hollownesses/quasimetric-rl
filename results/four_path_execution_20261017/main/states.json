@@ -1,0 +1,479 @@
+{
+  "records": [
+    {
+      "id": "path0_start",
+      "stratum": "support",
+      "pose": [
+        3.049999952316284,
+        2.1500000953674316,
+        -2.972212553024292
+      ],
+      "path": 0,
+      "path_index": 0,
+      "prefix_stages": {
+        "exit": false,
+        "wrap": false
+      }
+    },
+    {
+      "id": "path0_west_exit",
+      "stratum": "support",
+      "pose": [
+        2.7844481468200684,
+        2.0153160095214844,
+        -2.522212266921997
+      ],
+      "path": 0,
+      "path_index": 3,
+      "prefix_stages": {
+        "exit": true,
+        "wrap": false
+      }
+    },
+    {
+      "id": "path0_east_wall",
+      "stratum": "support",
+      "pose": [
+        5.750461101531982,
+        1.3788647651672363,
+        0.027787750586867332
+      ],
+      "path": 0,
+      "path_index": 42,
+      "prefix_stages": {
+        "exit": true,
+        "wrap": true
+      }
+    },
+    {
+      "id": "path1_start",
+      "stratum": "support",
+      "pose": [
+        3.549999952316284,
+        5.150000095367432,
+        3.1303088665008545
+      ],
+      "path": 1,
+      "path_index": 0,
+      "prefix_stages": {
+        "exit": false,
+        "wrap": false
+      }
+    },
+    {
+      "id": "path1_west_exit",
+      "stratum": "support",
+      "pose": [
+        2.766587018966675,
+        5.246837615966797,
+        2.6803085803985596
+      ],
+      "path": 1,
+      "path_index": 8,
+      "prefix_stages": {
+        "exit": true,
+        "wrap": false
+      }
+    },
+    {
+      "id": "path1_east_wall",
+      "stratum": "support",
+      "pose": [
+        5.729458808898926,
+        5.971271991729736,
+        -0.16969135403633118
+      ],
+      "path": 1,
+      "path_index": 47,
+      "prefix_stages": {
+        "exit": true,
+        "wrap": true
+      }
+    },
+    {
+      "id": "path2_start",
+      "stratum": "support",
+      "pose": [
+        5.050000190734863,
+        2.1500000953674316,
+        -3.083982229232788
+      ],
+      "path": 2,
+      "path_index": 0,
+      "prefix_stages": {
+        "exit": false,
+        "wrap": false
+      }
+    },
+    {
+      "id": "path2_west_exit",
+      "stratum": "support",
+      "pose": [
+        2.7744011878967285,
+        1.9306190013885498,
+        -2.633981943130493
+      ],
+      "path": 2,
+      "path_index": 23,
+      "prefix_stages": {
+        "exit": true,
+        "wrap": false
+      }
+    },
+    {
+      "id": "path2_east_wall",
+      "stratum": "support",
+      "pose": [
+        5.763389587402344,
+        1.3881795406341553,
+        0.36601802706718445
+      ],
+      "path": 2,
+      "path_index": 63,
+      "prefix_stages": {
+        "exit": true,
+        "wrap": true
+      }
+    },
+    {
+      "id": "path3_start",
+      "stratum": "support",
+      "pose": [
+        5.050000190734863,
+        5.150000095367432,
+        -2.994586706161499
+      ],
+      "path": 3,
+      "path_index": 0,
+      "prefix_stages": {
+        "exit": false,
+        "wrap": false
+      }
+    },
+    {
+      "id": "path3_west_exit",
+      "stratum": "support",
+      "pose": [
+        2.778644323348999,
+        5.161215305328369,
+        2.6885986328125
+      ],
+      "path": 3,
+      "path_index": 27,
+      "prefix_stages": {
+        "exit": true,
+        "wrap": false
+      }
+    },
+    {
+      "id": "path3_east_wall",
+      "stratum": "support",
+      "pose": [
+        5.71584939956665,
+        5.896255970001221,
+        -0.3114011287689209
+      ],
+      "path": 3,
+      "path_index": 66,
+      "prefix_stages": {
+        "exit": true,
+        "wrap": true
+      }
+    },
+    {
+      "id": "path0_start_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        3.1729013919830322,
+        2.0654847621917725,
+        2.988983392715454
+      ],
+      "source_id": "path0_start",
+      "offset": [
+        0.1229015558157616,
+        -0.08451540972819849,
+        -0.32198929708929835
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path0_west_exit_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        2.757366895675659,
+        2.1584255695343018,
+        -2.6823067665100098
+      ],
+      "source_id": "path0_west_exit",
+      "offset": [
+        -0.027081364829108546,
+        0.14310962343419611,
+        -0.16009446470329486
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path0_east_wall_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        5.709772109985352,
+        1.4268102645874023,
+        -0.30499324202537537
+      ],
+      "source_id": "path0_east_wall",
+      "offset": [
+        -0.04068910780678324,
+        0.04794549138727072,
+        -0.3327809866553098
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path1_start_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        3.4225592613220215,
+        5.202535152435303,
+        3.0795440673828125
+      ],
+      "source_id": "path1_start",
+      "offset": [
+        -0.12744071847939545,
+        0.052535284447693606,
+        -0.050764830050699226
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path1_west_exit_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        2.7698285579681396,
+        5.253768444061279,
+        2.846921443939209
+      ],
+      "source_id": "path1_west_exit",
+      "offset": [
+        0.003241571641305407,
+        0.006930841482600569,
+        0.1666129726092123
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path1_east_wall_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        5.866412162780762,
+        5.9607343673706055,
+        -0.36205312609672546
+      ],
+      "source_id": "path1_east_wall",
+      "offset": [
+        0.13695316184585424,
+        -0.010537775785530501,
+        -0.19236176771781968
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path2_start_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        5.055994987487793,
+        2.165825128555298,
+        -2.840761184692383
+      ],
+      "source_id": "path2_start",
+      "offset": [
+        0.005994608790397327,
+        0.015825046199168847,
+        0.243221113843302
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path2_west_exit_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        2.9151523113250732,
+        1.9207738637924194,
+        -2.723299980163574
+      ],
+      "source_id": "path2_west_exit",
+      "offset": [
+        0.14075120373000138,
+        -0.009845108247390199,
+        -0.08931799780239437
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path2_east_wall_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        5.772374629974365,
+        1.3293828964233398,
+        0.08628100901842117
+      ],
+      "source_id": "path2_east_wall",
+      "offset": [
+        0.00898486582564748,
+        -0.05879662858471377,
+        -0.27973701829801473
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path3_start_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        5.177824020385742,
+        5.194201469421387,
+        -3.0521302223205566
+      ],
+      "source_id": "path3_start",
+      "offset": [
+        0.1278237772722899,
+        0.04420141648491296,
+        -0.057543624330305874
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path3_west_exit_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        2.8701186180114746,
+        5.059441089630127,
+        2.4350314140319824
+      ],
+      "source_id": "path3_west_exit",
+      "offset": [
+        0.09147441124041034,
+        -0.10177427991364348,
+        -0.25356722823522926
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "path3_east_wall_perturbed",
+      "stratum": "perturbed",
+      "pose": [
+        5.799483776092529,
+        5.885589599609375,
+        -0.5799157619476318
+      ],
+      "source_id": "path3_east_wall",
+      "offset": [
+        0.08363426733451707,
+        -0.010666606244876364,
+        -0.2685146525896926
+      ],
+      "prefix_stages": {}
+    },
+    {
+      "id": "holdout_00",
+      "stratum": "holdout",
+      "pose": [
+        3.783092498779297,
+        4.256252288818359,
+        -1.8226100206375122
+      ],
+      "exclusion_distance": 0.25616725752864106,
+      "attempts": 2,
+      "prefix_stages": {}
+    },
+    {
+      "id": "holdout_01",
+      "stratum": "holdout",
+      "pose": [
+        4.3218183517456055,
+        3.6420912742614746,
+        1.760595679283142
+      ],
+      "exclusion_distance": 0.3219155183763968,
+      "attempts": 1,
+      "prefix_stages": {}
+    },
+    {
+      "id": "holdout_02",
+      "stratum": "holdout",
+      "pose": [
+        4.725475311279297,
+        2.47501540184021,
+        -2.6381893157958984
+      ],
+      "exclusion_distance": 0.2766089661481138,
+      "attempts": 3,
+      "prefix_stages": {}
+    },
+    {
+      "id": "holdout_03",
+      "stratum": "holdout",
+      "pose": [
+        4.3263702392578125,
+        3.9569456577301025,
+        0.5706074833869934
+      ],
+      "exclusion_distance": 0.33214281412783925,
+      "attempts": 9,
+      "prefix_stages": {}
+    },
+    {
+      "id": "holdout_04",
+      "stratum": "holdout",
+      "pose": [
+        3.4367475509643555,
+        3.9232306480407715,
+        0.2988488972187042
+      ],
+      "exclusion_distance": 0.2534768010150381,
+      "attempts": 5,
+      "prefix_stages": {}
+    },
+    {
+      "id": "holdout_05",
+      "stratum": "holdout",
+      "pose": [
+        3.4293625354766846,
+        2.7045319080352783,
+        2.270507574081421
+      ],
+      "exclusion_distance": 0.2901234267497114,
+      "attempts": 14,
+      "prefix_stages": {}
+    },
+    {
+      "id": "holdout_06",
+      "stratum": "holdout",
+      "pose": [
+        4.612164497375488,
+        2.7997183799743652,
+        2.6943447589874268
+      ],
+      "exclusion_distance": 0.37642516643080726,
+      "attempts": 5,
+      "prefix_stages": {}
+    },
+    {
+      "id": "holdout_07",
+      "stratum": "holdout",
+      "pose": [
+        3.6353108882904053,
+        2.341099262237549,
+        -2.3804242610931396
+      ],
+      "exclusion_distance": 0.26685994449442374,
+      "attempts": 2,
+      "prefix_stages": {}
+    }
+  ],
+  "digest": "2c4c4915a39903506f9395b7d7843c3955f77d2fc46095bcf183127b961ce903",
+  "scenario_sha256": "92e2ab487cce066f1819e61d1f99db082e586ffae1635186f8c7b78d6fec9562",
+  "training_bank_digest": "1ed1098b439fb0d7a990ea83c037d3db1cff4be4c58b5a134c10bfbe9c4368aa",
+  "planner_seeds": [
+    314159,
+    271828
+  ]
+}

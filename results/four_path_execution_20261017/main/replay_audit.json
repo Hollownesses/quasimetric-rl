@@ -1,0 +1,79 @@
+{
+  "arms": {
+    "none": {
+      "episodes": 64,
+      "real_steps_replayed": 2618,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "geometry": {
+      "episodes": 64,
+      "real_steps_replayed": 2417,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "decay_101": {
+      "episodes": 64,
+      "real_steps_replayed": 6405,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_101": {
+      "episodes": 64,
+      "real_steps_replayed": 6475,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "decay_202": {
+      "episodes": 64,
+      "real_steps_replayed": 4291,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_202": {
+      "episodes": 64,
+      "real_steps_replayed": 4680,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "decay_303": {
+      "episodes": 64,
+      "real_steps_replayed": 6140,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_303": {
+      "episodes": 64,
+      "real_steps_replayed": 6480,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "decay_404": {
+      "episodes": 64,
+      "real_steps_replayed": 4172,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_404": {
+      "episodes": 64,
+      "real_steps_replayed": 4334,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "decay_505": {
+      "episodes": 64,
+      "real_steps_replayed": 4075,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    },
+    "qp_505": {
+      "episodes": 64,
+      "real_steps_replayed": 4437,
+      "max_state_error": 0.0,
+      "max_reward_error": 0.0
+    }
+  },
+  "seconds": 16.703020541,
+  "episodes": 768,
+  "total_real_steps": 56524
+}

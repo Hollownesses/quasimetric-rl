@@ -1,0 +1,101 @@
+{
+  "git_head": "6deee0e21a34a862281a8afaa29b12d83aef8ec1",
+  "sources": {
+    "experiments/four_path_execution/run.py": "5ed3bd19a9abb334b9e385fd0279a6e6fde4be0960dbc9c772c68addca14ab65",
+    "experiments/four_path_execution/suite.py": "71441b5c71bfe81227f1ab49fa3a5861ae2ff5b3dc4de4be63a4ed36f80514ab",
+    "experiments/four_path_execution/test_execution.py": "637896dd7f727b6db5918de6741c2669448c67c0e7d4723ac99cb3d22b40f5e9",
+    "experiments/four_path_execution/common.py": "05fceb9eb63aa43e3ecea3a62799712317194fd4f0d371f1989fc92034bb444e",
+    "experiments/four_path_execution/statistics.py": "490c61cd39b31998b6c688ae84622fe81c3ee684cb84732b1f1957cf14a411c9",
+    "experiments/four_path_execution/candidates.py": "f50d504cda7457688c72781c8037ddaf5e8287addb90cf685780c6687bc440ab",
+    "experiments/four_path_execution/prepare.py": "538964d267a0eef12e5e0c4066972a9149a31f560d4d80f9e45f06474598454e",
+    "experiments/four_path_execution/PROTOCOL.md": "78dba4e73ce7cc119f6ddc0256e1984d08c5d3b08f65011977c201fb98c4ccee",
+    "experiments/four_path_execution/smoke.py": "1c0e0746777f7f855802882a633515f6c0fe335fd9d9382baaa13b907cfadb17",
+    "minimal_qrl/baselines/mppi.py": "22563642c6e4101dc737bf787a7e9ce2a84d22846e6b583a522dc75590ac37f0",
+    "minimal_qrl/baselines/base.py": "95e9b78e5fe42e494695ceac892dc685675c49ecc1a4d05cd8c87bb15ff475f6",
+    "minimal_qrl/gc_agents.py": "6448ee95708a0eb85817a6ee302a3ab95b3c1d81813137c22b36938ef011ca19",
+    "minimal_qrl/envs/comm_inspection_dubins_uav_2d.py": "2e785294c23bcb045a8176e9ed444dbf2fc51fa2936079b380131bf803a15878",
+    "minimal_qrl/envs/dubins_uav_2d.py": "e8b4be059cab286ec04e2c09e5f8b3e1da489ccd41accb860624ef76757f3cba"
+  },
+  "config": {
+    "horizon": 20,
+    "num_samples": 256,
+    "noise_sigma": 0.8,
+    "temperature": 1.0,
+    "invalid_penalty": 1000000.0,
+    "terminal_weight": 1.0,
+    "terminal_samples": 128
+  },
+  "states_sha256": "3dd2df2d38abedf6e693a9b8d98a97a34a061c02856b849840642401cb45798f",
+  "checkpoints": {
+    "decay_101": {
+      "path": "results/four_path_reproducibility_20261016/main/seed_101/decay.pt",
+      "sha256": "ec41c52913000dcabf9e6ad58678abf8b137bcbf3f74c2179a1eaa724fb4ab02"
+    },
+    "qp_101": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_101/latest.pt",
+      "sha256": "818c7c7e29b61237d2ef933ededa1e35ec41a27edb4ba973637f17bd5e6a2cc5"
+    },
+    "decay_202": {
+      "path": "results/four_path_reproducibility_20261016/main/seed_202/decay.pt",
+      "sha256": "4e62bb3d54ec859125b97dd93e549bcf8db9feddff87607100627e17ef3b42ba"
+    },
+    "qp_202": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_202/latest.pt",
+      "sha256": "273c24bd1488b6231bab576c0f1464107ab08f62b5c2b76ee036e8c097edc0ec"
+    },
+    "decay_303": {
+      "path": "results/four_path_reproducibility_20261016/main/seed_303/decay.pt",
+      "sha256": "b7c3f2a9d0e3f1d01975e23e657cb10e04be1e21f3f768b2b31d364b90c7488f"
+    },
+    "qp_303": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_303/latest.pt",
+      "sha256": "809c57225e9137b07f5ef9dcb9ebf9625056178e6c92b669aaf2b66d51626231"
+    },
+    "decay_404": {
+      "path": "results/four_path_reproducibility_20261016/main/seed_404/decay.pt",
+      "sha256": "500e2307414eccdd304727e11301cfa575ec3f6617fe32685cc408cc049960df"
+    },
+    "qp_404": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_404/latest.pt",
+      "sha256": "8e7d1e2bad2df777ad31828545d3b82984f529b306c49bf8d32ccb2e7e0549a1"
+    },
+    "decay_505": {
+      "path": "results/four_path_reproducibility_20261016/main/seed_505/decay.pt",
+      "sha256": "086239aff28e936541c94bda939cd4ba4ea4e81b92a31487a70262da8f45ebda"
+    },
+    "qp_505": {
+      "path": "results/four_path_reproducibility_20261016/qp_numerical_fix/seed_505/latest.pt",
+      "sha256": "f91fa21dc7fd25969eee2d7debc546d208cd793eaedcc77d8244a603df2e69b1"
+    }
+  },
+  "arms": [
+    "none",
+    "geometry",
+    "decay_101",
+    "qp_101",
+    "decay_202",
+    "qp_202",
+    "decay_303",
+    "qp_303",
+    "decay_404",
+    "qp_404",
+    "decay_505",
+    "qp_505"
+  ],
+  "planner_seeds": [
+    314159,
+    271828
+  ],
+  "episodes_per_arm": 64,
+  "total_episodes": 768,
+  "max_steps": 300,
+  "data_fingerprints": {
+    "bank": "1ed1098b439fb0d7a990ea83c037d3db1cff4be4c58b5a134c10bfbe9c4368aa",
+    "replay": "af269a835ad45bab817230ed2f3f950d8b0d1781de51c146a2217de95f0d5b73",
+    "nodes": "ec5fea3b25864abdf6d073a98aa3c3bf0c2bebd6a6e19e30310ab49361529014",
+    "pairs": "b3064ac6a3af53666b3f04c41d843bebdcd7b801f9e1b0cf71a79b98919dd874",
+    "costs": "9c3c16080c78a5975cc4cf94fc210884a40689820d9085d3248ee2d580d2d4a6"
+  },
+  "device": "cpu",
+  "torch_threads": 1
+}

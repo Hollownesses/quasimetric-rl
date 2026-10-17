@@ -9,6 +9,7 @@ import numpy as np
 from minimal_qrl.baselines.base import BaselineController
 from minimal_qrl.envs import CircleObstacle, CommInspectionDubinsUAV2D
 from minimal_qrl.gc_agents import GoalConditionedAgentBase
+from minimal_qrl.envs.dubins_uav_2d import Obstacle
 
 
 @dataclass
@@ -54,6 +55,24 @@ def _segment_hits_obstacle(
 ) -> np.ndarray:
     if isinstance(obstacle, CircleObstacle):
         return _circle_segment_hits(x1, y1, x2, y2, obstacle)
+    if isinstance(obstacle, Obstacle):
+        # Same endpoint/side-intersection predicates as Obstacle, evaluated in
+        # float64 like the former Python-float scalar fallback.
+        x1,y1,x2,y2 = (np.asarray(v,dtype=np.float64) for v in (x1,y1,x2,y2))
+        inside = lambda x,y: ((x>=obstacle.x_min)&(x<=obstacle.x_max)
+                              &(y>=obstacle.y_min)&(y<=obstacle.y_max))
+        hit = inside(x1,y1)|inside(x2,y2)
+        for edge in (obstacle.x_min,obstacle.x_max):
+            t = np.divide(edge-x1,x2-x1,out=np.zeros_like(x1),where=x2!=x1)
+            value = y1+t*(y2-y1)
+            hit |= ((np.minimum(x1,x2)<=edge)&(edge<=np.maximum(x1,x2))&(x2!=x1)
+                    &(value>=obstacle.y_min)&(value<=obstacle.y_max))
+        for edge in (obstacle.y_min,obstacle.y_max):
+            t = np.divide(edge-y1,y2-y1,out=np.zeros_like(y1),where=y2!=y1)
+            value = x1+t*(x2-x1)
+            hit |= ((np.minimum(y1,y2)<=edge)&(edge<=np.maximum(y1,y2))&(y2!=y1)
+                    &(value>=obstacle.x_min)&(value<=obstacle.x_max))
+        return hit
     return np.asarray(
         [
             obstacle.intersects_segment(float(a), float(b), float(c), float(d))
@@ -157,6 +176,7 @@ def simulate_action_sequences(
     env: CommInspectionDubinsUAV2D,
     initial_state: np.ndarray,
     action_sequences: np.ndarray,
+    *, record_trajectory: bool = False,
 ) -> Dict[str, np.ndarray]:
     """Vectorized model rollout matching the environment's deterministic step semantics."""
 
@@ -170,6 +190,7 @@ def simulate_action_sequences(
     invalid = np.zeros((n,), dtype=bool)
     success = np.zeros((n,), dtype=bool)
     steps = np.zeros((n,), dtype=np.int32)
+    trajectory = [states.copy()] if record_trajectory else None
 
     for t in range(horizon):
         if not np.any(active):
@@ -201,14 +222,19 @@ def simulate_action_sequences(
         success |= active & step_success
         invalid |= collision | out_of_bounds
         active &= ~(success | invalid)
+        if trajectory is not None:
+            trajectory.append(states.copy())
 
-    return {
+    result = {
         "final_states": states,
         "costs": total_cost,
         "success": success,
         "invalid": invalid,
         "steps": steps,
     }
+    if trajectory is not None:
+        result['trajectory'] = np.stack(trajectory,axis=1)
+    return result
 
 
 class MPPIController(BaselineController):
@@ -282,13 +308,8 @@ class MPPIController(BaselineController):
         angle_time = np.abs(angle_delta) / max(float(env.omega_max), 1e-8)
         return np.min(position_time + angle_time, axis=1).astype(np.float32)
 
-    def act(
-        self,
-        obs: np.ndarray,
-        env: CommInspectionDubinsUAV2D,
-    ) -> tuple[np.ndarray, Dict[str, Any]]:
-        del obs
-        start = perf_counter()
+    def sample_candidates(self, env: CommInspectionDubinsUAV2D) -> np.ndarray:
+        """Expose the unchanged sampler for paired fixed-state diagnostics."""
         n = max(1, int(self.cfg.num_samples))
         noise = self._rng.normal(
             0.0,
@@ -301,7 +322,10 @@ class MPPIController(BaselineController):
             float(env.omega_max),
         )
         candidates[0] = self._nominal
-        rollout = simulate_action_sequences(env, env.state, candidates)
+        return candidates
+
+    def score_candidates(self, env, rollout):
+        """Score a shared model rollout without resampling or changing state."""
         costs = rollout["costs"].astype(np.float64)
         unfinished = ~(rollout["success"] | rollout["invalid"])
         if np.any(unfinished) and self.terminal_mode != "none" and float(self.cfg.terminal_weight) != 0.0:
@@ -313,11 +337,19 @@ class MPPIController(BaselineController):
         weights = np.exp(-shifted / max(float(self.cfg.temperature), 1e-6))
         weight_sum = float(np.sum(weights))
         if not np.isfinite(weight_sum) or weight_sum <= 1e-12:
-            best = int(np.argmin(costs))
-            self._nominal = candidates[best].copy()
+            weights = np.zeros_like(costs);weights[int(np.argmin(costs))] = 1.
         else:
-            weights = weights / weight_sum
-            self._nominal = np.sum(weights[:, None] * candidates, axis=0).astype(np.float32)
+            weights = weights/weight_sum
+        return costs,weights
+
+    def act(self, obs: np.ndarray, env: CommInspectionDubinsUAV2D) -> tuple[np.ndarray, Dict[str, Any]]:
+        del obs
+        start = perf_counter()
+        candidates = self.sample_candidates(env)
+        n = len(candidates)
+        rollout = simulate_action_sequences(env, env.state, candidates)
+        costs,weights = self.score_candidates(env,rollout)
+        self._nominal = np.sum(weights[:, None] * candidates, axis=0).astype(np.float32)
 
         action = np.array([self._nominal[0]], dtype=np.float32)
         self._nominal[:-1] = self._nominal[1:]
@@ -327,6 +359,7 @@ class MPPIController(BaselineController):
         return action, {
             "planning_time_sec": float(elapsed),
             "model_rollouts": int(n),
+            "model_transitions": int(rollout['steps'].sum()),
             "best_rollout_cost": float(np.min(costs)),
             "invalid_rollout_ratio": float(np.mean(rollout["invalid"])),
         }
