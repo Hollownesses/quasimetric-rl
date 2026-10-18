@@ -1,5 +1,7 @@
 # 原始 20 万物理转移 + 四条成功路径，单 seed 实验
 
+后续仅限制 task push 支持的配对实验见 [witnessed_task_push](../witnessed_task_push/README.md)。训练器新增 `--task-mode witnessed` 并实际消费 task mask；默认 `all` 保持本文原实验语义。旧产物不修改。
+
 本实验只训练合并数据一组，seed 606。保留所有旧实验产物；不新增轨迹，不训练原始 replay 单独对照。原始 200,000 条物理转移及 748 条合法 anchor，与四路径 335 条物理边及 4 条 anchor 合并。context 编号偏移以避免冲突，观测的真实任务字段、奖励与终态映射保持不变；两个来源各自按历史 seed 42 重建固定 B1 bank，随后偏移索引，四路径配对不改变。
 
 训练共享 production encoder/projector/IQE，从独立初始化开始。每步使用一批 256 原始物理边与全部 339 四路径边；两部分的 push/PHR 各占 50%。push 内部保持 0.6 task(all) + 0.4 B1。原始部分无放回遍历，轮末采用较小 batch，避免跨轮 batch 中出现重复行。rho=100，逐记录行独立 multiplier，访问时以更新前残差执行 lambda <- relu(lambda+h)。原始 anchor quotient 后为恒等边，其约束恒为零，全量审计中保留。

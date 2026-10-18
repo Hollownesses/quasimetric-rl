@@ -37,11 +37,32 @@ class EpochSampler:
         self.order=state['order'];self.cursor=state['cursor'];self.epochs=state['epochs'];self.generator.set_state(state['rng'])
 
 
+def masked_mean(values, mask):
+    """Mean over retained entries; empty selection is a differentiable exact zero."""
+    selected = values[mask]
+    return selected.mean() if selected.numel() else selected.sum()
+
+
+def push_objective(data, rows, task, pair):
+    # distances() returns pushes only for physical rows, so align masks likewise.
+    physical_rows = rows[data.physical[rows]]
+    infos = data.raw.transition_infos
+    task_mask = infos['global_push_task_mask'][physical_rows].bool()
+    pair_mask = infos['global_push_pair_mask'][physical_rows].bool()
+    task_value = masked_mean(task, task_mask)
+    pair_value = masked_mean(pair, pair_mask)
+    # Do not redistribute the absent task weight to B1, or fall back to all-task.
+    return .6 * task_value + .4 * pair_value, dict(
+        task_rows=int(task_mask.sum()), pair_rows=int(pair_mask.sum()),
+        empty_task_batch=not bool(task_mask.any()),
+        task_mean=float(task_value.detach()), pair_mean=float(pair_value.detach()))
+
+
 def advance(model,data,dual,optimizer,rows):
-    optimizer.zero_grad(set_to_none=True);loss=0.;pushes=[];residuals=[]
+    optimizer.zero_grad(set_to_none=True);loss=0.;pushes=[];residuals=[];components=[]
     for r in (rows,data.paths):
         edge,task,pair=distances(model,data,r);h=edge-data.cost[r]
-        push=.6*task.mean()+.4*pair.mean()
+        push,component=push_objective(data,r,task,pair);components.append(component)
         loss=loss+.5*(-push+phr_terms(h,dual[r],100.)[0]);pushes.append(float(push.detach()));residuals.append(h.detach())
     if not torch.isfinite(loss):raise RuntimeError('nonfinite loss')
     loss.backward();optimizer.step()
@@ -49,11 +70,12 @@ def advance(model,data,dual,optimizer,rows):
         for r,h in zip((rows,data.paths),residuals):
             # Original rows are without replacement within each batch; each edge owns its own dual.
             dual[r]=(dual[r]+h).relu()
-    return dict(loss=float(loss.detach()),original_push=pushes[0],path_push=pushes[1])
+    return dict(loss=float(loss.detach()),original_push=pushes[0],path_push=pushes[1],
+                original_components=components[0],path_components=components[1])
 
 
 @torch.no_grad()
-def scan(model,data,dual,visits):
+def scan(model,data,dual,visits,diagnostic_rows=None):
     residual=[]
     for r in torch.arange(len(data.src)).split(1024):residual.append(distances(model,data,r,False)-data.cost[r])
     h=torch.cat(residual);result={}
@@ -64,15 +86,24 @@ def scan(model,data,dual,visits):
             complementarity_mean=float((r*lam).abs().mean()),dual_max=float(lam.max()))
     result['anchor_max']=float(h[~data.physical].abs().max())
     result['original_visits']=dict(min=int(visits.min()),max=int(visits.max()),mean=float(visits.float().mean()))
+    if diagnostic_rows is not None:
+        result['model_only_probes']={}
+        for name,rows in diagnostic_rows.items():
+            _,task,pair=distances(model,data,rows)
+            result['model_only_probes'][name]=dict(task_mean=float(task.mean()),
+                task_max=float(task.max()),pair_mean=float(pair.mean()))
     return result,h
 
 
 def run(args):
-    torch.set_num_threads(args.threads);data=load_union();out=Path(args.output)
+    torch.set_num_threads(args.threads);data=load_union(task_mode=args.task_mode);out=Path(args.output)
+    task_mask_sha256=tensor_digest(data.raw.transition_infos['global_push_task_mask'])
     if args.resume:
         assert out.is_dir();config=json.loads((out/'config.json').read_text())
         assert config['fingerprints']==data.fingerprint
         for key in ('seed','phr_steps','decay_steps','batch','threads'):assert config[key]==getattr(args,key),key
+        assert config.get('task_mode','all')==args.task_mode, 'task mode mismatch'
+        assert config.get('task_mask_sha256',task_mask_sha256)==task_mask_sha256
     else:
         out.mkdir(parents=True,exist_ok=False)
         (out/'data_audit.json').write_text(json.dumps(audit(data),indent=2)+'\n')
@@ -81,7 +112,9 @@ def run(args):
     dual=torch.zeros(len(data.src));visits=torch.zeros(len(data.original),dtype=torch.long)
     sampler=EpochSampler(len(data.original),args.seed+1701);offset=0
     config=dict(vars(args),fingerprints=data.fingerprint,torch=str(torch.__version__),rho=100.,dual_step=1.,
-        push='0.5 original + 0.5 four-path; each 0.6 task(all) + 0.4 fixed B1',
+        push=f'0.5 original + 0.5 four-path; each 0.6 task({args.task_mode}) + 0.4 fixed B1',
+        task_mask_sha256=task_mask_sha256,
+        task_normalization='conditional mean within each source stratum minibatch; empty => zero; no coefficient redistribution',
         constraints='0.5 mean sampled original physical PHR + 0.5 mean all four-path edges PHR; original anchors quotient-identical',
         dual_clock='pre-primal residual, eta=1 per visit; path every update, original each sampled visit',
         stopping='fixed budget; no graph or oracle queries before final checkpoint; no QP',
@@ -90,18 +123,33 @@ def run(args):
     if args.resume:
         saved=torch.load(args.resume,map_location='cpu',weights_only=True)
         assert saved['fingerprints']==data.fingerprint
+        assert saved.get('task_mode','all')==args.task_mode, 'checkpoint task mode mismatch'
+        assert saved.get('task_mask_sha256',task_mask_sha256)==task_mask_sha256
         model.load_state_dict(saved['model']);optimizer.load_state_dict(saved['optimizer']);dual=saved['dual'];visits=saved['visits']
         sampler.restore(saved['sampler']);torch.set_rng_state(saved['rng']);offset=saved['step']
+    push_counters=dict(original_empty_task_batches=0,original_task_visits=0,original_pair_visits=0,
+                       path_task_visits=0,path_pair_visits=0)
+    if args.resume:push_counters.update(saved.get('push_counters',{}))
+    diagnostics=None
+    if args.task_mode=='witnessed':
+        generator=torch.Generator().manual_seed(2026101901)
+        diagnostics={'paths':data.paths}
+        device=data.raw.transition_infos['device_index']
+        for i in range(4):
+            rows=data.original[device[data.original]==i]
+            diagnostics[f'device_{i}']=rows[torch.randperm(len(rows),generator=generator)[:512]]
+        (out/'diagnostic_probes.json').write_text(json.dumps({k:v.tolist() for k,v in diagnostics.items()})+'\n')
     def save(step,name):
         state=dict(step=step,initialization_seed=args.seed,model=model.state_dict(),optimizer=optimizer.state_dict(),
-            dual=dual,visits=visits,sampler=sampler.state_dict(),rng=torch.get_rng_state(),fingerprints=data.fingerprint)
+            dual=dual,visits=visits,sampler=sampler.state_dict(),rng=torch.get_rng_state(),fingerprints=data.fingerprint,
+            task_mode=args.task_mode,task_mask_sha256=task_mask_sha256,push_counters=push_counters)
         temporary=out/(name+'.tmp');torch.save(state,temporary);temporary.replace(out/name)
     if not args.resume:save(0,'initial.pt')
     start=time.perf_counter();total=args.phr_steps+args.decay_steps
     with (out/'training.jsonl').open('a' if args.resume else 'w') as log:
         for step in range(offset,total+1):
             if step%args.audit_interval==0 or step in (args.phr_steps,total):
-                rec,h=scan(model,data,dual,visits);rec.update(step=step,seconds=time.perf_counter()-start,epochs=sampler.epochs)
+                rec,h=scan(model,data,dual,visits,diagnostics);rec.update(step=step,seconds=time.perf_counter()-start,epochs=sampler.epochs,push_counters=push_counters.copy())
                 log.write(json.dumps(rec)+'\n');log.flush();print(json.dumps(rec),flush=True)
                 save(step,'latest.pt')
                 if step==args.phr_steps:save(step,'phr.pt')
@@ -112,6 +160,11 @@ def run(args):
             for group in optimizer.param_groups:group['lr']=lr
             indices=sampler.next(args.batch);rows=data.original[indices];visits[indices]+=1
             update=advance(model,data,dual,optimizer,rows)
+            push_counters['original_empty_task_batches']+=int(update['original_components']['empty_task_batch'])
+            push_counters['original_task_visits']+=update['original_components']['task_rows']
+            push_counters['original_pair_visits']+=update['original_components']['pair_rows']
+            push_counters['path_task_visits']+=update['path_components']['task_rows']
+            push_counters['path_pair_visits']+=update['path_components']['pair_rows']
             if j%100==0:
                 log.write(json.dumps(dict(step=j,lr=lr,**update))+'\n');log.flush()
     (out/'COMPLETE').write_text('Fixed training budget completed; no claim of feasibility or navigation success.\n')
@@ -121,4 +174,5 @@ if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--output',required=True);p.add_argument('--seed',type=int,default=606)
     p.add_argument('--phr-steps',type=int,default=20000);p.add_argument('--decay-steps',type=int,default=5000)
     p.add_argument('--batch',type=int,default=256);p.add_argument('--audit-interval',type=int,default=1000)
+    p.add_argument('--task-mode',choices=['all','witnessed'],default='all')
     p.add_argument('--threads',type=int,default=4);p.add_argument('--resume');run(p.parse_args())

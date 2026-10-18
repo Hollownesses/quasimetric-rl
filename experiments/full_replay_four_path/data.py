@@ -11,7 +11,7 @@ EXPECTED = ('7ae2a77d8ff942de38762781996d15a6972ccf5f3074ea3075f2919f3e98914a',
             'af269a835ad45bab817230ed2f3f950d8b0d1781de51c146a2217de95f0d5b73')
 
 
-def load_union():
+def load_union(*, task_mode="all"):
     small = load_data(); raws=[]; source_fingerprints=[]
     for path,expected in zip((BASE,PATHS),EXPECTED):
         p=torch.load(path,map_location='cpu',weights_only=True);r=MultiEpisodeData(**p['raw'])
@@ -20,7 +20,7 @@ def load_union():
         ds=Replay(r,small.env)
         for k in ('global_push_source_observations','global_push_goal_observations'):
             r.transition_infos[k]=torch.zeros((len(ds),42))
-        configure_global_push_sampling(ds,state_mode='trajectory',task_mode='all',seed=42)
+        configure_global_push_sampling(ds,state_mode='trajectory',task_mode=task_mode,seed=42)
         raws.append(r)
     a,b=raws; n=a.num_transitions; obs_offset=len(a.all_observations)
     # Sampling each immutable constituent separately preserves the historical B1 bank.
@@ -42,7 +42,11 @@ def load_union():
     assert int(physical[:n].sum())==200000 and int(physical[n:].sum())==335
     assert torch.equal(src[~physical],dst[~physical]) and (raw.rewards[~physical]==0).all()
     assert raw.transition_infos['global_push_pair_mask'][physical].all()
-    assert raw.transition_infos['global_push_task_mask'][physical].all()
+    if task_mode == 'all':
+        assert raw.transition_infos['global_push_task_mask'][physical].all()
+    else:
+        assert torch.equal(raw.transition_infos['global_push_task_mask'],
+                           raw.transition_infos['global_push_task_witness_mask'])
     assert (pair_obs[physical]>src_obs[physical]).all()
     fingerprint=dict(sources=source_fingerprints,merged_replay=replay_fingerprint(raw),
         nodes=tensor_digest(nodes,ids),pairs=tensor_digest(src,goal,pair),costs=tensor_digest(-raw.rewards),
