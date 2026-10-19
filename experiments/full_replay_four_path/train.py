@@ -58,20 +58,27 @@ def push_objective(data, rows, task, pair):
         task_mean=float(task_value.detach()), pair_mean=float(pair_value.detach()))
 
 
+def training_strata(data, rows):
+    if getattr(data,'dataset_kind','full_replay_four_path')=='expert_network':
+        return [('expert',1.,rows)]
+    return [('original',.5,rows),('path',.5,data.paths)]
+
+
 def advance(model,data,dual,optimizer,rows):
-    optimizer.zero_grad(set_to_none=True);loss=0.;pushes=[];residuals=[];components=[]
-    for r in (rows,data.paths):
+    optimizer.zero_grad(set_to_none=True);loss=0.;residuals=[];result={}
+    strata=training_strata(data,rows)
+    for name,weight,r in strata:
         edge,task,pair=distances(model,data,r);h=edge-data.cost[r]
-        push,component=push_objective(data,r,task,pair);components.append(component)
-        loss=loss+.5*(-push+phr_terms(h,dual[r],100.)[0]);pushes.append(float(push.detach()));residuals.append(h.detach())
+        push,component=push_objective(data,r,task,pair)
+        loss=loss+weight*(-push+phr_terms(h,dual[r],100.)[0]);residuals.append(h.detach())
+        result[name+'_push']=float(push.detach());result[name+'_components']=component
     if not torch.isfinite(loss):raise RuntimeError('nonfinite loss')
     loss.backward();optimizer.step()
     with torch.no_grad():
-        for r,h in zip((rows,data.paths),residuals):
+        for (_,_,r),h in zip(strata,residuals):
             # Original rows are without replacement within each batch; each edge owns its own dual.
             dual[r]=(dual[r]+h).relu()
-    return dict(loss=float(loss.detach()),original_push=pushes[0],path_push=pushes[1],
-                original_components=components[0],path_components=components[1])
+    return dict(loss=float(loss.detach()),**result)
 
 
 @torch.no_grad()
@@ -79,13 +86,16 @@ def scan(model,data,dual,visits,diagnostic_rows=None):
     residual=[]
     for r in torch.arange(len(data.src)).split(1024):residual.append(distances(model,data,r,False)-data.cost[r])
     h=torch.cat(residual);result={}
-    for name,mask in [('original',torch.arange(len(h))<data.nbase),('paths',torch.arange(len(h))>=data.nbase)]:
+    expert=getattr(data,'dataset_kind','full_replay_four_path')=='expert_network'
+    groups=[('expert',torch.ones(len(h),dtype=torch.bool))] if expert else [
+        ('original',torch.arange(len(h))<data.nbase),('paths',torch.arange(len(h))>=data.nbase)]
+    for name,mask in groups:
         r=h[mask&data.physical];lam=dual[mask&data.physical]
         result[name]=dict(max_violation=float(r.relu().max()),violation_count=int((r>1e-5).sum()),
             mean_positive=float(r.relu().mean()),p99_positive=float(torch.quantile(r.relu(),.99)),
             complementarity_mean=float((r*lam).abs().mean()),dual_max=float(lam.max()))
     result['anchor_max']=float(h[~data.physical].abs().max())
-    result['original_visits']=dict(min=int(visits.min()),max=int(visits.max()),mean=float(visits.float().mean()))
+    result['expert_visits' if expert else 'original_visits']=dict(min=int(visits.min()),max=int(visits.max()),mean=float(visits.float().mean()))
     if diagnostic_rows is not None:
         result['model_only_probes']={}
         for name,rows in diagnostic_rows.items():
@@ -96,7 +106,15 @@ def scan(model,data,dual,visits,diagnostic_rows=None):
 
 
 def run(args):
-    torch.set_num_threads(args.threads);data=load_union(task_mode=args.task_mode);out=Path(args.output)
+    torch.set_num_threads(args.threads)
+    expert_root=getattr(args,'expert_data',None)
+    if expert_root:
+        from experiments.expert_utrap_network.training_adapter import load_training_data,audit_training_data
+        data=load_training_data(expert_root,task_mode=args.task_mode);audit_data=audit_training_data
+    else:
+        data=load_union(task_mode=args.task_mode);audit_data=audit
+    dataset_kind='expert_network' if expert_root else 'full_replay_four_path'
+    out=Path(args.output)
     task_mask_sha256=tensor_digest(data.raw.transition_infos['global_push_task_mask'])
     if args.resume:
         assert out.is_dir();config=json.loads((out/'config.json').read_text())
@@ -104,9 +122,10 @@ def run(args):
         for key in ('seed','phr_steps','decay_steps','batch','threads'):assert config[key]==getattr(args,key),key
         assert config.get('task_mode','all')==args.task_mode, 'task mode mismatch'
         assert config.get('task_mask_sha256',task_mask_sha256)==task_mask_sha256
+        assert config.get('dataset_kind','full_replay_four_path')==dataset_kind,'dataset kind mismatch'
     else:
         out.mkdir(parents=True,exist_ok=False)
-        (out/'data_audit.json').write_text(json.dumps(audit(data),indent=2)+'\n')
+        (out/'data_audit.json').write_text(json.dumps(audit_data(data),indent=2)+'\n')
     torch.manual_seed(args.seed);model=IndexedIQE(data.small,'encoder',0,initialization_seed=args.seed)
     optimizer=torch.optim.AdamW(model.parameters(),lr=2e-5,weight_decay=0.)
     dual=torch.zeros(len(data.src));visits=torch.zeros(len(data.original),dtype=torch.long)
@@ -119,30 +138,45 @@ def run(args):
         dual_clock='pre-primal residual, eta=1 per visit; path every update, original each sampled visit',
         stopping='fixed budget; no graph or oracle queries before final checkpoint; no QP',
         initial_model_sha256=tensor_digest(*model.state_dict().values()),script_sha256=file_digest(__file__))
+    config['dataset_kind']=dataset_kind
+    if expert_root:
+        config.update(push=f'1.0 expert; 0.6 task({args.task_mode}) + 0.4 fixed B1',
+            constraints='1.0 mean sampled expert physical PHR; legal quotient-identical anchors scanned only',
+            dual_clock='pre-primal residual, eta=1 per sampled expert record visit',
+            sampling='expert physical records without replacement per epoch; shared-segment duplicates retained',
+            b1_seed=42,adapter_sha256=file_digest(Path(__file__).parents[1]/'expert_utrap_network/training_adapter.py'))
+    resume_signature={key:config[key] for key in ('dataset_kind','fingerprints','seed','phr_steps',
+        'decay_steps','batch','threads','task_mode','task_mask_sha256','rho','dual_step','push','constraints')}
     if not args.resume:(out/'config.json').write_text(json.dumps(config,indent=2)+'\n')
     if args.resume:
         saved=torch.load(args.resume,map_location='cpu',weights_only=True)
         assert saved['fingerprints']==data.fingerprint
         assert saved.get('task_mode','all')==args.task_mode, 'checkpoint task mode mismatch'
         assert saved.get('task_mask_sha256',task_mask_sha256)==task_mask_sha256
+        assert saved.get('dataset_kind','full_replay_four_path')==dataset_kind,'checkpoint dataset kind mismatch'
+        if expert_root:assert saved['training_signature']==resume_signature,'checkpoint training configuration mismatch'
         model.load_state_dict(saved['model']);optimizer.load_state_dict(saved['optimizer']);dual=saved['dual'];visits=saved['visits']
         sampler.restore(saved['sampler']);torch.set_rng_state(saved['rng']);offset=saved['step']
     push_counters=dict(original_empty_task_batches=0,original_task_visits=0,original_pair_visits=0,
                        path_task_visits=0,path_pair_visits=0)
+    if expert_root:
+        push_counters=dict(expert_empty_task_batches=0,expert_task_visits=0,expert_pair_visits=0)
     if args.resume:push_counters.update(saved.get('push_counters',{}))
     diagnostics=None
     if args.task_mode=='witnessed':
         generator=torch.Generator().manual_seed(2026101901)
-        diagnostics={'paths':data.paths}
+        diagnostics={} if expert_root else {'paths':data.paths}
         device=data.raw.transition_infos['device_index']
         for i in range(4):
             rows=data.original[device[data.original]==i]
+            if not len(rows):continue
             diagnostics[f'device_{i}']=rows[torch.randperm(len(rows),generator=generator)[:512]]
         (out/'diagnostic_probes.json').write_text(json.dumps({k:v.tolist() for k,v in diagnostics.items()})+'\n')
     def save(step,name):
         state=dict(step=step,initialization_seed=args.seed,model=model.state_dict(),optimizer=optimizer.state_dict(),
             dual=dual,visits=visits,sampler=sampler.state_dict(),rng=torch.get_rng_state(),fingerprints=data.fingerprint,
-            task_mode=args.task_mode,task_mask_sha256=task_mask_sha256,push_counters=push_counters)
+            task_mode=args.task_mode,task_mask_sha256=task_mask_sha256,push_counters=push_counters,
+            dataset_kind=dataset_kind,training_signature=resume_signature)
         temporary=out/(name+'.tmp');torch.save(state,temporary);temporary.replace(out/name)
     if not args.resume:save(0,'initial.pt')
     start=time.perf_counter();total=args.phr_steps+args.decay_steps
@@ -160,19 +194,26 @@ def run(args):
             for group in optimizer.param_groups:group['lr']=lr
             indices=sampler.next(args.batch);rows=data.original[indices];visits[indices]+=1
             update=advance(model,data,dual,optimizer,rows)
-            push_counters['original_empty_task_batches']+=int(update['original_components']['empty_task_batch'])
-            push_counters['original_task_visits']+=update['original_components']['task_rows']
-            push_counters['original_pair_visits']+=update['original_components']['pair_rows']
-            push_counters['path_task_visits']+=update['path_components']['task_rows']
-            push_counters['path_pair_visits']+=update['path_components']['pair_rows']
+            for name,_,_ in training_strata(data,rows):
+                component=update[name+'_components']
+                if name+'_empty_task_batches' in push_counters:
+                    push_counters[name+'_empty_task_batches']+=int(component['empty_task_batch'])
+                push_counters[name+'_task_visits']+=component['task_rows']
+                push_counters[name+'_pair_visits']+=component['pair_rows']
             if j%100==0:
                 log.write(json.dumps(dict(step=j,lr=lr,**update))+'\n');log.flush()
     (out/'COMPLETE').write_text('Fixed training budget completed; no claim of feasibility or navigation success.\n')
 
 
-if __name__=='__main__':
+def parse_args(argv=None):
     p=argparse.ArgumentParser();p.add_argument('--output',required=True);p.add_argument('--seed',type=int,default=606)
     p.add_argument('--phr-steps',type=int,default=20000);p.add_argument('--decay-steps',type=int,default=5000)
     p.add_argument('--batch',type=int,default=256);p.add_argument('--audit-interval',type=int,default=1000)
     p.add_argument('--task-mode',choices=['all','witnessed'],default='all')
-    p.add_argument('--threads',type=int,default=4);p.add_argument('--resume');run(p.parse_args())
+    p.add_argument('--threads',type=int,default=4);p.add_argument('--resume')
+    p.add_argument('--expert-data',help='Use only this expert network directory instead of the legacy replay union')
+    return p.parse_args(argv)
+
+
+if __name__=='__main__':
+    run(parse_args())
