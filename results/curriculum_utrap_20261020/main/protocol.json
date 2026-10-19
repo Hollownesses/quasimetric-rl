@@ -1,0 +1,179 @@
+{
+  "config_sha256": "b06b853ad714bb4617f5c11cc0f60148eb8781b07fd2f115db5d7fb45808eb14",
+  "sources": {
+    "results/full_replay_four_path_20261017/main/scenario.json": "92e2ab487cce066f1819e61d1f99db082e586ffae1635186f8c7b78d6fec9562",
+    "minimal_qrl/dataset.py": "3d53cf9dca145b1a8a11604ecf7fa842e34720f151d656348d32d29079ab90ec",
+    "minimal_qrl/envs/comm_inspection_dubins_uav_2d.py": "2e785294c23bcb045a8176e9ed444dbf2fc51fa2936079b380131bf803a15878",
+    "minimal_qrl/envs/dubins_uav_2d.py": "e8b4be059cab286ec04e2c09e5f8b3e1da489ccd41accb860624ef76757f3cba",
+    "minimal_qrl/envs/base.py": "41ec9ca64971aacf6cfc347428ed9b52853d7158fc6490133f4d6cd0188573f1",
+    "minimal_qrl/global_push_sampling.py": "5f928ffcada0b04f3016d9d248d44dac3977793bd37b49e3f3fece1fe7ecd7b8",
+    "quasimetric_rl/modules/quasimetric_critic/models/encoder.py": "200b599df4c96d0649a3a1ff45d7cc556cabb7f0876120546929f0e4d495c8f1",
+    "minimal_qrl/baselines/mppi.py": "2bea2b1e8ba8260f74a62b4e3f5d4b6007b19ae593cb06d5dc3bc4b3d8f5b861",
+    "minimal_qrl/industry_exp/scalability_scenarios.py": "8ead9523db6cafff5c11a2a22523fdc94845f642b6dd30584454dd1248c22969",
+    "experiments/curriculum_utrap/collect.py": "63ba3de6e133a748782d1a0581a633cf16c0deccbd6f517ec0f90fc0363a00f5",
+    "experiments/curriculum_utrap/__init__.py": "559259de2d2e1b323dd5f541f4aea599cc4e4f2a300f93c5aec257ffb526ecf5",
+    "experiments/curriculum_utrap/common.py": "796d12421c06800d057a5b9137c34726edd2707016a930010f58e5f3be80b3eb",
+    "experiments/curriculum_utrap/data.py": "0d5132aed3d03163e319b844b40dfa324e7f0ce8870b7826d085d7a6605b70ec",
+    "experiments/curriculum_utrap/test_curriculum.py": "fefbc5f69d759ffc341592b2b90101b7b864e13e9ffd07cf2c1fa73dd7e8eaf4"
+  },
+  "exclusion_sources": {
+    "results/four_path_execution_20261017/main/states.json": "3dd2df2d38abedf6e693a9b8d98a97a34a061c02856b849840642401cb45798f",
+    "results/full_replay_four_path_20261017/main/independent_states.json": "ed33262d4d78dede2f8e9defbad3cf78d272cdac0be602bf0ed7f645e550c3a8",
+    "results/diagnostic_u_shadow_corridors_topology_v2/config/diagnostic_task_bank.json": "2e053d4a92417a936cf9a59f8e8749a6396a74683658b8e2478aeddde3962976"
+  },
+  "environment_signature": {
+    "digest": "47c1b8c36e2922345139b7b7353e43c527c99f76254f7639007dfc385b31be36",
+    "payload": {
+      "catalog": {
+        "ground_station": {
+          "position": [
+            7.0,
+            3.0
+          ],
+          "los_anchor": [
+            7.0,
+            3.0
+          ]
+        },
+        "devices": [
+          {
+            "device_id": "u_trap_target",
+            "position": [
+              6.7,
+              3.65
+            ],
+            "observation_anchor": [
+              6.7,
+              3.65
+            ],
+            "observation": {
+              "min_distance": 0.35,
+              "max_distance": 0.85,
+              "preferred_bearing_rad": 0.0,
+              "bearing_tolerance_rad": 0.5,
+              "fov_angle_rad": 1.5707963267948966,
+              "require_los": true
+            }
+          },
+          {
+            "device_id": "corridor_target",
+            "position": [
+              16.0,
+              6.5
+            ],
+            "observation_anchor": [
+              16.0,
+              6.5
+            ],
+            "observation": {
+              "min_distance": 0.35,
+              "max_distance": 0.85,
+              "preferred_bearing_rad": -1.5707963267948966,
+              "bearing_tolerance_rad": 0.5,
+              "fov_angle_rad": 1.5707963267948966,
+              "require_los": true
+            }
+          },
+          {
+            "device_id": "easy_north",
+            "position": [
+              7.8,
+              10.4
+            ],
+            "observation_anchor": [
+              7.8,
+              10.4
+            ],
+            "observation": {
+              "min_distance": 0.35,
+              "max_distance": 0.85,
+              "preferred_bearing_rad": 0.0,
+              "bearing_tolerance_rad": 0.5,
+              "fov_angle_rad": 1.5707963267948966,
+              "require_los": true
+            }
+          },
+          {
+            "device_id": "easy_south",
+            "position": [
+              11.0,
+              1.8
+            ],
+            "observation_anchor": [
+              11.0,
+              1.8
+            ],
+            "observation": {
+              "min_distance": 0.35,
+              "max_distance": 0.85,
+              "preferred_bearing_rad": 3.141592653589793,
+              "bearing_tolerance_rad": 0.5,
+              "fov_angle_rad": 1.5707963267948966,
+              "require_los": true
+            }
+          }
+        ]
+      },
+      "bounds": [
+        0.0,
+        0.0,
+        18.0,
+        12.0
+      ],
+      "omega_max": 3.0,
+      "v": 1.0,
+      "dt": 0.1,
+      "max_episode_steps": 300,
+      "obstacles": [
+        {
+          "type": "Obstacle",
+          "x_min": 2.8,
+          "x_max": 5.7,
+          "y_min": 5.4,
+          "y_max": 5.9
+        },
+        {
+          "type": "Obstacle",
+          "x_min": 2.8,
+          "x_max": 5.7,
+          "y_min": 1.4,
+          "y_max": 1.9
+        },
+        {
+          "type": "Obstacle",
+          "x_min": 5.2,
+          "x_max": 5.7,
+          "y_min": 1.4,
+          "y_max": 5.9
+        },
+        {
+          "type": "Obstacle",
+          "x_min": 9.0,
+          "x_max": 15.0,
+          "y_min": 6.0,
+          "y_max": 7.5
+        }
+      ],
+      "comm_alpha": 2.0,
+      "comm_bias": 8.0,
+      "comm_occlusion_penalty": 4.0,
+      "comm_threshold": 0.5,
+      "require_ground_station_los": false,
+      "collision_cost": 10.0,
+      "out_of_bounds_cost": 10.0,
+      "communication_break_cost": 1.0,
+      "observation_violation_cost_weight": 1.0,
+      "communication_violation_cost_weight": 0.5,
+      "observation_failure_cost": 0.25,
+      "min_start_target_distance": 0.5,
+      "sample_max_attempts": 2000
+    }
+  },
+  "min_turn_radius": 0.3333333333333333,
+  "python": "3.9.25",
+  "numpy": "2.0.2",
+  "torch": "2.8.0",
+  "expert_actions": false,
+  "oracle_values": false,
+  "graph_guidance": false
+}

@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "seed": 2026102007,
+  "curriculum_step_budget": 30000,
+  "diagnostic_steps_per_stage": 1000,
+  "diagnostic_stages": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "max_rounds": 24,
+  "max_stagnant_rounds": 6,
+  "recovery_after": 3,
+  "normal_frontier_episodes": 24,
+  "normal_revisit_episodes": 8,
+  "recovery_frontier_episodes": 16,
+  "recovery_revisit_episodes": 16,
+  "pass_success_rate": 0.125,
+  "pass_min_successes": 2,
+  "pass_min_heading_bins": 2,
+  "pass_position_heading_bins": 8,
+  "required_consecutive_passes": 2,
+  "coverage_position_resolution": 0.25,
+  "coverage_heading_bins": 24,
+  "exclusion_radius": 0.25,
+  "start_attempt_limit": 10000,
+  "stages": [
+    {
+      "name": "near_terminal",
+      "boxes": [
+        [
+          7.52,
+          3.35,
+          7.92,
+          3.95
+        ]
+      ],
+      "headings": [
+        3.141592653589793
+      ],
+      "half_width": 0.25,
+      "rationale": "east legal approach boundary, nearly west-facing; nonterminal filter"
+    },
+    {
+      "name": "approach",
+      "boxes": [
+        [
+          7.45,
+          3.1,
+          8.6,
+          4.2
+        ]
+      ],
+      "headings": [
+        3.141592653589793
+      ],
+      "half_width": 0.7,
+      "rationale": "larger legal approach neighborhood and heading error"
+    },
+    {
+      "name": "east_turning",
+      "boxes": [
+        [
+          7.6,
+          2.1,
+          9.0,
+          5.2
+        ]
+      ],
+      "headings": [
+        3.141592653589793
+      ],
+      "half_width": 1.4,
+      "rationale": "east-side room for turns; broad vertical offset and heading error"
+    },
+    {
+      "name": "east_corners",
+      "boxes": [
+        [
+          5.95,
+          6.05,
+          8.6,
+          6.9
+        ],
+        [
+          5.95,
+          0.4,
+          8.6,
+          1.25
+        ]
+      ],
+      "headings": [
+        -1.5707963267948966,
+        1.5707963267948966
+      ],
+      "half_width": 2.0,
+      "rationale": "separate upper/lower corners require turning around wall envelope"
+    },
+    {
+      "name": "outer_corridors",
+      "boxes": [
+        [
+          1.3,
+          6.05,
+          5.1,
+          7.0
+        ],
+        [
+          1.3,
+          0.3,
+          5.1,
+          1.25
+        ]
+      ],
+      "headings": [
+        0.0,
+        0.0
+      ],
+      "half_width": 3.141592653589793,
+      "rationale": "outside upper/lower U arms; eastward progress requires long travel"
+    },
+    {
+      "name": "west_exit",
+      "boxes": [
+        [
+          1.0,
+          2.0,
+          2.7,
+          5.2
+        ]
+      ],
+      "headings": [
+        0.0
+      ],
+      "half_width": 3.141592653589793,
+      "rationale": "west opening: direct eastward line hits closed wall; must select a detour"
+    },
+    {
+      "name": "u_interior",
+      "boxes": [
+        [
+          3.0,
+          2.1,
+          5.0,
+          5.2
+        ]
+      ],
+      "headings": [
+        0.0
+      ],
+      "half_width": 3.141592653589793,
+      "rationale": "U interior with full heading support: escape west before detouring"
+    }
+  ],
+  "policy": {
+    "action_hold_min_steps": 3,
+    "action_hold_max_steps": 10,
+    "straight_action_probability": 0.5,
+    "local_safety_lookahead_steps": 0,
+    "safety_lookahead_mode": "full_horizon"
+  },
+  "policy_information": "goal-blind persistent random actions; no lookahead or action ranking",
+  "reset_information": "goal region, obstacle geometry, turn radius, previous collection success/coverage",
+  "diagnostic_policy": "after adaptive phase, fixed 1000 real steps per stage 1..6; no promotion from these data",
+  "rationale": "36k upper bound is 18% of old 200k; 30k adaptation plus fixed 6k failure/coverage survey; no budget extension"
+}
