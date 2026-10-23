@@ -59,7 +59,8 @@ def push_objective(data, rows, task, pair):
 
 
 def single_source_name(data):
-    return {'expert_network':'expert','curriculum_network':'curriculum'}.get(getattr(data,'dataset_kind',None))
+    return {'expert_network':'expert','curriculum_network':'curriculum',
+            'connected_expert_network':'connected_expert'}.get(getattr(data,'dataset_kind',None))
 
 
 def training_strata(data, rows):
@@ -114,8 +115,13 @@ def run(args):
     torch.set_num_threads(args.threads)
     expert_root=getattr(args,'expert_data',None)
     curriculum_root=getattr(args,'curriculum_data',None)
-    if expert_root and curriculum_root:raise ValueError('choose only one standalone dataset')
-    if curriculum_root:
+    connected_root=getattr(args,'connected_expert_data',None)
+    if sum(bool(x) for x in (expert_root,curriculum_root,connected_root))>1:
+        raise ValueError('choose only one standalone dataset')
+    if connected_root:
+        from experiments.connected_expert_utrap.data import load_training_data,audit_training_data
+        data=load_training_data(connected_root,task_mode=args.task_mode);audit_data=audit_training_data
+    elif curriculum_root:
         from experiments.curriculum_utrap.data import load_training_data,audit_training_data
         data=load_training_data(curriculum_root,task_mode=args.task_mode);audit_data=audit_training_data
     elif expert_root:
@@ -123,8 +129,9 @@ def run(args):
         data=load_training_data(expert_root,task_mode=args.task_mode);audit_data=audit_training_data
     else:
         data=load_union(task_mode=args.task_mode);audit_data=audit
-    dataset_kind='curriculum_network' if curriculum_root else ('expert_network' if expert_root else 'full_replay_four_path')
-    single='curriculum' if curriculum_root else ('expert' if expert_root else None)
+    dataset_kind=('connected_expert_network' if connected_root else
+                  ('curriculum_network' if curriculum_root else ('expert_network' if expert_root else 'full_replay_four_path')))
+    single=single_source_name(data)
     out=Path(args.output)
     task_mask_sha256=tensor_digest(data.raw.transition_infos['global_push_task_mask'])
     if args.resume:
@@ -151,7 +158,8 @@ def run(args):
         initial_model_sha256=tensor_digest(*model.state_dict().values()),script_sha256=file_digest(__file__))
     config['dataset_kind']=dataset_kind
     if single:
-        adapter='curriculum_utrap/data.py' if curriculum_root else 'expert_utrap_network/training_adapter.py'
+        adapter=('connected_expert_utrap/data.py' if connected_root else
+                 ('curriculum_utrap/data.py' if curriculum_root else 'expert_utrap_network/training_adapter.py'))
         config.update(push=f'1.0 {single}; 0.6 task({args.task_mode}) + 0.4 fixed B1',
             constraints=f'1.0 mean sampled {single} physical PHR; legal quotient-identical anchors scanned only',
             dual_clock=f'pre-primal residual, eta=1 per sampled {single} record visit',
@@ -226,6 +234,7 @@ def parse_args(argv=None):
     p.add_argument('--threads',type=int,default=4);p.add_argument('--resume')
     source=p.add_mutually_exclusive_group()
     source.add_argument('--expert-data',help='Use only this expert network directory instead of the legacy replay union')
+    source.add_argument('--connected-expert-data',help='Use the executed local-branch and exact-connector expert network')
     source.add_argument('--curriculum-data',help='Use this curriculum replay, retaining successful and failed transitions')
     return p.parse_args(argv)
 
