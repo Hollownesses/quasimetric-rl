@@ -43,7 +43,7 @@ def masked_mean(values, mask):
     return selected.mean() if selected.numel() else selected.sum()
 
 
-def push_objective(data, rows, task, pair):
+def push_objective(data, rows, task, pair, push_mode='task-b1'):
     # distances() returns pushes only for physical rows, so align masks likewise.
     physical_rows = rows[data.physical[rows]]
     infos = data.raw.transition_infos
@@ -52,8 +52,12 @@ def push_objective(data, rows, task, pair):
     task_value = masked_mean(task, task_mask)
     pair_value = masked_mean(pair, pair_mask)
     # Do not redistribute the absent task weight to B1, or fall back to all-task.
-    return .6 * task_value + .4 * pair_value, dict(
+    if push_mode not in ('task-b1','task-only'):raise ValueError('unknown push mode')
+    # Retain the same distance queries, masks and RNG consumption in the ablation.
+    # Zero B1 weight does not redistribute its .4 coefficient to task push.
+    return .6 * task_value + (.4 if push_mode=='task-b1' else 0.) * pair_value, dict(
         task_rows=int(task_mask.sum()), pair_rows=int(pair_mask.sum()),
+        optimized_pair_rows=int(pair_mask.sum()) if push_mode=='task-b1' else 0,
         empty_task_batch=not bool(task_mask.any()),
         task_mean=float(task_value.detach()), pair_mean=float(pair_value.detach()))
 
@@ -70,12 +74,12 @@ def training_strata(data, rows):
     return [('original',.5,rows),('path',.5,data.paths)]
 
 
-def advance(model,data,dual,optimizer,rows):
+def advance(model,data,dual,optimizer,rows,push_mode='task-b1'):
     optimizer.zero_grad(set_to_none=True);loss=0.;residuals=[];result={}
     strata=training_strata(data,rows)
     for name,weight,r in strata:
         edge,task,pair=distances(model,data,r);h=edge-data.cost[r]
-        push,component=push_objective(data,r,task,pair)
+        push,component=push_objective(data,r,task,pair,push_mode)
         loss=loss+weight*(-push+phr_terms(h,dual[r],100.)[0]);residuals.append(h.detach())
         result[name+'_push']=float(push.detach());result[name+'_components']=component
     if not torch.isfinite(loss):raise RuntimeError('nonfinite loss')
@@ -113,6 +117,7 @@ def scan(model,data,dual,visits,diagnostic_rows=None):
 
 def run(args):
     torch.set_num_threads(args.threads)
+    push_mode=getattr(args,'push_mode','task-b1')
     expert_root=getattr(args,'expert_data',None)
     curriculum_root=getattr(args,'curriculum_data',None)
     connected_root=getattr(args,'connected_expert_data',None)
@@ -139,6 +144,7 @@ def run(args):
         assert config['fingerprints']==data.fingerprint
         for key in ('seed','phr_steps','decay_steps','batch','threads'):assert config[key]==getattr(args,key),key
         assert config.get('task_mode','all')==args.task_mode, 'task mode mismatch'
+        assert config.get('push_mode','task-b1')==push_mode, 'push mode mismatch'
         assert config.get('task_mask_sha256',task_mask_sha256)==task_mask_sha256
         assert config.get('dataset_kind','full_replay_four_path')==dataset_kind,'dataset kind mismatch'
     else:
@@ -166,6 +172,9 @@ def run(args):
             sampling=f'{single} physical records without replacement per epoch; '+
                 ('all successes and failures retained' if curriculum_root else 'shared-segment duplicates retained'),
             b1_seed=42,adapter_sha256=file_digest(Path(__file__).parents[1]/adapter))
+    config['push_mode']=push_mode
+    if push_mode=='task-only':
+        config['push']=config['push'].replace('0.4 fixed B1','0.0 fixed B1 (task-only ablation)')
     resume_signature={key:config[key] for key in ('dataset_kind','fingerprints','seed','phr_steps',
         'decay_steps','batch','threads','task_mode','task_mask_sha256','rho','dual_step','push','constraints')}
     if not args.resume:(out/'config.json').write_text(json.dumps(config,indent=2)+'\n')
@@ -214,7 +223,7 @@ def run(args):
             lr=2e-5 if j<=args.phr_steps else 2e-6*.1**((j-args.phr_steps-1)/max(1,args.decay_steps-1))
             for group in optimizer.param_groups:group['lr']=lr
             indices=sampler.next(args.batch);rows=data.original[indices];visits[indices]+=1
-            update=advance(model,data,dual,optimizer,rows)
+            update=advance(model,data,dual,optimizer,rows,push_mode)
             for name,_,_ in training_strata(data,rows):
                 component=update[name+'_components']
                 if name+'_empty_task_batches' in push_counters:
@@ -231,6 +240,7 @@ def parse_args(argv=None):
     p.add_argument('--phr-steps',type=int,default=20000);p.add_argument('--decay-steps',type=int,default=5000)
     p.add_argument('--batch',type=int,default=256);p.add_argument('--audit-interval',type=int,default=1000)
     p.add_argument('--task-mode',choices=['all','witnessed'],default='all')
+    p.add_argument('--push-mode',choices=['task-b1','task-only'],default='task-b1')
     p.add_argument('--threads',type=int,default=4);p.add_argument('--resume')
     source=p.add_mutually_exclusive_group()
     source.add_argument('--expert-data',help='Use only this expert network directory instead of the legacy replay union')
