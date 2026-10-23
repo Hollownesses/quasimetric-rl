@@ -56,9 +56,11 @@ def audit(root):
             joins+=1
     assert backbone_count==64
     src,dst,cost=data.src.numpy(),data.dst.numpy(),data.cost.numpy()
-    rows=data.original.numpy(); goals=data.goal.unique().numpy()
+    from .reference import task_goals, validate_reference
+    rows=data.original.numpy(); goals=task_goals(data)
     # Graph references are calculated only after dataset construction; never fed to the loader.
     J,next_edge=reverse_distances(len(data.nodes),src,dst,cost,goals)
+    validate_reference(data,J)
     assert np.isfinite(J).all()
     assert np.all(J[src]<=cost.astype(float)+J[dst]+1e-8)
     np.savez_compressed(out/'graph_reference_audit_only.npz',distance=J,next_edge=next_edge,

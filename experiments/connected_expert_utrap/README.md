@@ -60,6 +60,19 @@ distances and old branch jumps, and writes `audit/report.md` and `network.png`.
 This is expert-assisted research data, not an independently held-out evaluation
 or a complete reachable-state representation of the continuous environment.
 
+Evaluation-reference correction (2026-10-24): task goals must be extracted from
+physical rows, because nonphysical rows contain unused zero placeholders. The
+audit now requires the exact zero-distance set to equal the legal task goal and
+checks Bellman **minimum equality** at every other node. To independently repair
+an existing reference without changing replay or overwriting old results:
+
+```sh
+$PY -m experiments.connected_expert_utrap.reference \
+  --root results/connected_expert_utrap_20261021/main \
+  --output results/connected_reference_fix_20261024/main
+$PY -m pytest -q experiments/connected_expert_utrap/test_reference.py
+```
+
 ```sh
 $PY -m pytest -q experiments/connected_expert_utrap/test_connected.py \
   experiments/expert_utrap_network/test_training_adapter.py \
