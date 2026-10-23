@@ -34,3 +34,46 @@ experiments/connected_expert_utrap/test_connected.py
 experiments/expert_utrap_network/test_training_adapter.py
 experiments/witnessed_task_push/test_witnessed.py -q`。
 仅提交代码、测试、协议、最终报告及引用图片；原始训练产物保留本地。
+
+## 监督和统一评估
+
+监督器每20秒读取已写日志，遇到新5000步扫描时记录监督时间和完整扫描。
+它检查数值有限性、QRL 的 B1 优化行数为零、记录访问次数差不超过1，以及
+两组终态/anchor为零；不会改变训练配置。原始监督记录保留本地。
+
+```sh
+python -m experiments.connected_expert_utrap.monitor \
+  --qrl-task results/connected_expert_task_only_20261024/main/train \
+  --td ../quasimetric-rl-td-comprare/results/connected_expert_td_20261024/main/train \
+  --output results/connected_expert_task_only_20261024/main/supervision.jsonl --watch
+```
+
+两组固定预算均完成后执行（输出目录必须不存在）：
+
+```sh
+MPLCONFIGDIR=/tmp/qrl-oct24 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+../quasimetric-rl/.venv/bin/python -m experiments.connected_expert_utrap.compare \
+  --data results/connected_expert_utrap_20261021/main \
+  --reference results/connected_reference_fix_20261024/main \
+  --qrl-b1 results/connected_expert_qrl_20261023/main/train \
+  --qrl-task results/connected_expert_task_only_20261024/main/train \
+  --td ../quasimetric-rl-td-comprare/results/connected_expert_td_20261024/main/train \
+  --output results/connected_expert_task_only_20261024/main/comparison
+```
+
+评估前严格核对三组初始模型/优化器/采样器/RNG、最终记录访问与采样器，
+以及TD全部候选图哈希。NRMSE定义为RMSE/RMS(reference)，局部违反阈值1e-5，
+分支最优容差1e-6；相同分数按最早代表记录破平局。额外报告当前task Bellman
+残差与task单边不等式，区分任务potential和全部IQE边可行性。45k及50k都在
+训练结束后评估，不据此选择停止时间。参考贪心应有58/58最优分支和307/307
+零regret图rollout，作为评估器自检。
+
+补充图结构审计：检查有向环和最长可能记录路径，报告307条轨迹起点中165个
+不重复节点的独立统计。该图无环且最长路径275步，因此300步图rollout的到达率
+不能单独证明学习成功；分支regret、完整路径regret及距离误差才有区分力。
+
+最终评估后可运行 `python -m experiments.connected_expert_utrap.diagnose
+--data results/connected_expert_utrap_20261021/main
+--comparison results/connected_expert_task_only_20261024/main/comparison`，复算task-only
+45k→50k分支翻转，并以参考单步advantage沿实际所选记录路径求和，核对完整路径
+regret的精确分解。此分析不改变模型、停止点或训练协议。
