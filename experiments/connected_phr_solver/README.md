@@ -20,3 +20,13 @@ MPLCONFIGDIR=/tmp/qrl-oct24 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 ../quasimet
 ```
 
 只提交源码、测试、协议、报告和报告引用图；JSON/NPZ、checkpoint、日志不提交。
+
+## 第二项：同预算 PHR 求解时钟对照
+
+冻结设计见 [SOLVER_PROTOCOL.md](SOLVER_PROTOCOL.md)。`train.py` 只依赖原训练记录；`analyze.py` 在两组完成后检查初始完整状态、最终采样和逐记录 nominal dual 步长完全配对，再加载修正参考。训练配置对协议、训练源码及共同父 checkpoint 记录 SHA256，运行期间拒绝源码漂移；仅支持完成外层边界后的确定性恢复，拒绝恢复最终外层更新前的审计 checkpoint。
+
+```sh
+MPLCONFIGDIR=/tmp/qrl-oct24 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 ../quasimetric-rl/.venv/bin/python -m experiments.connected_phr_solver.analyze --root results/connected_phr_solver_20261024/main
+```
+
+`analyze.py` 的 comparison 目录必须不存在。训练会写入0/5000步监督与每500步全量前向审计；分析复核监督记录和最终预算一致性，每个块的预算哈希也保存在日志中。测试命令：`python -m pytest experiments/connected_phr_solver/test_solver.py experiments/connected_expert_utrap/test_reference.py experiments/connected_expert_utrap/test_compare.py -q`。
