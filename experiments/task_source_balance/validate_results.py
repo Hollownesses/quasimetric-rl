@@ -11,7 +11,7 @@ from .train import write
 
 
 def run(root):
-    root=Path(root);out=root/'comparison';summary=json.loads((out/'summary.json').read_text())
+    root=Path(root).resolve();out=root/'comparison';summary=json.loads((out/'summary.json').read_text())
     protocol=json.loads((root/'protocol.json').read_text());torch.set_num_threads(1)
     for p,h in protocol['source_files'].items():assert file_digest(p)==h,p
     data=load_training_data(protocol['data']);physical=data.original.numpy();src=data.src.numpy();dst=data.dst.numpy();cost=data.cost.double().numpy()
@@ -50,8 +50,16 @@ def run(root):
                 unique_episodes[e['start']]=e
             assert len(unique_episodes)==165 and len(details['episodes'])==307
             assert abs(np.mean([e['regret'] for e in unique_episodes.values()])-result['decisions']['unique_start_rollouts']['mean_successful_regret'])<1e-9
-    files=[root/'protocol.json',root/'validation.json',root/'runtime.json',root.parent/'tests.log',root.parent/'integration_smoke.json',
-           out/'summary.json',out/'report.md',out/'arrays.npz',out/'comparison.png',out/'analysis_source.py']
+    files=[root/'protocol.json',out/'summary.json',out/'report.md',out/'arrays.npz',
+           out/'comparison.png',out/'analysis_source.py']
+    if 'initial_checkpoint' in protocol:
+        initial=Path(protocol['initial_checkpoint'])
+        assert file_digest(initial)==protocol['initial_checkpoint_sha256']
+        files.append(initial)
+    # These environment/test artifacts exist for the original manually prepared
+    # seed606 run; new paired runs do not fabricate them or require old logs.
+    files += [p for p in (root/'validation.json',root/'runtime.json',root.parent/'tests.log',
+                         root.parent/'integration_smoke.json') if p.exists()]
     for arm in ('R0','R1'):
         files += [root/arm/name for name in ('initial.pt','phr.pt','final.pt','COMPLETE','config.json','training.jsonl')]
     manifest=dict(passed=True,official_endpoint=50000,no_extra_training=True,

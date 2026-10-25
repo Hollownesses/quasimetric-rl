@@ -73,13 +73,31 @@ def learning_rate(step,main,decay):
     return 2e-5 if step<=main else 2e-6*.1**((step-main-1)/max(1,decay-1))
 
 
-def initial_state(data,seed):
+def initial_state(data,seed,sampler_seed=2307):
     torch.manual_seed(seed)
     model=IndexedIQE(data.small,'encoder',0,initialization_seed=seed)
     optimizer=torch.optim.AdamW(model.parameters(),lr=2e-5,weight_decay=0.)
     dual=torch.zeros(len(data.src));visits=torch.zeros(len(data.original),dtype=torch.long)
-    sampler=EpochSampler(len(data.original),seed+1701)
+    sampler=EpochSampler(len(data.original),sampler_seed)
     return model,optimizer,dual,visits,sampler
+
+
+def initial_fields(model,optimizer,dual,visits,sampler):
+    return dict(model=model.state_dict(),optimizer=optimizer.state_dict(),dual=dual,visits=visits,
+        sampler=sampler.state_dict(),rng=torch.get_rng_state(),
+        push_counters=dict(connected_expert_empty_task_batches=0,
+            connected_expert_task_visits=0,connected_expert_pair_visits=0))
+
+
+def load_initial(protocol):
+    # Protocols from the original seed606 experiment retain their old identity.
+    path=protocol.get('initial_checkpoint',protocol['historical_initial'])
+    digest=protocol.get('initial_checkpoint_sha256',protocol['historical_initial_sha256'])
+    assert file_digest(path)==digest,('initial checkpoint changed',path)
+    initial=torch.load(path,map_location='cpu',weights_only=True)
+    assert initial['step']==0 and initial['fingerprints']==protocol['fingerprints']
+    assert initial['initialization_seed']==protocol['seed'], 'initialization seed mismatch'
+    return initial
 
 
 def restore(saved,signature,model,optimizer,sampler):
@@ -100,13 +118,11 @@ def run(args):
         assert data.raw.transition_infos[key][data.original].bool().all()
     signature=dict(protocol_sha256=file_digest(args.protocol),task_weight_mode=args.mode,
         weights_sha256=stats['weights_sha256'],fingerprints=data.fingerprint)
-    out=Path(args.output);model,optimizer,dual,visits,sampler=initial_state(data,protocol['seed'])
-    historical=torch.load(protocol['historical_initial'],map_location='cpu',weights_only=True)
-    assert file_digest(protocol['historical_initial'])==protocol['historical_initial_sha256']
-    current=dict(model=model.state_dict(),optimizer=optimizer.state_dict(),dual=dual,visits=visits,
-                 sampler=sampler.state_dict(),rng=torch.get_rng_state())
-    assert historical['step']==0 and historical['fingerprints']==data.fingerprint
-    for key,value in current.items(): assert equal(value,historical[key]),('historical initial mismatch',key)
+    out=Path(args.output);model,optimizer,dual,visits,sampler=initial_state(
+        data,protocol['seed'],protocol.get('sampler_seed',2307))
+    initial=load_initial(protocol)
+    current=initial_fields(model,optimizer,dual,visits,sampler)
+    for key,value in current.items(): assert equal(value,initial[key]),('paired initial mismatch',key)
     offset=0;counters=dict(connected_expert_empty_task_batches=0,connected_expert_task_visits=0,connected_expert_pair_visits=0)
     # Persist a hash chain of the ordered row sequence, resumable without serializing a hashlib object.
     sequence='0'*64
@@ -119,7 +135,10 @@ def run(args):
         out.mkdir(parents=True,exist_ok=False)
         write(out/'config.json',dict(protocol,training_signature=signature,task_weight_mode=args.mode,
             initial_model_sha256=tensor_digest(*model.state_dict().values())))
-        write(out/'initial_verification.json',dict(historical_initial_exact=True,fields=list(current),zero_dual=True))
+        write(out/'initial_verification.json',dict(paired_initial_exact=True,
+            historical_initial_exact=protocol.get('initial_exact_to_history',True),
+            seed=protocol['seed'],sampler_seed=protocol.get('sampler_seed',2307),
+            fields=list(current),zero_dual=True))
         torch.save(weights,out/'task_weights.pt')
     def save(step,name):
         state=dict(step=step,initialization_seed=protocol['seed'],model=model.state_dict(),optimizer=optimizer.state_dict(),

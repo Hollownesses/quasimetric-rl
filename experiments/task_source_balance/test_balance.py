@@ -97,3 +97,117 @@ def test_resume_complete_state_and_mode_guard(data,tmp_path):
             train.restore(saved,dict(signature,task_weight_mode='other'),t,q,ss)
         with pytest.raises(ValueError,match='configuration/weight mode'):
             train.restore(saved,dict(signature,weights_sha256='changed'),t,q,ss)
+
+
+@pytest.mark.parametrize('seed',[606,707,808])
+def test_initialization_seed_is_independent_of_sampler(data,seed):
+    a=train.initial_state(data,seed)
+    left=copy.deepcopy(train.initial_fields(*a))
+    b=train.initial_state(data,seed,2307)
+    assert train.equal(left,train.initial_fields(*b))
+    other=train.initial_state(data,seed+1,2307)
+    assert not train.equal(left['model'],other[0].state_dict())
+    assert train.equal(left['sampler'],other[-1].state_dict())
+    custom=train.initial_state(data,seed,999)
+    assert train.equal(left['model'],custom[0].state_dict())
+    assert not train.equal(left['sampler'],custom[-1].state_dict())
+
+
+@pytest.mark.parametrize('seed',[707,808])
+def test_new_seed_cli_state_and_resume(data,tmp_path,monkeypatch,seed):
+    from . import prepare
+    # Exercise actual initialization, protocol freezing and complete run/resume;
+    # full physics replay auditing is covered by the dataset audit tests.
+    monkeypatch.setattr(prepare,'load_training_data',lambda _:data)
+    monkeypatch.setattr(prepare,'audit_training_data',lambda _:dict(test_fixture=True))
+    root=tmp_path/'main'
+    protocol=prepare.run(root,seed,2307)
+    assert protocol['seed']==seed and protocol['sampler_seed']==2307
+    assert protocol['b1_seed']==42 and not protocol['initial_exact_to_history']
+    initial=train.load_initial(protocol)
+    assert initial['initialization_seed']==seed and not initial['dual'].any()
+    # Short test budget lives exclusively in pytest's temporary directory.
+    protocol.update(phr_steps=2,decay_steps=2,audit_interval=2,threads=1)
+    train.write(root/'protocol.json',protocol)
+    ends={}
+    for arm,mode in [('R0','record'),('R1','source')]:
+        args=SimpleNamespace(protocol=str(root/'protocol.json'),output=str(root/arm),mode=mode,resume=None)
+        train.run(args)
+        before=torch.load(root/arm/'final.pt',weights_only=True)
+        args.resume=str(root/arm/'phr.pt')
+        train.run(args)
+        ends[arm]=torch.load(root/arm/'final.pt',weights_only=True)
+        assert train.equal(before,ends[arm])
+        with pytest.raises(ValueError,match='configuration/weight mode'):
+            train.restore(ends[arm],dict(ends[arm]['training_signature'],protocol_sha256='other-seed'),
+                          *train.initial_state(data,seed)[:2],train.initial_state(data,seed)[-1])
+    for field in ('sampler','visits','rng','push_counters','sampling_chain_sha256'):
+        assert train.equal(ends['R0'][field],ends['R1'][field])
+    assert not train.equal(ends['R0']['model'],ends['R1']['model'])
+    assert all(train.equal(torch.load(root/arm/'initial.pt',weights_only=True)[key],initial[key])
+               for arm in ('R0','R1') for key in ('model','optimizer','dual','visits','sampler','rng','push_counters'))
+    # A changed seed must not pass the initial-checkpoint guard.
+    with pytest.raises(AssertionError,match='initialization seed'):
+        train.load_initial(dict(protocol,seed=seed+1))
+
+
+def test_new_seed_report_has_accurate_labels(tmp_path):
+    import json
+    from pathlib import Path
+    from .analyze import render_report
+    summary=json.loads(Path('results/task_source_balance_20261025/main/comparison/summary.json').read_text())
+    summary.update(seed=707,sampler_seed=2307)
+    summary['pairing']['initial_exact_to_history']=False
+    render_report(tmp_path,summary)
+    report=(tmp_path/'report.md').read_text()
+    assert '配置：seed707' in report and '本报告为单seed707' in report
+    assert '与历史seed606初始状态一致：False' in report
+    assert 'historical 为 seed606 的旧模型，仅作背景参考' in report
+
+
+def test_legacy_seed606_initial_and_full_budget_verification(data):
+    import json
+    from pathlib import Path
+    from .analyze import verify
+    root=Path('results/task_source_balance_20261025/main')
+    protocol=json.loads((root/'protocol.json').read_text())
+    assert 'initial_checkpoint' not in protocol
+    assert train.load_initial(protocol)['initialization_seed']==606
+    pairing,logs=verify(root,protocol,data)
+    assert pairing['paired_initial_exact'] and pairing['initial_exact_to_history']
+    assert pairing['final_sampling_budget_exact_to_history']
+    assert pairing['final_sampler_visits_rng_counters_exact_between_arms_and_history']
+    assert pairing['steps']==50000 and pairing['visits_sum']==12735416
+    assert len(logs['R0'])==len(logs['R1'])==51
+
+
+def test_pair_launcher_waits_for_both_and_propagates_failure(tmp_path,monkeypatch):
+    from . import pair
+    commands=[];evaluations=[];processes=[]
+    def prepare(output,seed,sampler):
+        assert seed==707 and sampler==2307
+        from pathlib import Path
+        Path(output).mkdir()
+    class Process:
+        def __init__(self,command,**kwargs):
+            self.code=None;self.result=0 if len(processes)==0 else 1
+            commands.append(command);processes.append(self)
+        def wait(self):self.code=self.result;return self.code
+        def poll(self):return self.code
+        def terminate(self):self.code=-15
+    monkeypatch.setattr(pair,'prepare',prepare)
+    monkeypatch.setattr(pair.subprocess,'Popen',Process)
+    monkeypatch.setattr(pair.subprocess,'run',lambda *args,**kwargs:evaluations.append(args))
+    with pytest.raises(RuntimeError,match='exit codes'):
+        pair.run(tmp_path/'main',707)
+    assert len(commands)==2 and all(p.code is not None for p in processes)
+    assert not evaluations
+    processes.clear();commands.clear()
+    class Success(Process):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs);self.result=0
+    monkeypatch.setattr(pair.subprocess,'Popen',Success)
+    pair.run(tmp_path/'success',707)
+    assert len(evaluations)==2
+    assert [args[0][2] for args in evaluations]==[
+        'experiments.task_source_balance.analyze','experiments.task_source_balance.validate_results']

@@ -13,13 +13,14 @@ from experiments.connected_phr_solver.diagnostic import decompose
 from experiments.connected_phr_solver.objective import all_distances
 from experiments.four_path_factorial.run import IndexedIQE,file_digest,tensor_digest
 from experiments.full_replay_four_path.train import EpochSampler
-from .train import equal,write,task_weights
+from .train import equal,write,task_weights,load_initial
 
 
 def verify(root,protocol,data):
     initial={};final={};hist=Path(protocol['historical_initial']).parent
     history_initial=torch.load(hist/'initial.pt',weights_only=True)
     history_final=torch.load(hist/'final.pt',weights_only=True)
+    common_initial=load_initial(protocol)
     audits={};configs={}
     for arm,mode in [('R0','record'),('R1','source')]:
         folder=root/arm;done=json.loads((folder/'COMPLETE').read_text())
@@ -32,8 +33,9 @@ def verify(root,protocol,data):
         initial[arm]=torch.load(folder/'initial.pt',weights_only=True)
         final[arm]=torch.load(folder/'final.pt',weights_only=True)
         for key in ('model','optimizer','dual','visits','sampler','rng','push_counters'):
-            assert equal(initial[arm][key],history_initial[key]),(arm,key)
+            assert equal(initial[arm][key],common_initial[key]),(arm,key)
         assert initial[arm]['step']==0 and final[arm]['step']==50000
+        assert initial[arm]['initialization_seed']==final[arm]['initialization_seed']==protocol['seed']
         assert final[arm]['training_signature']==signature
         assert final[arm]['fingerprints']==data.fingerprint
         assert tensor_digest(final[arm]['task_weights'])==protocol['weights']['weights_sha256']
@@ -48,10 +50,12 @@ def verify(root,protocol,data):
         assert all(s['connected_expert_components']['optimized_pair_rows']==s['connected_expert_components']['pair_rows'] for s in updates)
     for key in ('sampler','visits','rng','push_counters','sampling_chain_sha256'):
         assert equal(final['R0'][key],final['R1'][key]),key
-    for key in ('sampler','visits','rng','push_counters'):
-        assert equal(final['R0'][key],history_final[key]),('historical final budget',key)
+    history_budget_equal=all(equal(final['R0'][key],history_final[key])
+        for key in ('sampler','visits','push_counters'))
+    if protocol.get('sampler_seed',2307)==2307:
+        assert history_budget_equal, 'historical final sampling budget mismatch'
     # Independently reconstruct every ordered batch, including the original partial batches.
-    sampler=EpochSampler(len(data.original),2307);visits=torch.zeros_like(final['R0']['visits']);chain='0'*64
+    sampler=EpochSampler(len(data.original),protocol.get('sampler_seed',2307));visits=torch.zeros_like(final['R0']['visits']);chain='0'*64
     for _ in range(50000):
         ids=sampler.next(256);visits[ids]+=1;rows=data.original[ids]
         chain=hashlib.sha256(bytes.fromhex(chain)+rows.numpy().tobytes()).hexdigest()
@@ -59,8 +63,13 @@ def verify(root,protocol,data):
     assert torch.equal(visits,final['R0']['visits']) and equal(sampler.state_dict(),final['R0']['sampler'])
     same_cfg=[k for k in configs['R0'] if configs['R0'][k]!=configs['R1'][k]]
     assert set(same_cfg)=={'training_signature','task_weight_mode'}
-    return dict(initial_exact_to_history=True,initial_exact_fields=['model','optimizer','dual','visits','sampler','rng','push_counters'],
-        final_sampler_visits_rng_counters_exact_between_arms_and_history=True,
+    fields=['model','optimizer','dual','visits','sampler','rng','push_counters']
+    initial_history_equal=all(equal(initial['R0'][key],history_initial[key]) for key in fields)
+    assert initial_history_equal==protocol.get('initial_exact_to_history',True)
+    return dict(initial_exact_to_history=initial_history_equal,paired_initial_exact=True,initial_exact_fields=fields,
+        final_sampler_visits_rng_counters_exact_between_arms=True,
+        final_sampling_budget_exact_to_history=history_budget_equal,
+        final_sampler_visits_rng_counters_exact_between_arms_and_history=history_budget_equal and equal(final['R0']['rng'],history_final['rng']),
         entire_ordered_sequence_independently_verified=True,sampling_chain_sha256=chain,
         steps=50000,visits_sum=int(visits.sum()),visits_min=int(visits.min()),visits_max=int(visits.max()),
         audits_per_arm=len(audits['R0']),final_model_exact_between_arms=equal(final['R0']['model'],final['R1']['model']),
@@ -88,6 +97,7 @@ def decomposition(data,ref,next_edge,path,prediction,starts):
 
 def render_report(out,summary):
     results=summary['results'];r0=results['R0'];r1=results['R1'];pair=summary['pairing']
+    seed=summary.get('seed',606);sampler_seed=summary.get('sampler_seed',2307)
     conclusion=(
         f"本轮R1的去重源NRMSE为{r1['distance']['unique_sources']['nrmse_percent']:.2f}%（R0为{r0['distance']['unique_sources']['nrmse_percent']:.2f}%），"
         f"最远四分位为{r1['distance']['longest_quartile']['nrmse_percent']:.2f}%（R0为{r0['distance']['longest_quartile']['nrmse_percent']:.2f}%）。"
@@ -98,22 +108,23 @@ def render_report(out,summary):
     lines=['# task push 去重源均衡配对实验（50k 正式终点）','',
         conclusion,'','本轮仅将 task 的经验目标分布从物理记录均匀改为 canonical 源状态均匀。'
         '所有重复记录、轨迹、B1 配对、原始一步成本、PHR 与 dual 时钟均保留。'
-        'R0/R1 都是从原 initial.pt 对齐的零步状态重新训练，不是任何诊断终点的续训。'
+        f'R0/R1 都从本次 seed{seed} 的共同零步状态重新训练。historical 为 seed606 的旧模型，仅作背景参考。'
         '训练行为按e06e2ad核对，复用与50452ef相同的原训练器；未继承e162dd3或b7c940f的训练改动。'
         '完成两组预算后才读取保留eb2967d修正的 `results/connected_reference_fix_20261024/main` 参考。','',
         '## 配置、测试与配对核验','',
-        '配置：seed606，batch256，sampler seed2307，B1 seed42，task_mode=all，AdamW weight decay=0，'
+        f'配置：seed{seed}，batch256，sampler seed{sampler_seed}，B1 seed42，task_mode=all，AdamW weight decay=0，'
         '逐记录 PHR rho100，primal 前残差 eta1 逐访问更新乘子。45k×2e-5，随后5k从2e-6几何下降至2e-7；'
         '每组4线程，每1000步全量审计，固定50k。原采样器保留每epoch最后40条的小批次。',
         '',f"加载得到 N={summary['weights']['N']}、M={summary['weights']['M']}；平均权重={summary['weights']['mean']:.10f}。"
         '全局权重为 N/(M n(s))；minibatch 不除权重和。float32源总权重差异小于6e-7。','',
-        f"初始模型、优化器、零乘子、访问计数、sampler、RNG 和计数器与历史逐项一致。"
+        f"R0/R1初始模型、优化器、零乘子、访问计数、sampler、RNG 和计数器与本次共同初始状态逐项一致。"
+        f"与历史seed606初始状态一致：{pair['initial_exact_to_history']}。"
         f"完整有序采样序列已独立重建核验；两组每行访问{pair['visits_min']}–{pair['visits_max']}次，"
         f"总访问{pair['visits_sum']:,}次，均完成{pair['audits_per_arm']}次全量审计（含0步）。"
-        '最终乘子允许独立演化；最终 sampler/visits/RNG/counters 同历史及两组一致。','',
-        '测试记录见 `../../tests.log` 与 `../../integration_smoke.json`（10项pytest测试及两模式完整恢复烟雾检查）。原始默认训练器未改动；'
-        'R0 与 e06e2ad 连续更新对照、R1 加权值与梯度、显式 B1/PHR/dual 公式、'
-        '全50k采样预算以及完整恢复与配置拒绝均通过。','',
+        '最终乘子允许独立演化；两组最终sampler/visits/RNG/counters一致，采样预算另由独立重建核验。','',
+        '源码测试入口见 `experiments/task_source_balance/test_balance.py`；'
+        '包含历史R0更新对照、加权值与梯度、B1/PHR/dual公式、完整预算、初始化及恢复配置拒绝检查。'
+        '本轮训练和结果核验记录见本目录输出；不自动沿用其他运行的测试通过声明。','',
         '## 任务距离','',
         '误差与 bias 均相对修正后的图参考，bias=预测−参考；NRMSE=RMSE/RMS(参考)。records 使用物理记录自然重复权重，'
         'unique_sources 每源一次；最远四分位阈值只用于事后评价。','',
@@ -160,7 +171,8 @@ def render_report(out,summary):
             +('三角松弛确有下降；同时须结合边项变化判断贡献。' if b['triangle_slack']<a['triangle_slack'] else '三角松弛未下降，不能将误差改善归因为三角松弛下降。'))
     a=r0['decomposition']['groups']['longest_quartile'];b=r1['decomposition']['groups']['longest_quartile']
     lines+=['',f"最远四分位累计三角松弛从{a['triangle_slack']:.4f}变为{b['triangle_slack']:.4f}，累计边项从{a['edge_slack']:.4f}变为{b['edge_slack']:.4f}。"
-        '本轮远端有符号gap变化主要对应三角松弛项下降，不能仅用更大的边违反解释；但累计边项更负、局部违反增加以及预测转为高估同样存在。'
+        f"两项变化分别为{b['edge_slack']-a['edge_slack']:+.4f}与{b['triangle_slack']-a['triangle_slack']:+.4f}，"
+        '需结合本seed的bias与局部违反判断改善或恶化；不能预设其他seed复现历史606的方向。'
         '这不是对RMSE的可加归因，也不等于独立识别了优化过程中的因果中介。',
         '',f"R1的去重源bias为{r1['distance']['unique_sources']['bias']:+.4f}，最远四分位bias为{r1['distance']['longest_quartile']['bias']:+.4f}。"
         f"记录MAE为{r1['distance']['records']['mae']:.4f}（R0为{r0['distance']['records']['mae']:.4f}），165起点最优完整路径数为{r1['decisions']['unique_start_rollouts']['optimal_rollouts']}（R0为{r0['decisions']['unique_start_rollouts']['optimal_rollouts']}）。"
@@ -173,9 +185,9 @@ def render_report(out,summary):
     lines+=['',f"R1的45k→50k去重源NRMSE为{summary['stage45000']['R1']['distance']['unique_sources']['nrmse_percent']:.4f}%→{r1['distance']['unique_sources']['nrmse_percent']:.4f}%，"
         f"最优分支数为{summary['stage45000']['R1']['decisions']['optimal_branch_choices']}→{r1['decisions']['optimal_branch_choices']}；无论过程指标是否更好，均保留50k为正式终点。",
         '',f"R0最终模型与历史逐位一致：{pair['r0_final_model_exact_to_history']}。"
-        '初始状态与采样预算严格一致不保证4线程最终参数逐位复现。'
-        '原50k仅作历史复核，配对比较以本轮R0/R1为准。','',
-        '## 范围与复现','','单seed606、有限固定训练图、4线程；结果不证明多seed稳定性、连续环境最优性、'
+        '新seed不要求与历史seed606参数一致；四线程也不承诺同seed逐位复现。'
+        '原50k仅作历史复核，配对比较以本轮同seed的R0/R1为准。','',
+        '## 范围与复现','',f'本报告为单seed{seed}、有限固定训练图、4线程；结果不证明多seed稳定性、连续环境最优性、'
         '未见状态泛化或MPPI闭环能力。不得把共享后缀记录视为独立统计样本。'
         '不追加预算、不搜索配置、不改变研究问题。','',
         '可复现命令与公式见仓库 `experiments/task_source_balance/PROTOCOL.md`；'
@@ -226,7 +238,8 @@ def run(root):
         assert a['source']==b['source']
         if a['chosen_row']!=b['chosen_row']:
             branch_changes.append(dict(source=a['source'],R0_choice=a['chosen_row'],R1_choice=b['chosen_row'],R0_regret=a['regret'],R1_regret=b['regret']))
-    summary=dict(results=results,stage45000=stages,pairing=pairing,weights=stats,graph_structure=structure,
+    summary=dict(seed=protocol['seed'],sampler_seed=protocol.get('sampler_seed',2307),
+        results=results,stage45000=stages,pairing=pairing,weights=stats,graph_structure=structure,
         fingerprints=data.fingerprint,protocol_sha256=file_digest(root/'protocol.json'),reference_sha256=info['reference_sha256'],
         reference_correction=info['changed'],branch_changes=branch_changes,oracle=oracle['summary'],
         evaluation_source_sha256=file_digest(__file__),training=logs,
