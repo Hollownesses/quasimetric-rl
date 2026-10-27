@@ -1,0 +1,13 @@
+# CPU-compatible versions; official requirements use CUDA extras by default.
+jax==0.4.35
+jaxlib==0.4.35
+flax==0.10.2
+optax==0.2.4
+orbax-checkpoint==0.10.3
+distrax==0.1.5
+numpy==1.26.4
+scipy==1.14.1
+ml_collections
+matplotlib
+moviepy==1.0.3
+wandb==0.18.7
