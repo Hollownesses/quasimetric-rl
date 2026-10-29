@@ -39,3 +39,22 @@ $P "$E/check_checkpoint.py" "$R/full" 1000000
 ```
 
 该命令不等于完整论文复现：原文还使用末三次评价和多seed汇总。当前研究主要关注100k模型的距离恢复；原生MQE是已有方法参照，E2才是相同IQE表示的一步／多步因果对照。MQE终点仍需追加同库V贪心和距离场比较；没有这些结果时不能仅靠actor成功率断言critic机制得到解决。
+
+## 同库V贪心与距离场
+
+详见[终点诊断协议](DIAGNOSTICS_PROTOCOL.md)。通用物理/图模块与原E0/E1工具作等价验证，MQE进程只加载原生算法；正式报告以max距离聚合为主要结果，两ensemble另列，不能择优。
+
+```bash
+G=results/ogbench_critic_20261029
+$P experiments/ogbench_diagnostics/test_core.py
+$P "$E/test_diagnostics.py"
+$P "$E/test_finish_mqe.py"
+# 原两步smoke checkpoint，仅作I/O验证，路径取实际保存位置。
+$P "$E/diagnostics.py" --checkpoint "$R/smoke/OGBench/mqe_navigate_smoke/<实际运行目录>" --epoch 2 --bank "$G/evaluation_bank.npz" --output "$R/diagnostics_smoke" --smoke
+$P "$E/verify_diagnostics.py" "$R/diagnostics_smoke" --bank "$G/evaluation_bank.npz" --baseline-field "$G/baseline_field" --smoke
+# 正式100k终点：将checkpoint路径换成实际保存目录；全部25例、两ensemble/max与actor都运行。
+$P "$E/diagnostics.py" --checkpoint "$R/main/OGBench/mqe_navigate_100k/<实际运行目录>" --epoch 100000 --bank "$G/evaluation_bank.npz" --output "$R/endpoint_diagnostics"
+$P "$E/verify_diagnostics.py" "$R/endpoint_diagnostics" --bank "$G/evaluation_bank.npz" --baseline-field "$G/baseline_field"
+```
+
+当前研究目录亦可在训练中挂接`finish_mqe.py "$G" --producer-pid <实际训练PID> --launcher-pid <实际launcherPID>`；它只消费`$G/mqe_100k_seed0`的固定终点，不重复训练或全状态保存加载。运行身份与源码已锁定，已有LAUNCHED标记禁止重复挂接。数值产物在`mqe_100k_diagnostics`，后处理日志在`postprocess_mqe`；DIAGNOSTICS_READY出现后仍须完成研究分析与报告。
