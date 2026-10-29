@@ -5,7 +5,7 @@ import heapq
 import json
 from pathlib import Path
 
-from common import load_base,load_data,distances
+from common import load_base,load_data,distances,sha256,tree_digest
 import mujoco
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -149,6 +149,7 @@ def graph_metrics(nodes,graph,values,goal=GOAL,anchor=ANCHOR):
 
 def run(output,checkpoint=None,epoch=None,spacing=.2,radius_delta=0.):
     output=Path(output); output.mkdir(parents=True,exist_ok=False)
+    checkpoint=Path(checkpoint).resolve() if checkpoint else None
     agent,config=load_base()
     if checkpoint: agent=restore_agent(agent,str(checkpoint),epoch)
     env,_,_=load_data(config)
@@ -180,6 +181,10 @@ def run(output,checkpoint=None,epoch=None,spacing=.2,radius_delta=0.):
     stats.update(spacing=spacing,radius=radius,reference_replay_success=bool(info['success']),
         reference_replay_steps=len(trace)-1,reference_replay_max_tracking_error=max(tracking,default=0.),
         goal=GOAL.tolist(),anchor=ANCHOR.tolist(),checkpoint=str(checkpoint) if checkpoint else 'official100k')
+    stats['epoch']=epoch if checkpoint else 100000
+    stats['critic_digest']=tree_digest(agent.network.params['modules_value'])
+    if checkpoint:
+        stats['checkpoint_sha256']=sha256(checkpoint/f'params_{epoch}.pkl')
     np.savez_compressed(output/'reference_replay.npz',observations=trace,goal=GOAL)
     (output/'summary.json').write_text(json.dumps(stats,indent=2)+'\n')
     env.close()

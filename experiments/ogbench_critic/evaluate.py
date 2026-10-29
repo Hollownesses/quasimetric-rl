@@ -118,6 +118,7 @@ def rollout(agent,env,case,controller):
 def run(bank,output,checkpoint=None,epoch=None,controller='real-greedy'):
     output=Path(output)
     output.mkdir(parents=True,exist_ok=False)
+    checkpoint=Path(checkpoint).resolve() if checkpoint else None
     agent,config=load_base()
     if checkpoint:
         agent=restore_agent(agent,str(checkpoint),epoch)
@@ -125,6 +126,10 @@ def run(bank,output,checkpoint=None,epoch=None,controller='real-greedy'):
     cases=read_bank(bank)
     result=dict(bank_sha256=sha256(bank),controller=controller,action_grid_sha256=tree_digest(ACTIONS),
                 checkpoint=str(checkpoint) if checkpoint else 'official100k',cases={},tasks={})
+    result['epoch']=epoch if checkpoint else 100000
+    result['critic_digest']=tree_digest(agent.network.params['modules_value'])
+    if checkpoint:
+        result['checkpoint_sha256']=sha256(checkpoint/f'params_{epoch}.pkl')
     for name,case in cases.items():
         info,traj=rollout(agent,env,case,controller)
         np.savez_compressed(output/f'{name}.npz',**traj)

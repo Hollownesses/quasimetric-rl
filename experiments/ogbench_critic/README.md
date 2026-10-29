@@ -24,12 +24,30 @@ $P "$E/evaluate.py" --bank "$R/evaluation_bank.npz" --output "$R/baseline_actor"
 $P "$E/evaluate.py" --bank "$R/evaluation_bank.npz" --output "$R/baseline_greedy"
 # 预先确认协议后启动，默认各额外10k；配对批次来自同一采样调用。
 $P "$E/train.py" --output "$R/paired_10k" --steps 10000 --seed 2001 --log-interval 500 --save-interval 5000
+$P "$E/verify.py" "$R/paired_10k" --steps 10000 --bank "$R/evaluation_bank.npz"
 # 两组只评价110k终点；不得根据105k中间模型选最好。
 for ARM in pair goal; do
   $P "$E/evaluate.py" --bank "$R/evaluation_bank.npz" --output "$R/${ARM}_greedy" --checkpoint "$R/paired_10k/$ARM" --epoch 110000
   $P "$E/field.py" --output "$R/${ARM}_field" --checkpoint "$R/paired_10k/$ARM" --epoch 110000
 done
+$P "$E/compare.py" "$R"
 ```
+
+`compare.py` 只接受两组完整10k终点、通过冻结验证的110k checkpoint、相同评价库与动作网格。评价产物记录实际加载的epoch、checkpoint SHA256和critic参数摘要；分析会逐项核对，避免将105k中间评价误充终点。训练未完成时分析入口会拒绝生成结论。它同时比较两类约束、尺度归一化距离场及五任务配对得失，最终解释还需结合逐步轨迹。
+
+用于核验完整预算结论边界的独立官方运行，见 `FULL_BASELINE_PROTOCOL.md`；它不改变E1配对协议。
+
+## 原始模型的梯度机制检查
+
+M1协议见 `MECHANISM_PROTOCOL.md`。固定原始100k模型、seed4400、32个官方采样批次，分别测量损失分量的一阶投影及实际一次Adam反事实；不查看E1中间模型，不保存新权重，也不用于修改E1预算。
+
+```bash
+$P "$E/test_mechanism.py"
+$P "$E/mechanism.py" "$R" --output "$R/mechanism_gradient"
+$P "$E/report_mechanism.py" "$R/mechanism_gradient"
+```
+
+`$R/baseline_field/field.npz` 必须来自前述固定原始模型的场复核。SGD分量投影与实际Adam变化分开解释；32批次不是32个模型复现。本项只解释原始模型附近的训练压力，不代替固定预算终点的距离场/执行检验。
 
 `training_complete.json` 记录固定更新数、冻结模块参数/动量哈希和共享批次流哈希。CSV 同时记录两类约束，不能只比较各自被优化的统计。图和greedy均是诊断工具，不属于官方 actor 评价或论文结果；所有5000/10000续训 checkpoint均保留，评价仅取10000终点。训练失败应保留目录与日志，使用新结果路径修复，不覆盖、缩水或换任务。
 
