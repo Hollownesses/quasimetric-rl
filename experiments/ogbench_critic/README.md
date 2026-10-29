@@ -35,7 +35,11 @@ $P "$E/compare.py" "$R"
 
 `compare.py` 只接受两组完整10k终点、通过冻结验证的110k checkpoint、相同评价库与动作网格。评价产物记录实际加载的epoch、checkpoint SHA256和critic参数摘要；分析会逐项核对，避免将105k中间评价误充终点。训练未完成时分析入口会拒绝生成结论。它同时比较两类约束、尺度归一化距离场及五任务配对得失，最终解释还需结合逐步轨迹。
 
+已有训练可用 `finish_e1.py` 接上终点后处理，参数为结果根目录及 `--producer-pid` 的实际训练PID。它以启动时间和命令核实进程身份，等待固定10k完成后依次执行verify、两组greedy/field和compare；不启动任何训练。进程退出却没有完整终点、PID复用、源码变化或任何子步骤失败都会保留日志并停止。故障注入测试为 `test_finish_e1.py`。`postprocess_e1/ANALYSIS_READY` 仅表示报告已生成，尚需研究者审阅、图形检查和实验commit，不代表总目标达成。
+
 用于核验完整预算结论边界的独立官方运行，见 `FULL_BASELINE_PROTOCOL.md`；它不改变E1配对协议。
+
+多步相关的官方源码及论文配置差异，见 `MQE_REVIEW.md`；当前尚未启动MQE，也不在E1终点前决定E2方案。
 
 ## 原始模型的梯度机制检查
 

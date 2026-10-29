@@ -82,8 +82,13 @@ def run(root):
     output=root/'e1_comparison';output.mkdir(exist_ok=True)
     pairings={f'{a}_to_{b}':paired_counts(greedy[a]['cases'],greedy[b]['cases'])
               for a,b in [('baseline','pair'),('baseline','goal'),('pair','goal')]}
+    task4_pairing=paired_counts(
+        {k:v for k,v in greedy['pair']['cases'].items() if k.startswith('task4_')},
+        {k:v for k,v in greedy['goal']['cases'].items() if k.startswith('task4_')})
     idx=cKDTree(arrays['baseline']['nodes']).query(arrays['baseline']['path'])[1]
     fixed_path={arm:arrays[arm]['values'][idx] for arm in ARMS}
+    fixed_probe={arm:dict(gap=float(v[15]-v[0]),
+        relative_gap=float((v[15]-v[0])/((v[15]+v[0])/2+1e-6))) for arm,v in fixed_path.items()}
     fig,axes=plt.subplots(2,3,figsize=(15,8))
     specs=[('heldout/pair_squared_positive','Held-out pair penalty',True),
            ('heldout/goal_squared_positive','Held-out goal penalty',True),
@@ -149,6 +154,7 @@ def run(root):
         checkpoint_verification=verified,task_results={arm:greedy[arm]['tasks'] for arm in ARMS},
         fields=fields,heldout_endpoint={arm:series[arm][-1] for arm in ['pair','goal']},
         paired_execution=pairings,decision=decision,training_elapsed_seconds=done['elapsed_seconds'])
+    summary['fixed_M1_probe_endpoint']=fixed_probe
     (output/'analysis.json').write_text(json.dumps(summary,indent=2)+'\n')
     text=f'''# E1：目标相关距离差与官方pair约束的固定终点对照
 
@@ -162,11 +168,15 @@ def run(root):
 
 A相对原始模型：新增成功{pairings['baseline_to_pair']['wins']}、失去{pairings['baseline_to_pair']['losses']}。B相对原始模型：新增成功{pairings['baseline_to_goal']['wins']}、失去{pairings['baseline_to_goal']['losses']}。B相对A：新增成功{pairings['pair_to_goal']['wins']}、失去{pairings['pair_to_goal']['losses']}。配对分母均为同一25例。
 
+A/B的task1成功数分别为{greedy['pair']['tasks']['task1']['successes']}/5和{greedy['goal']['tasks']['task1']['successes']}/5；task4中B相对A新增{task4_pairing['wins']}、失去{task4_pairing['losses']}。任务级计数必须结合配对得失解释，不能只报有利的净计数。完整配对名单与轨迹保留本地。
+
 ## 距离场
 
 {chr(10).join(metric_rows)}
 
 三模型使用同一0.2间距、半径0.7的碰撞检查图；参考路线均经真实MuJoCo执行成功。锚点吸附和连续最优性限制沿用E0报告。最低峰值差既报告原尺度，也按IQR归一化；严格下降可达性与秩相关不受统一正缩放和平移影响。曲线使用同一条E0参考路线，不为每个模型选择最有利路线。
+
+B的局部峰值差在归一化后仍明显下降，说明不能把它完全解释成统一尺度变化；但峰值差仍为正，且固定贪心执行没有恢复task3。局部地形变化不足以构成稳定闭环改善。
 
 ![两类约束、距离尺度、同参考路线与五任务执行](comparison.png)
 
@@ -177,6 +187,14 @@ A相对原始模型：新增成功{pairings['baseline_to_pair']['wins']}、失�
 {chr(10).join(loss_rows)}
 
 Held-out为固定验证批次2048条；随机目标下的上坡比例只作诊断，任意行为转移远离任意目标本来可能合理，不能将其全部当作失败。B的约束由三角不等式可知弱于pair约束，所以B自身penalty下降并不证明保留了原局部可行性。必须结合pair统计、尺度和执行结果解释。
+
+B的终点goal平方正部虽在eps=0.05内，但仍高于A；正残差比例较低并不等于平方正部更低。其pair平方正部约为A的{series['goal'][-1]['heldout/pair_squared_positive']/series['pair'][-1]['heldout/pair_squared_positive']:.2f}倍，这一代价与执行退化必须同时报告。
+
+## 与M1梯度诊断的关系
+
+在M1相同的两个固定probe节点上，原始/A/B的终点距离差分别为{fixed_probe['baseline']['gap']:.4f}、{fixed_probe['pair']['gap']:.4f}、{fixed_probe['goal']['gap']:.4f}，相对上坡分别为{fixed_probe['baseline']['relative_gap']:.6f}、{fixed_probe['pair']['relative_gap']:.6f}、{fixed_probe['goal']['relative_gap']:.6f}。M1的一步B反事实平均增大该上坡，而10k后的B反而减小了它；这直接说明不能将一次局部梯度投影线性外推为长期结论。长期终点仍必须看通道和执行。
+
+另一个范围限制：M1只分解value_loss，E1也只优化value_loss或其goal替换；官方端到端QRL的value参数还会受到dynamics_loss的梯度。A因此不是完整官方联合训练的预算对照。原方法完整预算是否恢复，仍由独立官方1M运行检验；不能凭E1把完整算法失败唯一归因于某个损失分量。
 
 ## 本轮决策与尚未完成的目标
 
