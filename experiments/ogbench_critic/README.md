@@ -4,6 +4,22 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## M5：新增教师的查询可拟合性边界
+
+[QUERY_REGULARITY_PROTOCOL.md](QUERY_REGULARITY_PROTOCOL.md)只读原100k/E13与E10教师，固定76点的对角极限及11个非对角查询响应，不训练/跑episode或重做覆盖审计。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_query_regularity.py"
+$P "$E/query_regularity.py" "$G" --output "$G/query_regularity_new"
+$P "$E/report_query_regularity.py" "$G" # 当前报告只读重建
+```
+
+两项测试通过，2.51秒完成。76点全有正对角极限0.115–10.638，实际/解析一致，说明抽象教师不具备连续神经距离的全域一致可拟合性；但11个固定非对角查询的最小扰动响应仅约1e−6，不能以对角反例解释实际远距离失败。现有神经改进仍23/25、task3 3/5；报告和图见`query_regularity/report.md`。
+
 ## E14：固定128地标的只读表示检查
 
 [LANDMARK_PROFILE_PROTOCOL.md](LANDMARK_PROFILE_PROTOCOL.md)在固定E10数据教师上，以确定最远点遍历选128个地标，逐状态教师距离坐标作L∞伪度量；选择/保存完成后才读评价bank，不使用墙体或评价目标构造表示，无神经训练。
