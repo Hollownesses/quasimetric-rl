@@ -4,6 +4,21 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## M6：同官方50例的critic/actor反事实
+
+[OFFICIAL_COUNTERFACTUAL_PROTOCOL.md](OFFICIAL_COUNTERFACTUAL_PROTOCOL.md)只读复建E17评价流，250起点/goal和100个实际首步逐位核验后，比较原/改进critic在同50个task3初态的真后继贪心，并从全部19个actor失败末状态续行，不训练或新增seed。
+
+原阶段240秒因振荡计算缓存miss超时，仅完成40例；[显式修订](OFFICIAL_COUNTERFACTUAL_COMPLETION.md)只补未执行案例，40例不重跑。补齐242.53秒/300秒，累计482.54秒，不能称原240秒协议通过或未扩计算预算。结果原0/50→改进42/50，末状态9/19可救援；剩余8个初态陷阱、2个actor进入的新陷阱，不能把残留全归于actor。
+
+```bash
+$P "$E/test_official_replay.py"
+$P "$E/run_official_counterfactual.py" "$G" --output "$G/counterfactual_new"
+# 当前补齐目录报告只读重建，不重复119个episode。
+$P "$E/report_official_counterfactual.py" "$G"
+```
+
+`finish_official_counterfactual.py`仅复用特定已确认超时阶段的完整前缀，不是通用无条件重启命令。报告和两图见`official_counterfactual_completion/report.md`；原actor正式指标仍31/50，额外诊断不加进它的成功率。
+
 ## E17：冻结critic的官方策略提取对照
 
 [EXTRACTION_PROTOCOL.md](EXTRACTION_PROTOCOL.md)两组分别固定原100k/E16 critic，使用完全相同原批次，先官方dynamics_loss1000步，再原ddpgbc actor_loss1000步；原alpha/lr/网络/100%未来actor目标不改。活动模块之外的参数和Adam矩冻结，原critic输出逐位不变，非官方联合训练预算。
