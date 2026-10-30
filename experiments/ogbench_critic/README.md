@@ -4,6 +4,23 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E14：固定128地标的只读表示检查
+
+[LANDMARK_PROFILE_PROTOCOL.md](LANDMARK_PROFILE_PROTOCOL.md)在固定E10数据教师上，以确定最远点遍历选128个地标，逐状态教师距离坐标作L∞伪度量；选择/保存完成后才读评价bank，不使用墙体或评价目标构造表示，无神经训练。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_landmark_profile.py"
+$P "$E/run_landmark_profile.py" "$G" --output "$G/landmark_new"
+# 当前报告只读重建，不重跑执行。
+$P "$E/report_landmark_profile.py" "$G"
+```
+
+两项测试与直接教师/保存加载/源码/全部同bank轨迹核验通过，27.08秒完成。仅16/25、task3 3/5，失去其他任务成功；六个起点均有参考图通道但真实平台仍存在。事后全部九个失败终点，profile最优动作近零位移，而同候选教师仍有下降的0.2位移动作。未通过门槛，不训练该表示或扫描地标数/范数，报告及两图见`landmark_profile/report.md`。
+
 ## E13：有符号局部距离形状监督
 
 [LOCAL_SHAPE_PROTOCOL.md](LOCAL_SHAPE_PROTOCOL.md)同E12查询/原IQE/Adam/教师，仅新增双向有符号教师距离差MSE，按固定0.2位移单位归一。允许正负差，不要求行为最优；扩展next同source平移，只作教师查询而非虚构真实转移。E12控制不重跑。
