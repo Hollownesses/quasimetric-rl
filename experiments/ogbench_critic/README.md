@@ -4,6 +4,25 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## 数据转移图的限时非参数对照
+
+[DATA_GRAPH_PROTOCOL.md](DATA_GRAPH_PROTOCOL.md)固定只使用官方训练集有效转移构建0.2粗粒化有向单位边图，不读验证集/墙体/参考路线来构造；原QRL和图距离各占一半，不修改原网络。完整预定诊断限360秒，未完成则停止，不能自动续跑扩预算。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_data_graph.py"
+$P "$E/run_data_graph.py" "$G" --output "$G/data_graph_new"
+# 当前已完成目录的post-hoc单步探针；另限30秒，无新完整episode。
+$P "$E/probe_data_graph.py" "$G" --output "$G/data_graph_critic/local_probes_new"
+# 当前已完成M4及local_probes_v2报告重建，不调用模型或环境。
+$P "$E/report_data_graph.py" "$G"
+```
+
+当前M4耗时194.54秒，同25例成功16→19/25，仅新增三个task4成功，task3混合/纯图均0/5。两个实际目标在有限图中不可达，其余终点存在离散平台，不能把它当原QRL根因或神经训练真值；不通过平滑/权重/网格搜索挽救本次对照。源码与报告核验、两项方法测试通过，细节见`results/ogbench_critic_20261029/data_graph_critic/report.md`。
+
 ## 环境
 
 复用官方基线的独立 CPU JAX 环境，官方源码 commit 固定为 a977253ce5b88434f4e4f531c50047cc95993a51。先按 `../ogbench_official_qrl/README.md` 安装，或将本工作树的 `.venv` 与 `data` 链接至同一机器已有的官方独立环境和只读数据。`runtime.py` 将导入固定本工作树 vendor，故不会误用旧 editable 安装。
