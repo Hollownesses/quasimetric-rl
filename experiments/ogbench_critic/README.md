@@ -4,6 +4,22 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E17：冻结critic的官方策略提取对照
+
+[EXTRACTION_PROTOCOL.md](EXTRACTION_PROTOCOL.md)两组分别固定原100k/E16 critic，使用完全相同原批次，先官方dynamics_loss1000步，再原ddpgbc actor_loss1000步；原alpha/lr/网络/100%未来actor目标不改。活动模块之外的参数和Adam矩冻结，原critic输出逐位不变，非官方联合训练预算。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_extraction.py"
+$P "$E/run_extraction.py" "$G" --output "$G/extraction_new"
+$P "$E/report_extraction.py" "$G" # 当前报告只读重建
+```
+
+三项测试、实际每组四步smoke/完整状态往返/冻结/原批次SHA核验通过，277.15秒完成。独立进程直接调用官方评价器，每任务50例，全部250起点/目标逐位匹配；A[50,50,0,50,50]、B[50,50,31,50,50]，平均80%→92.4%，31配对新增、无失去。原bank actor20/25→B23/25、task3 3/5，旧20全保留。原actor已能利用改进critic，但19个官方task3仍失败，需只读区分残留critic/提取缺口；不调BC/预算、不换seed/1M。报告与两图见`extraction_1000/report.md`。
+
 ## E16：固定八候选池的最坏全局拟合监督
 
 [HARD_GOAL_PROTOCOL.md](HARD_GOAL_PROTOCOL.md)沿用原IQE/Adam/1000步与固定教师，只在半批同source上从8个均匀支持goal中选更新前双向MSE最大者；候选0逐位同E15。原MSE update不改，目标相当于半批原MSE加半批有限池max MSE，新增前向不当等FLOP对照。E12/E15控制不重跑，M5教师限制保留。
