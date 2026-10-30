@@ -90,7 +90,7 @@ def build_graph(walls,radius,spacing=.2):
     return nodes,graph
 
 
-def graph_metrics(nodes,graph,values,goal=GOAL,anchor=ANCHOR):
+def graph_metrics(nodes,graph,values,goal=GOAL,anchor=ANCHOR,tol=1e-6):
     goals=np.flatnonzero(np.linalg.norm(nodes-goal,axis=1)<=1)
     cost=dijkstra(graph,directed=True,indices=goals,min_only=True,unweighted=True)
     valid=np.isfinite(cost)
@@ -111,7 +111,6 @@ def graph_metrics(nodes,graph,values,goal=GOAL,anchor=ANCHOR):
     # Reverse reachability for a strictly descending route to the success region.
     reachable=np.zeros(len(nodes),bool); reachable[goals]=True
     q=deque(goals)
-    tol=1e-6
     while q:
         node=q.popleft()
         for other in graph.indices[graph.indptr[node]:graph.indptr[node+1]]:
@@ -147,11 +146,17 @@ def graph_metrics(nodes,graph,values,goal=GOAL,anchor=ANCHOR):
                       path=nodes[path],path_values=values[path],path_costs=cost[path],walls=None)
 
 
-def run(output,checkpoint=None,epoch=None,spacing=.2,radius_delta=0.):
+def run(output,checkpoint=None,epoch=None,spacing=.2,radius_delta=0.,checkpoint_kind='official'):
     output=Path(output); output.mkdir(parents=True,exist_ok=False)
     checkpoint=Path(checkpoint).resolve() if checkpoint else None
     agent,config=load_base()
-    if checkpoint: agent=restore_agent(agent,str(checkpoint),epoch)
+    metadata=dict(checkpoint_kind=checkpoint_kind)
+    if checkpoint:
+        if checkpoint_kind=='official':agent=restore_agent(agent,str(checkpoint),epoch)
+        elif checkpoint_kind=='multistep':
+            from multistep import load_for_evaluation
+            agent,metadata=load_for_evaluation(agent,checkpoint,epoch)
+        else:raise ValueError(checkpoint_kind)
     env,_,_=load_data(config)
     walls,radius=geometry(env)
     radius+=radius_delta
@@ -159,7 +164,10 @@ def run(output,checkpoint=None,epoch=None,spacing=.2,radius_delta=0.):
     vals=[]
     for chunk in np.array_split(nodes,max(1,int(np.ceil(len(nodes)/1024)))):
         vals.extend(np.asarray(distances(agent,chunk,np.broadcast_to(GOAL,chunk.shape))))
-    stats,data=graph_metrics(nodes,graph,np.asarray(vals))
+    tolerance=1e-6*metadata.get('unit',1.)
+    stats,data=graph_metrics(nodes,graph,np.asarray(vals),tol=tolerance)
+    stats.update(metadata)
+    stats['descent_tolerance']=tolerance
     data['walls']=walls
     np.savez_compressed(output/'field.npz',**data)
     # Replay graph route with actual simulator. Connect actual anchor to snapped start.
@@ -184,7 +192,8 @@ def run(output,checkpoint=None,epoch=None,spacing=.2,radius_delta=0.):
     stats['epoch']=epoch if checkpoint else 100000
     stats['critic_digest']=tree_digest(agent.network.params['modules_value'])
     if checkpoint:
-        stats['checkpoint_sha256']=sha256(checkpoint/f'params_{epoch}.pkl')
+        filename=f'critic_{epoch}.pkl' if checkpoint_kind=='multistep' else f'params_{epoch}.pkl'
+        stats['checkpoint_sha256']=sha256(checkpoint/filename)
     np.savez_compressed(output/'reference_replay.npz',observations=trace,goal=GOAL)
     (output/'summary.json').write_text(json.dumps(stats,indent=2)+'\n')
     env.close()
@@ -199,5 +208,6 @@ if __name__=='__main__':
     p.add_argument('--epoch',type=int)
     p.add_argument('--spacing',type=float,default=.2)
     p.add_argument('--radius-delta',type=float,default=0.)
+    p.add_argument('--checkpoint-kind',choices=['official','multistep'],default='official')
     a=p.parse_args()
-    run(a.output,a.checkpoint,a.epoch,a.spacing,a.radius_delta)
+    run(a.output,a.checkpoint,a.epoch,a.spacing,a.radius_delta,a.checkpoint_kind)

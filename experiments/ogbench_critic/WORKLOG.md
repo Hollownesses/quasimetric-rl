@@ -1,5 +1,7 @@
 # OGBench critic 研究工作记录
 
+**2026-10-30最新指令：不换seed重训证明非偶然性，不运行1M QRL。E3/E5已按要求终止并确认训练与launcher退出，禁止恢复/换目录重启。以CURRENT_LIMITS.md覆盖以下历史计划中相应要求；优先分析已完成的E2/MQE，不能再把完整预算或多seed设为必要门槛。**
+
 总目标：查清当前 QRL 距离场造成 task3 失败的训练机制，并通过受控训练与独立复核达到稳定改善。当前总目标仍未完成，不能把工具接入或单个模型改善作为收尾。
 
 ## E0：复核与实验控制（已完成，2026-10-29）
@@ -24,12 +26,27 @@
 - A/B最低峰值差6.565/3.332，归一化差0.1185/0.0580，但均没有锚点下降通道。B的pair平方正部1.697，为A的33.58倍；不能以局部峰差减半或少量统计变好宣称稳定改善。
 - 决策：停止该goal约束替换的权重搜索，进入明确离线目标的多步学习；保留同表示的一步控制，并纳入MQE。E1报告见 results/ogbench_critic_20261029/e1_comparison/report.md。
 
-## E3：官方完整预算基线（进行中）
+## E2：同表示的一步／多步备份（已完成，2026-10-30审阅）
+
+- E1完成后冻结MULTISTEP_PROTOCOL.md，新增MQE-style IQE状态/状态动作critic。one与multi同初始化、同优化器、同目标样本，唯一差异是备份长度；与E1有多个方法变量变化，不能将跨实验差异只归于多步。
+- 原actor/dynamics参数和Adam矩冻结；新critic从零Adam计数开始。距离统一换为-log(0.995)单位，初始held-out距离最大缩放误差1.11e-6、排序Spearman约0.99999999965。图下降容差同步换单位，不能用原始数值阈值混比。
+- 5项测试通过：初始距离/编码器等价、一步退化时loss与梯度等价、批内目标估计无偏性、官方轨迹边界/真实next、完整新状态保存加载及冻结。两步smoke通过全部状态与RNG往返验证；冻结actor在同25例完整episode成功数为5、5、0、5、5。这是I/O和冻结检查，不是新critic收益。
+- 初始缩放场的归一化最低峰差0.119460543，与原模型0.119460439一致；同样无锚点下降通道，参考路线真实执行61步成功。
+- 正式路径results/ogbench_critic_20261029/multistep_10k，日志同级multistep_10k.log；exec session68411，训练PID39976（仅启动时观察，恢复须重新核实）。固定各10k、seed4501、batch256、log500/save5000；没有W&B或新依赖。
+- protocol.json记录实际配置、数据和源码哈希；source_snapshot中的运行源码已逐项核对。权威checkpoint格式为critic_N.pkl；不将只供推理的原agent视图另存成官方模型。正式终点与贪心/距离场现已完成并审阅，训练代码保持原样。
+- 原生MQE比较报告与actor利用改善critic的核验仍待完成；独立seed与1M QRL已按最新指令取消，不再作为门槛。
+- 终点后处理session8539已exit0，原后处理PID40390；绑定训练PID39976的历史身份，只评价各10k终点。计数/单位/模型哈希与同bank核验通过，5项后处理测试日志保留；status为analysis_ready_for_review，报告与两图已完成审阅，不重启已完成训练或后处理。
+- 完成核验：训练68411及后处理8539均exit0，各额外10k、新Adam count10000；固定25例one为0/25、multi5/25，task3均0/5；原模型16/25，分别失去16/11个成功例。多步比一步新增5个task1成功，但没有整体或task3改善，不追加权重搜索/预算。
+- 两组最低峰差归一化均0，仍无锚点严格下降通道；不能将“无需超过起点高度”误认为全程下降。one平均距离缩至约1.18个原步数单位、全图相关下降；multi保留约56.9但仍有执行退化。数值/轨迹与两张图均已审阅；报告见e2_comparison/report.md。
+
+## E3：官方完整预算基线（已按用户要求停止，2026-10-30）
+
+- 已核实训练35769及launcher35767退出，SIGTERM退出码-15；停止前最后进度约60326/1M。runtime.json与USER_STOPPED.json保留，session6832已终止，不作为完整结果，不恢复。
 
 - 独立冻结协议见 FULL_BASELINE_PROTOCOL.md；从头seed0、官方1M预算、全五任务各50episode，完整官方actor/critic/dynamics共同训练。
 - 路径：results/ogbench_critic_20261029/official_full_seed0；exec session 6832，训练PID35769、launcher35767（PID仅为当次观察，恢复时重新核实进程身份）。
 - 冻结配置已核验为1M更新、5k日志、100k评价、1M保存、alpha0.0003，无restore。进程启动后已实际进入第1步官方评价，离线日志服务正常。
-- 完整预算评价频率与原100k试跑不同，且评价消耗NumPy RNG；不能将二者差异完全归因于额外更新。独立初始化核验尚未完成。
+- 此历史方案完整预算评价频率与原100k试跑不同，且评价消耗NumPy RNG。运行现已取消，不再进行独立初始化或完整预算核验，也不据其未完成产物作结论。
 
 ## M1：原始模型的上坡梯度分解（已完成，2026-10-29）
 
@@ -40,10 +57,35 @@
 - 新增3项机制测试通过，32次反事实的冻结与有限性检查通过；报告及引用图见 results/ogbench_critic_20261029/mechanism_gradient/report.md。
 - E1终点补充了边界：M1仅分解value_loss，未分解官方dynamics_loss对value的梯度；一次B反事实增大上坡，而10k终点B减小了同probe上坡，故不能做长期线性外推。相关限制已补入M1/E1报告。
 
+## E4：原生MQE方法参照（100k与数值诊断已完成，正式分析待完成）
+
+- 新入口experiments/ogbench_mqe，直接调用官方04c2697405233e4313fab43e05bd4d95f1b3e111的main/agent/sampler；双MRN、完整B×B与actor联合学习不改。90个运行源码逐个验证Git blob，22个通过GitHub固定ref读取，其余68个复用完全相同的本地官方blob。
+- 发现MQE自带maze加入1%动作噪声且初始化强制渲染，requirements则建议外部OGBench；实际绑定当前QRL官方环境commit和同原始数据，记录依赖选择，避免环境差异混淆算法比较。
+- 首次smoke因上游硬编码Linux EGL在macOS导入失败，mqe_smoke日志保留；新目录mqe_smoke_cgl预加载原生CGL后，两次完整batch256更新、五任务各1个完整episode及完整模型/优化器往返检查全部通过。Adam count2，128条末端零waypoint案例通过原生采样边界验证；不是学习表现结论。
+- 正式100k从头seed0，alpha0.03取论文，diag_backup0.5取代码默认并说明任务值缺失；log1000/eval10000/save10000，全部五任务各50episode，只评价固定终点。新路径results/ogbench_critic_20261029/mqe_100k_seed0，exec session79677、训练PID41218/launcher41216，已实际进入第1步评价。原始配置与源码快照核对通过，未安装或改动依赖包。
+- 接入报告results/ogbench_critic_20261029/mqe_integration/report.md与独立复现协议已完成。MQE终点方法比较、同库V贪心及双ensemble/max聚合距离场仍待完成；不能把它当E2单变量消融，不能凭actor成功率宣称距离恢复。
+- 终点诊断入口已实现并烟雾核验：新独立core中12个几何/状态恢复函数与原工具AST一致，墙角完整greedy/actor逐步轨迹相同；原生V、固定max聚合与终点拒绝3项测试通过。两步模型按固定task3_seed3100完成两ensemble/max及actor各1000步，三套field与原碰撞图、原生分量及max逐点关系核验通过；只作I/O，不是学习结论。
+- finish_mqe及训练均已exit0（原session38426/79677）；固定100k、全状态往返和25例各controller/三套field核验通过，DIAGNOSTICS_READY已产生。正式actor task3为2/50，固定bank task3 actor/V贪心均0/5；canonical目标原锚点有下降通道，不能据此宣称执行已恢复。正式综合报告与现有轨迹分析待完成，不重启。
+
+## E5：官方独立seed短预算基线（已按用户要求停止，2026-10-30）
+
+- 已核实训练41935及launcher41933退出，SIGTERM退出码-15；停止前最后进度约46640/100k。runtime.json与USER_STOPPED.json保留，session49354已终止，不作为完整独立seed结果，不恢复或换seed重跑。
+
+- INDEPENDENT_BASELINE_PROTOCOL.md固定seed1从头100k，agent与全部训练/评价频率与历史seed0一致。冻结时实际flags仅seed、save_dir、run_group变化；两个初始agent的value/actor/dynamics参数摘要不同、结构相同，Adam count均0。
+- seed同时改变初始化、采样和评价随机性，不将此称为只改变初始化的因果实验，也不以两seed称稳定性证明。
+- 路径results/ogbench_critic_20261029/official_100k_seed1，exec session49354，launcher41933/训练41935；已实际通过第1步官方评价并进入后续更新。配置/协议/适配层快照与依赖版本已保存，未改其他正在运行的任务。终点正式actor与同库greedy/field分析仍待完成。
+
+## M2：完整官方value梯度（已完成，2026-10-29）
+
+- FULL_GRADIENT_PROTOCOL.md补齐M1的dynamics梯度缺口：严格相同原100k模型、32批seed4400、同probe。M1批次流SHA和逐批value-only实际Adam结果完全复现；原函数状态摘要前后相同，不串联、不存新模型。
+- value/dynamics/actor梯度之和与原生total核验通过；actor到value为零，dynamics到value非零。3项测试通过，包括实质梯度偏差拒绝。首次绝对阈值在batch1误差5.3406e-5中止，日志保留；新目录采用逐元素相对/绝对容差重跑同批次，全体最大绝对差5.579e-5。
+- dynamics的一阶相对上坡投影均值+4.908e-5，25/32为正；完整total均值-0.001088，正19/负13，不能据均值推断持续纠正。实际value-only/joint平均变化-0.000437039/-0.000434923，联合相对差+2.116e-6，0/32改变实际符号，说明其当前probe的一步影响较小，不支持据此移除动力学或宣称主导历史原因。
+- 运行100.49秒，报告results/ogbench_critic_20261029/full_gradient_fp32/report.md及引用图已审阅；FP32失败记录与文字勘误透明保留，运行源码/协议副本按原哈希保存。所有正在进行的训练配置和预算保持不变，稳定改善目标仍未完成。
+
 ## 后续决策边界
 
-严格按 PROTOCOL.md 的结果规则推进。B若仅改善自身统计却没有改善距离/执行，不继续搜索其权重；转向显式多步并纳入MQE比较。若A/B都改善，归因需包括额外预算。若B改善，还需独立训练采样和初始化/检查点、其他目标及官方完整预算基线核验，才能判断是否稳定。actor利用改善critic的策略提取仍需单独验证。
+继续遵循E1/E2结果规则：没有通道/执行收益时不搜索其权重、追加预算或挑中间模型。当前优先比较已经完成的原生MQE与既有轨迹，验证目标相关距离和执行之间尚存的缺口。按2026-10-30最新用户指令，不通过换seed或1M QRL验证非偶然性；结论范围限定现有模型与明确评价范围，actor利用新critic的问题仍需单独检验。
 
-已查阅MQE官方版本04c2697405233e4313fab43e05bd4d95f1b3e111及论文表2/3：其pointmaze论文actor alpha=0.03，而代码默认0.1；hyperparameters.sh未含MQE命令。后续方法对照不能静默采用代码默认并宣称论文任务配置；完整MQE改变多个模块，也不能当作QRL单变量多步消融。详见MQE_REVIEW.md，尚未安装/启动MQE。
+已查阅MQE官方版本04c2697405233e4313fab43e05bd4d95f1b3e111及论文表2/3：其pointmaze论文actor alpha=0.03，而代码默认0.1；hyperparameters.sh未含MQE命令。后续方法对照不能静默采用代码默认并宣称论文任务配置；完整MQE改变多个模块，也不能当作QRL单变量多步消融。详见MQE_REVIEW.md，原生100k方法参照已启动，终点比较尚未完成。
 
 每项完成的实验与分析单独commit，沿用最近提交的中文标题与分条说明；只纳入源码、测试、协议、说明、报告和报告引用图片，不纳入原始结果、模型、数据、CSV/JSON/NPZ、日志或中间产物。

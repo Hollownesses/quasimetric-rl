@@ -1,5 +1,7 @@
 # OGBench critic 机制实验
 
+当前预算以[CURRENT_LIMITS.md](CURRENT_LIMITS.md)为准：2026-10-30用户已要求停止seed1与seed0完整预算，不再换seed重跑证明非偶然性，也不运行1M QRL。下文及旧协议相应内容仅为历史记录，不得自动启动。
+
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
 ## 环境
@@ -39,7 +41,29 @@ $P "$E/compare.py" "$R"
 
 用于核验完整预算结论边界的独立官方运行，见 `FULL_BASELINE_PROTOCOL.md`；它不改变E1配对协议。
 
-多步相关的官方源码及论文配置差异，见 `MQE_REVIEW.md`；当前尚未启动MQE，也不在E1终点前决定E2方案。
+多步相关的官方源码及论文配置差异，见 `MQE_REVIEW.md`。E1固定终点没有改善task3执行，后续E2方案见 `MULTISTEP_PROTOCOL.md`；原生MQE已通过两步接入验证，固定100k方法对照进行中，入口见 `../ogbench_mqe/README.md`。
+
+## E2：同表示的一步／多步备份
+
+这是MQE-style IQE critic消融，不是原生MQE复现。两组同样改变了备份目标、增加状态动作编码器、换用log-discount单位并重置新critic优化器；只有E2内部one/multi对照能分离备份长度。原actor/dynamics参数及旧优化器矩均冻结。
+
+```bash
+$P "$E/test_multistep.py"
+$P "$E/train_multistep.py" --output "$R/multistep_smoke" --steps 2 --log-interval 1 --save-interval 2
+$P "$E/verify_multistep.py" "$R/multistep_smoke" --steps 2 --bank "$R/evaluation_bank.npz"
+$P "$E/evaluate.py" --bank "$R/evaluation_bank.npz" --output "$R/multistep_smoke_actor" --checkpoint "$R/multistep_smoke/multi" --epoch 2 --checkpoint-kind multistep --controller actor
+$P "$E/field.py" --output "$R/multistep_initial_field" --checkpoint "$R/multistep_smoke/one" --epoch 0 --checkpoint-kind multistep
+# 上述检查通过、协议冻结后才启动正式配对训练。
+$P "$E/train_multistep.py" --output "$R/multistep_10k" --steps 10000 --seed 4501 --log-interval 500 --save-interval 5000
+# 也可在另一终端中挂接已运行的生产进程；训练结束后同样适用。
+TRAIN_PID=$($P -c 'import json,sys; print(json.load(open(sys.argv[1]))["training_pid"])' "$R/multistep_10k/protocol.json")
+$P "$E/test_finish_e2.py"
+$P "$E/finish_e2.py" "$R" --producer-pid "$TRAIN_PID"
+```
+
+`finish_e2.py`不启动训练：按生产manifest的原哈希保存源码/协议副本，核实训练PID身份，等待完整10k后依次执行verify_multistep、两组evaluate/field（`--checkpoint-kind multistep --epoch 10000`）及compare_multistep。已有LAUNCHED标记会阻止重复挂接；任一步失败须检查保留日志，不能删除标记后盲目重跑。`postprocess_e2/ANALYSIS_READY`只表示报告可供审阅，图片检查、研究解释及实验commit仍须完成。
+
+E2的`critic_N.pkl`中N指新目标的真实优化次数，不能写成官方110k checkpoint。其bundle保存完整新critic、Adam和采样RNG；推理时在内存中替换原agent的value，旧agent优化器不能用于E2续训。`compare.py`/`finish_e1.py`只用于E1，不接受这种新格式。E2报告须同时核对单位转换、终点完整状态、同评价库/动作网格、两类残差及五任务配对得失；不能根据中间模型改预算。
 
 ## 原始模型的梯度机制检查
 

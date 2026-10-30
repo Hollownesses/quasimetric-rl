@@ -115,21 +115,29 @@ def rollout(agent,env,case,controller):
         observations=np.asarray(positions),actions=np.asarray(actions),goal=np.asarray(goal),distances=np.asarray(goal_distances))
 
 
-def run(bank,output,checkpoint=None,epoch=None,controller='real-greedy'):
+def run(bank,output,checkpoint=None,epoch=None,controller='real-greedy',checkpoint_kind='official'):
     output=Path(output)
     output.mkdir(parents=True,exist_ok=False)
     checkpoint=Path(checkpoint).resolve() if checkpoint else None
     agent,config=load_base()
+    metadata=dict(checkpoint_kind=checkpoint_kind)
     if checkpoint:
-        agent=restore_agent(agent,str(checkpoint),epoch)
+        if checkpoint_kind=='official':
+            agent=restore_agent(agent,str(checkpoint),epoch)
+        elif checkpoint_kind=='multistep':
+            from multistep import load_for_evaluation
+            agent,metadata=load_for_evaluation(agent,checkpoint,epoch)
+        else:raise ValueError(checkpoint_kind)
     env,_,_=load_data(config)
     cases=read_bank(bank)
     result=dict(bank_sha256=sha256(bank),controller=controller,action_grid_sha256=tree_digest(ACTIONS),
                 checkpoint=str(checkpoint) if checkpoint else 'official100k',cases={},tasks={})
     result['epoch']=epoch if checkpoint else 100000
     result['critic_digest']=tree_digest(agent.network.params['modules_value'])
+    result.update(metadata)
     if checkpoint:
-        result['checkpoint_sha256']=sha256(checkpoint/f'params_{epoch}.pkl')
+        filename=f'critic_{epoch}.pkl' if checkpoint_kind=='multistep' else f'params_{epoch}.pkl'
+        result['checkpoint_sha256']=sha256(checkpoint/filename)
     for name,case in cases.items():
         info,traj=rollout(agent,env,case,controller)
         np.savez_compressed(output/f'{name}.npz',**traj)
@@ -152,10 +160,11 @@ if __name__=='__main__':
     p.add_argument('--output')
     p.add_argument('--checkpoint')
     p.add_argument('--epoch',type=int)
+    p.add_argument('--checkpoint-kind',choices=['official','multistep'],default='official')
     p.add_argument('--controller',choices=['actor','real-greedy'],default='real-greedy')
     args=p.parse_args()
     if args.make_bank:
         assert not Path(args.bank).exists()
         make_bank(args.bank)
     if args.output:
-        run(args.bank,args.output,args.checkpoint,args.epoch,args.controller)
+        run(args.bank,args.output,args.checkpoint,args.epoch,args.controller,args.checkpoint_kind)
