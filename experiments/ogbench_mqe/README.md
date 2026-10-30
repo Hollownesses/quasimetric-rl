@@ -68,3 +68,16 @@ $P "$E/analyze_endpoint.py" "$G" --output "$G/mqe_endpoint_analysis_new"
 ```
 
 输出包括正式终点表、学习曲线、同库配对得失及实际目标的距离场；主要max聚合保持不变。若仅报告阶段中断，`--resume-analysis`可复用该输出目录已有场数组，核对目标/网格并以原模型固定节点前向检验缓存；不是恢复训练。当前研究预算遵守 `../ogbench_critic/CURRENT_LIMITS.md`，不运行QRL 1M或换seed复跑。
+
+## 已有中点与终点的只读对照
+
+[TEMPORAL_PROTOCOL.md](TEMPORAL_PROTOCOL.md)固定同次运行50k与100k，不选60k峰值，整个诊断上限360秒。复用既有bank，不训练；100k的actor/V轨迹与场复用，新增50k actor、50k V及两模型Q网格控制。正式结果仍取100k。
+
+```bash
+$P "$E/test_temporal.py"
+$P "$E/temporal_diagnostic.py" "$G" --output "$G/mqe_temporal_diagnostic_new"
+# 当前已完成目录的报告重建：不调用模型或环境。
+$P "$E/report_temporal.py" "$G"
+```
+
+实测102.39秒，task3 actor同例50k/100k为1/5与0/5，两个Q网格控制均0/5，不能只归咎actor提取。报告明确记录协议未保存MuJoCo内部结束state的产物偏离、通用loader文字对本项Q控制不适用，以及图吸附/离散动作/局部learned Q评分的限制。详见`mqe_temporal_diagnostic/report.md`。
