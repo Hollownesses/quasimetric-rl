@@ -4,6 +4,23 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E12：任务无关查询分布扩展
+
+[QUERY_AUGMENT_PROTOCOL.md](QUERY_AUGMENT_PROTOCOL.md)与E11同原IQE/Adam/双向MSE/固定教师，只把半批完整状态/目标查询增加±1的确定性Sobol扰动，幅度来自官方环境噪声公式。无新seed、评价标签、几何过滤或虚构真实转移，E11控制不重训或重评。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_query_augmentation.py"
+$P "$E/run_query_augmentation.py" "$G" --output "$G/query_augmentation_new"
+# 当前报告只读重建。
+$P "$E/report_query_augmentation.py" "$G"
+```
+
+两项采样器测试、真实smoke、原流SHA/冻结/count/完整往返与独立神经评价通过，133.81秒完成。23/25、task3 3/5，相对E11新增3104且无失去；canonical通道恢复仍不足以解决两个真实停滞。扩展验证RMSE1.507→1.329、原验证基本不变。停止本扩展幅度/比例/预算搜索，未启动actor训练或宣称总目标完成。报告及两图见`query_augmentation_1000/report.md`。
+
 ## E11：原IQE拟合固定教师，独立神经推理
 
 [IQE_DISTILL_PROTOCOL.md](IQE_DISTILL_PROTOCOL.md)只更新原value，双向MSE拟合固定E10近似教师，原Adam矩/count保留，actor/dynamics/lam全部冻结。1000步、batch256、相同官方采样流，控制组E6不重跑。独立Python评价进程不导入或使用教师图，只使用原forward神经评分。
