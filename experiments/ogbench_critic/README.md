@@ -4,6 +4,22 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E16：固定八候选池的最坏全局拟合监督
+
+[HARD_GOAL_PROTOCOL.md](HARD_GOAL_PROTOCOL.md)沿用原IQE/Adam/1000步与固定教师，只在半批同source上从8个均匀支持goal中选更新前双向MSE最大者；候选0逐位同E15。原MSE update不改，目标相当于半批原MSE加半批有限池max MSE，新增前向不当等FLOP对照。E12/E15控制不重跑，M5教师限制保留。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_hard_goal.py"
+$P "$E/run_hard_goal.py" "$G" --output "$G/hard_goal_new"
+$P "$E/report_hard_goal.py" "$G" # 当前报告只读重建
+```
+
+三项选择/梯度测试、实际smoke、全状态/冻结/count与原流/候选0流核验通过，297.95秒完成，低于360秒。独立无图神经推理首次25/25、task3 5/5（68/76/64/67/65步，每步距离下降），原成功全保留；固定验证池max MSE11.09→6.92。事后只读十点/五实际目标场5.90秒，旧两失败终点教师regret降到0，五目标通道均恢复。通过critic门槛，原actor仍冻结；当前bank用于方法选择，尚未达到整个研究目标。报告两图见`hard_goal_1000/report.md`。
+
 ## E15：全局教师监督的目标支持均衡
 
 [GOAL_SUPPORT_PROTOCOL.md](GOAL_SUPPORT_PROTOCOL.md)只改变E12半批目标中心分布为6302实际数据原型的均匀互素遍历，source/幅度/比例/双向MSE/原IQE及Adam不变。每个原型20–21次，控制E12不重跑，验证保留原/旧扩展/新均衡扩展三组。
