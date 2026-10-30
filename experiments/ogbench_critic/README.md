@@ -4,6 +4,25 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E6：局部约束平均／尾部风险
+
+[TAIL_PROTOCOL.md](TAIL_PROTOCOL.md)仅将原局部惩罚聚合从均值改为最差10%（26/256），同原100k、同批次，各额外1000更新，原Adam保留且actor/dynamics冻结。沿用E1采样seed2001，不是独立seed复现；主进程连训练与全部诊断上限600秒，超时不扩预算或把不完整结果充终点。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_tail_critic.py"
+$P "$E/run_tail.py" "$G" --output "$G/tail_smoke_new" --smoke
+# 两步完整状态/冻结验证通过后，从原100k开始，不能加载smoke。
+$P "$E/run_tail.py" "$G" --output "$G/tail_main_new"
+# 当前已完成tail_1000报告只读重建。
+$P "$E/report_tail.py" "$G"
+```
+
+实际训练与状态核验165.01秒，完整预定工作581.75秒。原/mean/tail同库成功16/25、16/25、15/25，task3两组均0/5；tail新增两个task4成功、失去一个task2和两个task5成功。约束风险显著降低仍未恢复下降通道，不搜索尾部比例、eps或学习率挽救该固定方案。3项测试与两步实际网络smoke通过，见`tail_1000/report.md`及两张引用图。
+
 ## 数据转移图的限时非参数对照
 
 [DATA_GRAPH_PROTOCOL.md](DATA_GRAPH_PROTOCOL.md)固定只使用官方训练集有效转移构建0.2粗粒化有向单位边图，不读验证集/墙体/参考路线来构造；原QRL和图距离各占一半，不修改原网络。完整预定诊断限360秒，未完成则停止，不能自动续跑扩预算。
