@@ -4,6 +4,23 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E13：有符号局部距离形状监督
+
+[LOCAL_SHAPE_PROTOCOL.md](LOCAL_SHAPE_PROTOCOL.md)同E12查询/原IQE/Adam/教师，仅新增双向有符号教师距离差MSE，按固定0.2位移单位归一。允许正负差，不要求行为最优；扩展next同source平移，只作教师查询而非虚构真实转移。E12控制不重跑。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_local_shape.py"
+$P "$E/run_local_shape.py" "$G" --output "$G/local_shape_new"
+# 当前报告只读重建。
+$P "$E/report_local_shape.py" "$G"
+```
+
+四项测试、smoke/count/完整往返与冻结核验通过，214.35秒完成；原采样、当前查询及当前标签三个流与E12逐位相同。仍23/25、task3 3/5，成功集合未再扩大。验证形状误差有所下降，两个完整执行仍失败；停止该形状缩放/系数/预算搜索，不启动actor训练。FP32累加次序造成首次梯度容差失败的原日志和测试保留，训练公式未改；报告与两图见`local_shape_1000/report.md`。
+
 ## E12：任务无关查询分布扩展
 
 [QUERY_AUGMENT_PROTOCOL.md](QUERY_AUGMENT_PROTOCOL.md)与E11同原IQE/Adam/双向MSE/固定教师，只把半批完整状态/目标查询增加±1的确定性Sobol扰动，幅度来自官方环境噪声公式。无新seed、评价标签、几何过滤或虚构真实转移，E11控制不重训或重评。
