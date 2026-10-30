@@ -4,6 +4,23 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E8：原IQE的真实多步路径上界
+
+[PATH_BOUND_PROTOCOL.md](PATH_BOUND_PROTOCOL.md)保留原距离最大化/原IQE，仅把局部风险改为单步与额外真实路径上界违反的逐行最大值。固定2/4/8/16/32/64跨度，保留官方first terminal/valid/零长度语义，原批次与后续RNG不变；不将行为路径长度当最优距离等式。A复用E6 mean，仅新训练B1000步，actor/dynamics冻结。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_path_bound.py"
+$P "$E/run_path_bound.py" "$G" --output "$G/path_bound_new"
+# 当前已完成path_bound_1000报告重建，不训练或重复评价。
+$P "$E/report_path_bound.py" "$G"
+```
+
+四项测试、真实两步smoke及count101000/全状态往返/冻结核验通过。主程序181.24秒完成，低于300秒上限；批次流SHA与E6相同。18/25对16/25，新增两个task4成功、无失去，task3仍0/5。路径风险大幅下降但归一化峰差仍正、无原锚点下降通道，不搜索跨度或其他超参数挽救。FP32首次诊断断言相差一ULP的失败日志/源码保留，最终数值标准见协议。
+
 ## E7：复用控制组的源格子均衡
 
 [SOURCE_BALANCE_PROTOCOL.md](SOURCE_BALANCE_PROTOCOL.md)只改变原局部约束与push的经验源分布。用训练集完整二维观测的固定0.2格子频次给行权重，不删数据、不离散网络输入、不使用图边或参考路线。只新训练B1000步，直接复用E6 mean及其25例终点；训练数据流SHA必须相同，原Adam及actor/dynamics冻结方式相同，不重训控制组或换seed。
