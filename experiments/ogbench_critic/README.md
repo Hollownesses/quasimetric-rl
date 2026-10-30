@@ -4,6 +4,23 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E11：原IQE拟合固定教师，独立神经推理
+
+[IQE_DISTILL_PROTOCOL.md](IQE_DISTILL_PROTOCOL.md)只更新原value，双向MSE拟合固定E10近似教师，原Adam矩/count保留，actor/dynamics/lam全部冻结。1000步、batch256、相同官方采样流，控制组E6不重跑。独立Python评价进程不导入或使用教师图，只使用原forward神经评分。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_iqe_distill.py"
+$P "$E/run_iqe_distill.py" "$G" --output "$G/iqe_distill_new"
+# 当前报告仅只读重建，不重训或重复评价。
+$P "$E/report_iqe_distill.py" "$G"
+```
+
+三项测试、两步完整smoke与冻结/计数/往返核验通过，133.42秒完成。学生22/25，task3为2/5，原16成功无失去；教师25/25。随机验证RMSE26→1.1，但三个失败终点局部误差18.9–42.3且动作排序错误；事后十点探针无新增episode。最低峰差归零仍无canonical严格通道，未通过actor训练门槛，不追加本MSE预算。报告及两图在`iqe_distillation_1000/report.md`；不将神经部分恢复当官方actor或总目标完成。
+
 ## E10：先核验数据支持距离，再考虑神经拟合
 
 [ROADMAP_METRIC_PROTOCOL.md](ROADMAP_METRIC_PROTOCOL.md)仅用全部官方valid转移与完整二维观测，选实际样本原型、双向几何代价和8连接的一致查询构造；全局三角结构与实际可执行性分开核验。局部可逆/几何代价是新增先验，非原官方步数真值，也不是M4单变量修补。原型/图/全部距离完成后才读bank，墙体与参考路线只用于末尾评价。
