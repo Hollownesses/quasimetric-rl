@@ -4,6 +4,22 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E15：全局教师监督的目标支持均衡
+
+[GOAL_SUPPORT_PROTOCOL.md](GOAL_SUPPORT_PROTOCOL.md)只改变E12半批目标中心分布为6302实际数据原型的均匀互素遍历，source/幅度/比例/双向MSE/原IQE及Adam不变。每个原型20–21次，控制E12不重跑，验证保留原/旧扩展/新均衡扩展三组。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_goal_support.py"
+$P "$E/run_goal_support.py" "$G" --output "$G/goal_support_new"
+$P "$E/report_goal_support.py" "$G" # 当前报告只读重建
+```
+
+三项采样测试、实际smoke/完整往返/冻结/count和原流/旧查询SHA核验通过，141.78秒完成。21/25、task3 3/5，失去E12的两个task4成功，无新增；三组验证误差略降未换取执行收益。停止本均衡参数/预算搜索，不训练actor，现有较好神经结果仍23/25。报告及两图见`goal_support_1000/report.md`。
+
 ## M5：新增教师的查询可拟合性边界
 
 [QUERY_REGULARITY_PROTOCOL.md](QUERY_REGULARITY_PROTOCOL.md)只读原100k/E13与E10教师，固定76点的对角极限及11个非对角查询响应，不训练/跑episode或重做覆盖审计。
