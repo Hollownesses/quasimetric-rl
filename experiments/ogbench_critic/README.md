@@ -4,6 +4,24 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E7：复用控制组的源格子均衡
+
+[SOURCE_BALANCE_PROTOCOL.md](SOURCE_BALANCE_PROTOCOL.md)只改变原局部约束与push的经验源分布。用训练集完整二维观测的固定0.2格子频次给行权重，不删数据、不离散网络输入、不使用图边或参考路线。只新训练B1000步，直接复用E6 mean及其25例终点；训练数据流SHA必须相同，原Adam及actor/dynamics冻结方式相同，不重训控制组或换seed。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_source_balance.py"
+# 前置：已有E6完整控制组与T1精确评价器verification，入口会核对哈希。
+$P "$E/run_source_balance.py" "$G" --output "$G/source_balance_new"
+# 当前已完成source_balance_1000报告重建，不训练或重复评价。
+$P "$E/report_source_balance.py" "$G"
+```
+
+含实际两步smoke、B训练及全部25例/场共138.07秒，在300秒上限内完成；批次SHA与E6完全相同。两组均16/25、task3均0/5，B新增两个task4成功、失去两个task1成功。格子均衡的人口重要性有效样本数仅原N的约5.1%，不能称温和精确去重；该方案不调网格/权重截断等参数挽救。三项方法测试、全状态往返/冻结/终点身份及报告两图核验通过。
+
 ## E6：局部约束平均／尾部风险
 
 [TAIL_PROTOCOL.md](TAIL_PROTOCOL.md)仅将原局部惩罚聚合从均值改为最差10%（26/256），同原100k、同批次，各额外1000更新，原Adam保留且actor/dynamics冻结。沿用E1采样seed2001，不是独立seed复现；主进程连训练与全部诊断上限600秒，超时不扩预算或把不完整结果充终点。
