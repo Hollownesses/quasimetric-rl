@@ -4,6 +4,23 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E10：先核验数据支持距离，再考虑神经拟合
+
+[ROADMAP_METRIC_PROTOCOL.md](ROADMAP_METRIC_PROTOCOL.md)仅用全部官方valid转移与完整二维观测，选实际样本原型、双向几何代价和8连接的一致查询构造；全局三角结构与实际可执行性分开核验。局部可逆/几何代价是新增先验，非原官方步数真值，也不是M4单变量修补。原型/图/全部距离完成后才读bank，墙体与参考路线只用于末尾评价。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_roadmap_metric.py"
+$P "$E/run_roadmap_metric.py" "$G" --output "$G/roadmap_new"
+# 当前roadmap_metric报告重建，不重建图或重复评价。
+$P "$E/report_roadmap_metric.py" "$G"
+```
+
+三项测试与全量距离/查询/轨迹核验通过，17.98秒完成，训练更新0。全部25例成功，task3五例65–75步且每步距离严格下降，原16个成功无失去；六个目标都有参考图下降通道。这只通过已知bank上的神经拟合候选门槛，尚未训练神经critic、改进actor或达到总目标。全距离float64约318MB留本地，不提交Git。
+
 ## E9：原100k的只读方向分解与固定对称投影
 
 [SYMMETRY_PROTOCOL.md](SYMMETRY_PROTOCOL.md)固定原100k，主要critic仅为(d(s,g)+d(g,s))/2，不训练或搜索系数。正向/反向/对称场在canonical及五个实际task3目标分别检查；反对称分量只作有符号分解，不当距离。原F执行复用，S完成全部25例，actor/BC不改；不假定真实MuJoCo严格可逆。
