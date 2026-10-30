@@ -4,6 +4,23 @@
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。
 
+## E9：原100k的只读方向分解与固定对称投影
+
+[SYMMETRY_PROTOCOL.md](SYMMETRY_PROTOCOL.md)固定原100k，主要critic仅为(d(s,g)+d(g,s))/2，不训练或搜索系数。正向/反向/对称场在canonical及五个实际task3目标分别检查；反对称分量只作有符号分解，不当距离。原F执行复用，S完成全部25例，actor/BC不改；不假定真实MuJoCo严格可逆。
+
+```bash
+P=experiments/ogbench_official_qrl/.venv/bin/python
+E=experiments/ogbench_critic
+G=results/ogbench_critic_20261029
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+$P "$E/test_symmetry.py"
+$P "$E/run_symmetry.py" "$G" --output "$G/symmetry_new"
+# 当前symmetry_projection报告只读重建。
+$P "$E/report_symmetry.py" "$G"
+```
+
+三项测试与模型/源码/数组核验通过，训练更新0，76.63秒低于240秒上限。同库16→19/25，新增三个task4成功、无失去，task3仍0/5；固定旧0/15上坡6.631中反对称贡献2.373，对称仍4.258。不能以不对称解释全部失败；对称pair风险也高于原F。不扫描系数或挑反向方向挽救，详见`symmetry_projection/report.md`及两图。
+
 ## E8：原IQE的真实多步路径上界
 
 [PATH_BOUND_PROTOCOL.md](PATH_BOUND_PROTOCOL.md)保留原距离最大化/原IQE，仅把局部风险改为单步与额外真实路径上界违反的逐行最大值。固定2/4/8/16/32/64跨度，保留官方first terminal/valid/零长度语义，原批次与后续RNG不变；不将行为路径长度当最优距离等式。A复用E6 mean，仅新训练B1000步，actor/dynamics冻结。
@@ -114,7 +131,7 @@ $P "$E/compare.py" "$R"
 
 用于核验完整预算结论边界的独立官方运行，见 `FULL_BASELINE_PROTOCOL.md`；它不改变E1配对协议。
 
-多步相关的官方源码及论文配置差异，见 `MQE_REVIEW.md`。E1固定终点没有改善task3执行，后续E2方案见 `MULTISTEP_PROTOCOL.md`；原生MQE已通过两步接入验证，固定100k方法对照进行中，入口见 `../ogbench_mqe/README.md`。
+多步相关的官方源码及论文配置差异，见 `MQE_REVIEW.md`。E1固定终点没有改善task3执行，后续E2方案见 `MULTISTEP_PROTOCOL.md`；原生MQE固定100k、同库执行及实际目标场分析均已完成，未恢复task3，不重启该运行，入口见 `../ogbench_mqe/README.md`。
 
 ## E2：同表示的一步／多步备份
 
