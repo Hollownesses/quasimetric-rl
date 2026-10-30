@@ -58,3 +58,13 @@ $P "$E/verify_diagnostics.py" "$R/endpoint_diagnostics" --bank "$G/evaluation_ba
 ```
 
 当前研究目录亦可在训练中挂接`finish_mqe.py "$G" --producer-pid <实际训练PID> --launcher-pid <实际launcherPID>`；它只消费`$G/mqe_100k_seed0`的固定终点，不重复训练或全状态保存加载。运行身份与源码已锁定，已有LAUNCHED标记禁止重复挂接。数值产物在`mqe_100k_diagnostics`，后处理日志在`postprocess_mqe`；DIAGNOSTICS_READY出现后仍须完成研究分析与报告。
+
+## 既有100k终点的只读综合分析
+
+协议见[ENDPOINT_ANALYSIS_PROTOCOL.md](ENDPOINT_ANALYSIS_PROTOCOL.md)。只读原QRL与MQE终点、已有轨迹及五个固定task3目标，不启动训练、换seed或新增episode：
+
+```bash
+$P "$E/analyze_endpoint.py" "$G" --output "$G/mqe_endpoint_analysis_new"
+```
+
+输出包括正式终点表、学习曲线、同库配对得失及实际目标的距离场；主要max聚合保持不变。若仅报告阶段中断，`--resume-analysis`可复用该输出目录已有场数组，核对目标/网格并以原模型固定节点前向检验缓存；不是恢复训练。当前研究预算遵守 `../ogbench_critic/CURRENT_LIMITS.md`，不运行QRL 1M或换seed复跑。

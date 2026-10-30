@@ -57,7 +57,7 @@
 - 新增3项机制测试通过，32次反事实的冻结与有限性检查通过；报告及引用图见 results/ogbench_critic_20261029/mechanism_gradient/report.md。
 - E1终点补充了边界：M1仅分解value_loss，未分解官方dynamics_loss对value的梯度；一次B反事实增大上坡，而10k终点B减小了同probe上坡，故不能做长期线性外推。相关限制已补入M1/E1报告。
 
-## E4：原生MQE方法参照（100k与数值诊断已完成，正式分析待完成）
+## E4：原生MQE方法参照（100k与正式分析已完成，2026-10-30）
 
 - 新入口experiments/ogbench_mqe，直接调用官方04c2697405233e4313fab43e05bd4d95f1b3e111的main/agent/sampler；双MRN、完整B×B与actor联合学习不改。90个运行源码逐个验证Git blob，22个通过GitHub固定ref读取，其余68个复用完全相同的本地官方blob。
 - 发现MQE自带maze加入1%动作噪声且初始化强制渲染，requirements则建议外部OGBench；实际绑定当前QRL官方环境commit和同原始数据，记录依赖选择，避免环境差异混淆算法比较。
@@ -66,6 +66,10 @@
 - 接入报告results/ogbench_critic_20261029/mqe_integration/report.md与独立复现协议已完成。MQE终点方法比较、同库V贪心及双ensemble/max聚合距离场仍待完成；不能把它当E2单变量消融，不能凭actor成功率宣称距离恢复。
 - 终点诊断入口已实现并烟雾核验：新独立core中12个几何/状态恢复函数与原工具AST一致，墙角完整greedy/actor逐步轨迹相同；原生V、固定max聚合与终点拒绝3项测试通过。两步模型按固定task3_seed3100完成两ensemble/max及actor各1000步，三套field与原碰撞图、原生分量及max逐点关系核验通过；只作I/O，不是学习结论。
 - finish_mqe及训练均已exit0（原session38426/79677）；固定100k、全状态往返和25例各controller/三套field核验通过，DIAGNOSTICS_READY已产生。正式actor task3为2/50，固定bank task3 actor/V贪心均0/5；canonical目标原锚点有下降通道，不能据此宣称执行已恢复。正式综合报告与现有轨迹分析待完成，不重启。
+- 综合报告与引用图现已审阅：官方actor整体QRL80.0%/MQE79.6%；MQE max V贪心15/25，原QRL16/25，新增3个task4成功、失去4个task1成功，未严格扩展成功集。
+- 只读前向检查既有五个task3目标，未增加训练/seed/episode：原锚点5/5有下降通道，但起点及贪心终点附近5/5均无通道，终点附近最低峰差/IQR约0.321–0.451。新停滞在约[6.6545,14.6545]，原角点通道改善不足以恢复整段路径；记录0.2网格与终点吸附误差限制。
+- MQE官方task3曲线60k曾76%、100k4%，原QRL所存每10k观察均0。保留100k为正式终点，不改选60k；后期变化可利用已有过程checkpoint做机制检查，不需要换seed或再训练。
+- 新分析源码/协议与报告位于experiments/ogbench_mqe及results/ogbench_critic_20261029/mqe_endpoint_analysis。首次报告字段重名问题已修复，保留失败源码/日志，复用并核对缓存，没有重复训练。当前仍无稳定闭环改善。
 
 ## E5：官方独立seed短预算基线（已按用户要求停止，2026-10-30）
 
