@@ -1,5 +1,9 @@
 # OGBench critic 机制实验
 
+当前交付见[中文汇总报告与逐项审计](../../results/ogbench_critic_20261029/research_summary/report.md)。同预算官方提取对照平均80%→92.4%，task3为0/50→31/50，其余四任务各50/50；同50个task3输入的神经critic真后继贪心0/50→42/50，仅为诊断，不代替actor成绩。残余失败、额外先验及同初始化的结论边界均保留。
+
+不依赖历史控制组产物的正向配方见[独立复现说明](STANDALONE_REPRODUCTION.md)：`run_improvement.py --mode plan|smoke|improve --output <全新目录>`。本次只完成打包入口各阶段2步smoke（18.93秒、五完整官方episode）；正式性能来自已完成E16/E17，没有再跑1000×3来证明重复性。`finalize_delivery.py`只读审计已有文件并重建汇总图，不训练或运行episode。
+
 当前预算以[CURRENT_LIMITS.md](CURRENT_LIMITS.md)为准：2026-10-30用户已要求停止seed1与seed0完整预算，不再换seed重跑证明非偶然性，也不运行1M QRL。下文及旧协议相应内容仅为历史记录，不得自动启动。
 
 当前研究主线与每轮决策见 `WORKLOG.md`，预注册 A/B 设计见 `PROTOCOL.md`。模型、原始数据与 checkpoint 不进入 Git；报告及其引用图片单独提交。

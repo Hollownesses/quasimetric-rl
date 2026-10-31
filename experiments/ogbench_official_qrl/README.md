@@ -1,5 +1,7 @@
 # OGBench 官方 QRL 独立入口
 
+当前状态（2026-10-31）：原seed0固定100k已完成，五任务平均80%。后续用户明确禁止换训练seed重跑及官方1M，seed1和seed0完整预算已停止、产物保留，禁止自动恢复。下文完整预算命令仅保留原始交付文档；当前运行限制见[CURRENT_LIMITS.md](../ogbench_critic/CURRENT_LIMITS.md)。后续受控研究及改进92.4%属于另一套实验，见[中文汇总报告](../../results/ogbench_critic_20261029/research_summary/report.md)，不替换本官方100k结果。
+
 本入口仅接入官方状态版 PointMaze QRL。与原仓库的 R1/R2、PHR、Dubins、MPPI、MultiEpisodeData 和终态 quotient 无关。固定官方版本见 `OFFICIAL_COMMIT`。官方源码放在被忽略的 `vendor/ogbench`，通过 setup.sh 固定下载；没有改写网络、损失、采样器、actor 或评价器。
 
 ## 安装
