@@ -1,5 +1,11 @@
 # OGBench critic 机制实验
 
+## E18：补齐E6 mean的同流程提取控制（2026-11-01）
+
+用户要求的新增C组已完成：直接复用E6 mean 101000终点，仅官方dynamics1000次、actor1000次，147.83秒，未重跑E6/E17。两个阶段三字段/完整actor字段流与E17一致；250官方起点/目标逐位匹配，五任务结果`[50,50,0,50,50]/50`、平均80%；既有actor bank20/25，task3 0/5。E17-B E16仍为92.4%和task3 31/50，配对相对C新增31无失去。补齐相同价值更新次数的控制，但不声称等总FLOP或单独某项新损失的因果消融。
+
+[实验协议](MEAN_EXTRACTION_PROTOCOL.md)、[中文报告与两图](../../results/ogbench_critic_20261029/mean_extraction_1000/report.md)。C完整保留E6已更新的lambda并在提取中冻结；新增损失/活动梯度lambda独立性测试、实际2+2步smoke、完整往返/冻结/count、275条轨迹文件审计通过。复现入口`run_mean_extraction.py <根目录> --output <全新目录>`，只读报告`report_mean_extraction.py <根目录> --output <既有结果目录>`；不追加训练seed或官方1M。
+
 当前交付见[中文汇总报告与逐项审计](../../results/ogbench_critic_20261029/research_summary/report.md)。同预算官方提取对照平均80%→92.4%，task3为0/50→31/50，其余四任务各50/50；同50个task3输入的神经critic真后继贪心0/50→42/50，仅为诊断，不代替actor成绩。残余失败、额外先验及同初始化的结论边界均保留。
 
 不依赖历史控制组产物的正向配方见[独立复现说明](STANDALONE_REPRODUCTION.md)：`run_improvement.py --mode plan|smoke|improve --output <全新目录>`。本次只完成打包入口各阶段2步smoke（18.93秒、五完整官方episode）；正式性能来自已完成E16/E17，没有再跑1000×3来证明重复性。`finalize_delivery.py`只读审计已有文件并重建汇总图，不训练或运行episode。

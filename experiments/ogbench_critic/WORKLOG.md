@@ -4,6 +4,14 @@
 
 总目标：查清当前 QRL 距离场造成 task3 失败的训练机制，并通过受控训练与独立复核达到稳定改善。2026-10-31本阶段交付完成：当前模型的覆盖/空间排序/局部训练信号限制经受控检查，E16/E17及M6在全部五任务、新评价流上证实实际改善，复现与交付审计完成。不是证明唯一训练历史根因、全域恢复或跨seed稳定；残余19个actor失败和critic陷阱完整保留，不追加已取消的seed1/1M作为完成门槛。以下各轮“尚未完成/下一项”反映当时状态，以本段及汇总报告为当前状态。
 
+## E18：E6 mean接E17相同提取（已完成，2026-11-01）
+
+- 按用户本轮要求补一个C组，直接读取已保存E6 mean/params_101000.pkl（d92cf664…daacec），没有重训E6或E17-A/B。沿用原完整Adam/count101000；actor/dynamics及矩、agent RNG同原100k，value/lam含原1000次价值续训。不同于E16的lam冻结处理，此起点的lam已改变，不移植或重置；新小网络测试核验改变lam不影响官方dynamics/actor损失/统计及活动梯度，1项3.05秒通过。
+- MEAN_EXTRACTION_PROTOCOL.md在启动前冻结。直接复用E17 extraction.py/evaluate_extraction.py和官方qrl/evaluate，运行前逐项SHA比对。实际dynamics2+actor2 smoke保存加载后重置原C及np2001，正式dynamics1000+actor1000连续2000原GCDataset批、batch256，原alpha/lr/const_std/100%未来actor目标。两个阶段三字段及完整五字段流SHA与E17完全相同，2048验证亦同。每100步日志，critic/lam及矩全程冻结，actor阶段dynamics冻结；count102000/103000、step102001/103001、全状态有限/往返、非活动矩和critic输出逐位不变检查通过。
+- exec89597正常exit0，总147.831秒/600上限，独立子评价19.764秒。五任务各50官方actor/evaluate、原rng0配对输入，C[50,50,0,50,50]，平均80%；全部250起点/goal与E17-A/B逐位匹配。C相对A新增0失去0；B相对C新增31失去0，全在task3。既有25-case actor bank C20/25，[5,5,0,5,5]，B新增3102/3103/3104无失去。没有新增评价扰动seed、真实候选诊断或训练预算。
+- 报告只读核验原E17四阶段checkpoint及评价JSON未变、C原checkpoint、源码/协议snapshot、两个C阶段终点与275完整轨迹的维度/步数/起点/goal/有限性/终止信息，两图含全部既有task3及预定官方前五例。C actor终点SHA8219d3c77c62cc3fff7f9960adb9b62a56144d036b3149973d6f6dbb2adfe516。raw mean_extraction_1000及同级.log，测试mean_extraction_tests.log；JSON/CSV/NPZ/模型不进Git。
+- 这项事后追加控制补齐“额外1000普通价值更新+相同提取”，仍未复现E16收益；支持当前E16收益不由这套普通续训充分解释。C/B价值更新次数及提取预算相同，但目标/查询/教师/额外前向算量与lam更新不同，不作等总计算量或单一新组件消融。只完成用户指定C，无换训练seed、官方1M、参数搜索或延长预算。提交源码/测试/协议/报告/引用图及导航/汇总更新。
+
 ## 最终交付审计与独立配方（已完成，2026-10-31）
 
 - 新增run_improvement.py/evaluate_improvement.py，原100k+完整官方数据即可执行E10+E16+E17-B，不要求E6/E12/E15控制组或历史评价bank。模式必须显式plan/smoke/improve，拒绝覆盖；冻结完整协议/源码/配置、各阶段非活动参数及Adam矩、count/有限性/完整保存加载。独立子进程只调用官方actor/evaluate，不导入教师/图/候选控制。

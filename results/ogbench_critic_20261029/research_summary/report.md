@@ -4,6 +4,12 @@
 
 用户已明确禁止用换训练seed或官方1M证明非偶然性。官方seed1与seed0完整预算均已停止（exit -15），产物保留，不自动恢复。本次收尾只审计文件、整理复现入口；没有再跑完整改进配方、seed1或1M。
 
+## 2026-11-01补充：E6 mean的匹配提取控制
+
+按用户新要求，只新增C=已保存E6 mean 101000终点+E17原dynamics1000/actor1000流程，147.83秒完成；没有重跑E6或E17-A/B。C官方五任务`[50,50,0,50,50]/50`、平均80%，既有actor bank20/25、task3 0/5。两个阶段三字段与完整actor字段流SHA均同E17，全部250起点/goal逐位匹配。E17-B相对C新增31个task3成功、无失去其他成功。
+
+C与B均有额外1000次价值学习及相同提取更新，因此补齐了此前E17-A未匹配的价值更新次数；普通续训在此设置下仍未复现E16收益。前期价值目标、查询、教师先验及前向计算不同，不能称等总计算量或单个组件消融。C保留E6更新后的lambda并在提取中冻结，未重置；测试表明它不影响这两个官方损失及其活动梯度。此次属于见到E17结果后新增的控制，不冒充原预注册第三组或跨seed验证。完整核验、逐任务配对得失、checkpoint与两图见[E18中文报告](../mean_extraction_1000/report.md)。以下为2026-10-31交付时的原汇总，历史结论与预算说明保留。
+
 ## 1. 官方接入与100k终点
 
 官方[OGBench](https://github.com/seohongpark/ogbench)固定commit `a977253ce5b88434f4e4f531c50047cc95993a51`。直接调用官方main.py、agents/qrl.py和官方数据/评价流程，保持网络、损失、目标采样、actor提取；navigate的alpha=0.0003。独立Python3.10.19环境，macOS arm64、CPU `TFRT_CPU_0`，没有假设CUDA。JAX/jaxlib0.4.35、Flax0.10.2、Optax0.2.4、NumPy1.26.4、MuJoCo3.17.0、Gymnasium1.4.0、W&B0.18.7；完整依赖锁与安装命令见[官方入口](../../../experiments/ogbench_official_qrl/README.md)。
