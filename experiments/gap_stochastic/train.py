@@ -26,7 +26,9 @@ def rate(step):
     return CONFIG['lr_start']*(CONFIG['lr_end']/CONFIG['lr_start'])**progress
 
 
-def run(mu, method, mode, deadline):
+def run(mu, method, mode, deadline, *, sampler=None):
+    # Optional estimator injection; the default stage-one path is unchanged.
+    sampling_function = sampled if sampler is None else sampler
     x = initial()
     m, v = np.zeros(36), np.zeros(36)
     rng = np.random.default_rng(CONFIG['seed'])
@@ -49,7 +51,7 @@ def run(mu, method, mode, deadline):
             queries = np.searchsorted(np.cumsum(mu), uniforms)
             digest.update(edges.astype('<i8').tobytes())
             digest.update(uniforms.astype('<f8').tobytes())
-            loss, gradient, risk = sampled(x, edges, queries, method,
+            loss, gradient, risk = sampling_function(x, edges, queries, method,
                                           lam=multiplier if method == 'qrl' else CONFIG['lam'],
                                           beta=CONFIG['beta'])
         else:
